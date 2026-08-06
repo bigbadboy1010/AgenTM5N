@@ -225,7 +225,7 @@ public actor CoreMLService {
     let input = DictionaryFeatureProvider(values: featureValues)
     let clock = ContinuousClock()
     let startedAt = clock.now
-    let output = try loadedModel.prediction(from: input)
+    let output = try await loadedModel.prediction(from: input)
     let elapsed = startedAt.duration(to: clock.now)
 
     var resultValues: [String: String] = [:]
