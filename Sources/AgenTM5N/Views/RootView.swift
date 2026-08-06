@@ -6,7 +6,7 @@ struct RootView: View {
   var body: some View {
     NavigationSplitView {
       List(AppSection.allCases, selection: $appState.selectedSection) { section in
-        Label(section.rawValue, systemImage: section.systemImage)
+        Label(sectionTitle(section), systemImage: section.systemImage)
           .tag(section)
       }
       .navigationTitle("AgenTM5N")
@@ -33,7 +33,7 @@ struct RootView: View {
     }
     .navigationSplitViewStyle(.balanced)
     .alert(
-      "Fehler",
+      L10n.text(de: "Fehler", en: "Error", fr: "Erreur"),
       isPresented: Binding(
         get: { appState.errorMessage != nil },
         set: { visible in
@@ -47,7 +47,35 @@ struct RootView: View {
         appState.dismissError()
       }
     } message: {
-      Text(appState.errorMessage ?? "Unbekannter Fehler")
+      Text(
+        appState.errorMessage
+          ?? L10n.text(
+            de: "Unbekannter Fehler",
+            en: "Unknown error",
+            fr: "Erreur inconnue"
+          )
+      )
+    }
+  }
+
+  private func sectionTitle(_ section: AppSection) -> String {
+    switch section {
+    case .chat:
+      return L10n.text(de: "Chat", en: "Chat", fr: "Chat")
+    case .terminal:
+      return L10n.text(de: "Terminal", en: "Terminal", fr: "Terminal")
+    case .ssh:
+      return "SSH"
+    case .vault:
+      return L10n.text(de: "Tresor", en: "Vault", fr: "Coffre")
+    case .neuralEngine:
+      return "Neural Engine"
+    case .settings:
+      return L10n.text(
+        de: "Einstellungen",
+        en: "Settings",
+        fr: "Réglages"
+      )
     }
   }
 }
