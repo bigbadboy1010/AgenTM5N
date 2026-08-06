@@ -42,7 +42,7 @@ All calls remain visible in the chat audit. `coreml_predict` is classified as ex
 
 ## Prompt file import
 
-The paperclip button in the Chat toolbar imports up to eight files into the current prompt.
+The paperclip button in the Chat toolbar imports files as structured prompt attachments. Selected files appear as removable chips above the text editor. Their extracted contents are not dumped into the visible editor.
 
 Supported content in 0.3.0:
 
@@ -55,11 +55,16 @@ Supported content in 0.3.0:
 
 Limits:
 
-- 8 files per import
+- 8 attachments per prompt
 - 2 MiB per file
-- 180,000 extracted characters per file
+- 48,000 extracted characters per file
+- 120,000 extracted characters across all pending attachments
 
-The extracted content is inserted into the prompt inside an `agentm5n_attachment` block. No file is uploaded to an external AgenTM5N service. The selected model provider still receives the resulting prompt according to the configured provider.
+When the message is sent, the extracted content is placed inside an `agentm5n_attachment` data block. The chat bubble displays attachment names instead of the full hidden payload.
+
+Attachment blocks are treated as untrusted user data. Instructions found inside an attachment are not system or developer instructions and do not bypass AgenTM5N tool permissions or approval prompts.
+
+No file is uploaded to a separate AgenTM5N service. The selected model provider still receives the resulting prompt according to the configured provider.
 
 Direct image payloads for vision-capable Ollama models are planned for the next attachment iteration. This build deliberately rejects unsupported binary and image files instead of pretending that their content was analyzed.
 
