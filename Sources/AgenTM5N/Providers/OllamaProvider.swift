@@ -26,14 +26,10 @@ public enum OllamaProviderError: LocalizedError {
 public final class OllamaProvider: @unchecked Sendable {
   private struct ChatRequestBody: Encodable {
     let model: String
-    let messages: [Message]
+    let messages: [ProviderMessage]
+    let tools: [ProviderToolDefinition]?
     let stream: Bool
     let think: Bool
-
-    struct Message: Encodable {
-      let role: String
-      let content: String
-    }
   }
 
   private struct ChatChunk: Decodable {
@@ -56,6 +52,13 @@ public final class OllamaProvider: @unchecked Sendable {
     struct Message: Decodable {
       let content: String?
       let thinking: String?
+      let toolCalls: [ProviderToolCall]?
+
+      enum CodingKeys: String, CodingKey {
+        case content
+        case thinking
+        case toolCalls = "tool_calls"
+      }
     }
   }
 
@@ -92,7 +95,8 @@ public final class OllamaProvider: @unchecked Sendable {
   public func streamChat(
     configuration: AppConfiguration,
     apiKey: String?,
-    messages: [ChatMessage]
+    messages: [ProviderMessage],
+    tools: [ProviderToolDefinition] = []
   ) -> AsyncThrowingStream<ProviderStreamEvent, Error> {
     AsyncThrowingStream { continuation in
       let task = Task {
@@ -111,9 +115,8 @@ public final class OllamaProvider: @unchecked Sendable {
 
           let body = ChatRequestBody(
             model: configuration.model,
-            messages: messages.map {
-              ChatRequestBody.Message(role: $0.role.rawValue, content: $0.content)
-            },
+            messages: messages,
+            tools: tools.isEmpty ? nil : tools,
             stream: true,
             think: configuration.thinkingEnabled
           )
@@ -162,6 +165,7 @@ public final class OllamaProvider: @unchecked Sendable {
               ProviderStreamEvent(
                 contentDelta: chunk.message?.content ?? "",
                 thinkingDelta: chunk.message?.thinking ?? "",
+                toolCalls: chunk.message?.toolCalls ?? [],
                 isFinished: chunk.done,
                 metrics: metrics
               )
@@ -187,8 +191,12 @@ public final class OllamaProvider: @unchecked Sendable {
     guard var components = URLComponents(string: baseURL) else {
       throw OllamaProviderError.invalidBaseURL(baseURL)
     }
-    let normalizedBasePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    let normalizedEndpointPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let normalizedBasePath = components.path.trimmingCharacters(
+      in: CharacterSet(charactersIn: "/")
+    )
+    let normalizedEndpointPath = path.trimmingCharacters(
+      in: CharacterSet(charactersIn: "/")
+    )
     components.path =
       "/"
       + [normalizedBasePath, normalizedEndpointPath]
