@@ -4,25 +4,25 @@ public enum WorkspaceMemoryAgentTools {
   public static let definitions: [ProviderToolDefinition] = [
     ProviderToolDefinition(
       name: "workspace_index_status",
-      description: "Return the local semantic index status for the active workspace. Does not expose embedding vectors or internal index file paths.",
+      description: "Return the local workspace index status, including lexical or Core ML semantic mode, counts and warnings. Never exposes embedding vectors or internal index paths.",
       parameters: objectSchema(properties: [:])
     ),
     ProviderToolDefinition(
       name: "workspace_index_build",
-      description: "Build or replace the local semantic index for the active workspace using a registered Core ML text embedding model. The model must expose exactly one String input and one MultiArray output.",
+      description: "Build or replace the local workspace index. Without model, build a lexical index that always works. With a compatible registered Core ML model, add semantic embeddings. An incompatible model falls back to lexical mode with a warning.",
       parameters: objectSchema(
         properties: [
-          "model": stringSchema("Optional registered Core ML model name or UUID. Defaults to the active Core ML model.")
+          "model": stringSchema("Optional registered Core ML model name or UUID. Omit this argument to build a lexical index without Core ML.")
         ]
       )
     ),
     ProviderToolDefinition(
       name: "workspace_semantic_search",
-      description: "Search the active workspace semantic index. Returns ranked relative file paths, line ranges, similarity scores and bounded excerpts. Build the index first.",
+      description: "Search the active workspace index. Uses Core ML similarity when semantic vectors exist and lexical ranking otherwise. Returns relative paths, line ranges, scores and bounded excerpts.",
       parameters: objectSchema(
         required: ["query"],
         properties: [
-          "query": stringSchema("Natural-language or code-oriented semantic search query."),
+          "query": stringSchema("Natural-language or code-oriented search query."),
           "limit": integerSchema(
             description: "Optional result count from 1 to 20.",
             minimum: 1,
@@ -33,7 +33,7 @@ public enum WorkspaceMemoryAgentTools {
     ),
     ProviderToolDefinition(
       name: "workspace_index_clear",
-      description: "Delete the local semantic index for the active workspace. Source files and Core ML models are not modified.",
+      description: "Delete the local workspace index. Source files and Core ML models are not modified.",
       parameters: objectSchema(properties: [:])
     ),
   ]
