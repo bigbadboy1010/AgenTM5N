@@ -5,6 +5,7 @@ struct ChatView: View {
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
   @State private var isDropTargeted = false
+  @State private var isImportingPromptFiles = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -291,6 +292,33 @@ struct ChatView: View {
           }
 
         VStack(spacing: 8) {
+          Button {
+            importPromptFiles()
+          } label: {
+            if isImportingPromptFiles {
+              ProgressView()
+                .controlSize(.small)
+                .frame(minWidth: 92)
+            } else {
+              Label(
+                L10n.text(
+                  de: "Anhängen",
+                  en: "Attach",
+                  fr: "Joindre"
+                ),
+                systemImage: "paperclip"
+              )
+            }
+          }
+          .disabled(isImportingPromptFiles || appState.isGenerating)
+          .help(
+            L10n.text(
+              de: "Dateien oder Bilder an den aktuellen Prompt anhängen.",
+              en: "Attach files or images to the current prompt.",
+              fr: "Joindre des fichiers ou des images à l’invite actuelle."
+            )
+          )
+
           if appState.isGenerating {
             Button(role: .destructive) {
               appState.stopGeneration()
@@ -368,6 +396,26 @@ struct ChatView: View {
       )
       attachmentStore.removeAll()
       appState.sendMessage()
+    } catch {
+      appState.errorMessage = error.localizedDescription
+    }
+  }
+
+  private func importPromptFiles() {
+    guard !isImportingPromptFiles else { return }
+    isImportingPromptFiles = true
+    defer { isImportingPromptFiles = false }
+
+    do {
+      guard let imported = try PromptAttachmentService.selectPromptFiles(
+        existingCount: attachmentStore.attachments.count,
+        existingCharacterCount: attachmentStore.extractedCharacterCount,
+        existingImageCount: attachmentStore.imageCount,
+        existingImageBytes: attachmentStore.imageByteCount
+      ) else {
+        return
+      }
+      attachmentStore.add(imported)
     } catch {
       appState.errorMessage = error.localizedDescription
     }
