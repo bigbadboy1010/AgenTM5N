@@ -2,6 +2,37 @@
 
 All notable changes to AgenTM5N are documented in this file.
 
+## [0.2.1] - 2026-08-06
+
+### Added
+
+- `terminal_open` opens the visible local terminal with an optional initial
+  command and title.
+- `ssh_list_hosts` exposes non-secret metadata for configured SSH profiles.
+- `ssh_run` executes a bounded, non-interactive remote command through a saved
+  SSH profile and returns stdout, stderr and exit status.
+- `ssh_open_terminal` opens a saved SSH profile in the visible interactive
+  terminal, optionally starting a remote command.
+- SSH host names, hostnames and UUIDs can be used to resolve a saved profile.
+
+### Security
+
+- Passwords, private keys, passphrases and secret identifiers are never returned
+  to the model.
+- SSH authentication is resolved internally from the encrypted vault.
+- Temporary askpass files and private-key material are removed after structured
+  SSH execution.
+- `ssh_run` and `ssh_open_terminal` require explicit approval in Confirm and
+  Workspace Trusted modes; only Full Access allows automatic remote execution.
+- Structured SSH connections use bounded connection attempts and a connect
+  timeout.
+
+### Changed
+
+- App version is 0.2.1 build 6.
+- Local non-interactive work remains isolated in `run_command`; visible terminal
+  sessions and remote SSH actions use dedicated tools and audit records.
+
 ## [0.2.0] - 2026-08-06
 
 ### Added
