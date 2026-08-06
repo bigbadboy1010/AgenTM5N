@@ -19,6 +19,14 @@ jobs:
           bash -n scripts/run-dev.sh
           bash -n scripts/verify.sh
           bash -n scripts/lib/xcode-env.sh
+      - name: Parse Swift sources
+        run: |
+          if command -v swiftc >/dev/null 2>&1; then
+            find Sources -type f -name '*.swift' -print0 \
+              | xargs -0 swiftc -frontend -parse
+          else
+            echo 'swiftc is not installed on this runner; parse check skipped.'
+          fi
       - name: Reject incomplete source markers
         run: |
           ! grep -RInE 'TODO|FIXME|fatalError\(|try!| as! ' Sources
