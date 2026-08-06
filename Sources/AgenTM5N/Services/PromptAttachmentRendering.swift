@@ -3,15 +3,11 @@ import Foundation
 public extension PromptAttachmentService {
   nonisolated static func visiblePrompt(from storedContent: String) -> String {
     var stripped = storedContent
-    if let expression = textAttachmentExpression {
-      let range = NSRange(stripped.startIndex..<stripped.endIndex, in: stripped)
-      stripped = expression.stringByReplacingMatches(
-        in: stripped,
-        range: range,
-        withTemplate: ""
-      )
-    }
-    if let expression = imageAttachmentExpression {
+    for expression in [
+      textAttachmentExpression,
+      imageAttachmentExpression,
+      ocrAttachmentExpression,
+    ].compactMap({ $0 }) {
       let range = NSRange(stripped.startIndex..<stripped.endIndex, in: stripped)
       stripped = expression.stringByReplacingMatches(
         in: stripped,
@@ -105,6 +101,13 @@ public extension PromptAttachmentService {
   nonisolated private static var imageAttachmentExpression: NSRegularExpression? {
     try? NSRegularExpression(
       pattern: #"<agentm5n_image_attachment\s+id="([^"]+)"\s+name="([^"]*)"\s+media_type="([^"]+)"\s+bytes="([0-9]+)"\s+path="([^"]+)"\s+width="([0-9]+)"\s+height="([0-9]+)"\s*/>"#,
+      options: []
+    )
+  }
+
+  nonisolated private static var ocrAttachmentExpression: NSRegularExpression? {
+    try? NSRegularExpression(
+      pattern: #"<agentm5n_ocr_attachment\b[^>]*>[\s\S]*?</agentm5n_ocr_attachment>"#,
       options: []
     )
   }

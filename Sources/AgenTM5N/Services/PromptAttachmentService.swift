@@ -44,9 +44,9 @@ public enum PromptAttachmentError: LocalizedError {
       )
     case .totalContentTooLarge(let limit):
       return L10n.text(
-        de: "Der extrahierte Inhalt aller Textanhänge überschreitet das Gesamtlimit von \(limit) Zeichen.",
-        en: "The extracted content of all text attachments exceeds the total limit of \(limit) characters.",
-        fr: "Le contenu extrait de toutes les pièces jointes texte dépasse la limite totale de \(limit) caractères."
+        de: "Der extrahierte Inhalt aller Dokumentanhänge überschreitet das Gesamtlimit von \(limit) Zeichen.",
+        en: "The extracted content of all document attachments exceeds the total limit of \(limit) characters.",
+        fr: "Le contenu extrait de toutes les pièces jointes dépasse la limite totale de \(limit) caractères."
       )
     case .totalImagePayloadTooLarge(let limit):
       return L10n.text(
@@ -56,9 +56,9 @@ public enum PromptAttachmentError: LocalizedError {
       )
     case .unsupportedFile(let name):
       return L10n.text(
-        de: "Die Datei \(name) wird nicht unterstützt. Möglich sind Text, Quellcode, Konfiguration, Logs, CSV, JSON, XML, YAML, Markdown, PDF sowie gängige Bildformate.",
-        en: "File \(name) is unsupported. Text, source code, configuration, logs, CSV, JSON, XML, YAML, Markdown, PDF, and common image formats are supported.",
-        fr: "Le fichier \(name) n’est pas pris en charge. Les formats texte, code source, configuration, journaux, CSV, JSON, XML, YAML, Markdown, PDF et images courantes sont acceptés."
+        de: "Die Datei \(name) wird nicht unterstützt. Möglich sind Text, Quellcode, Konfiguration, Logs, CSV, JSON, XML, YAML, Markdown, PDF, DOCX, XLSX, PPTX sowie gängige Bildformate.",
+        en: "File \(name) is unsupported. Text, source code, configuration, logs, CSV, JSON, XML, YAML, Markdown, PDF, DOCX, XLSX, PPTX, and common image formats are supported.",
+        fr: "Le fichier \(name) n’est pas pris en charge. Les formats texte, code source, configuration, journaux, CSV, JSON, XML, YAML, Markdown, PDF, DOCX, XLSX, PPTX et images courantes sont acceptés."
       )
     case .unreadableFile(let name):
       return L10n.text(
@@ -99,11 +99,13 @@ public enum PromptAttachmentService {
   public static let maximumFiles = 8
   public static let maximumImages = 4
   public static let maximumFileBytes = 2 * 1024 * 1024
+  public static let maximumDocumentSourceBytes = 25 * 1024 * 1024
   public static let maximumImageSourceBytes = 12 * 1024 * 1024
   public static let maximumImagePayloadBytes = 6 * 1024 * 1024
   public static let maximumTotalImagePayloadBytes = 20 * 1024 * 1024
-  public static let maximumExtractedCharactersPerFile = 48_000
-  public static let maximumTotalExtractedCharacters = 120_000
+  public static let maximumExtractedCharactersPerFile = 160_000
+  public static let maximumTotalExtractedCharacters = 320_000
+  public static let maximumImageOCRCharacters = 12_000
   public static let maximumImageDimension = 2_048
 
   private static let textExtensions: Set<String> = [
@@ -114,6 +116,8 @@ public enum PromptAttachmentService {
     "ini", "conf", "config", "env", "properties", "csv", "tsv", "log",
     "dockerfile", ".gitignore", "gitignore"
   ]
+
+  private static let documentExtensions = DocumentIntelligenceService.supportedExtensions
 
   private static let imageExtensions: Set<String> = [
     "jpg", "jpeg", "png", "heic", "heif", "tif", "tiff", "bmp", "gif", "webp"
@@ -133,9 +137,9 @@ public enum PromptAttachmentService {
     )
     panel.prompt = L10n.text(de: "Hinzufügen", en: "Add", fr: "Ajouter")
     panel.message = L10n.text(
-      de: "Text, Code, Konfiguration, Logs, CSV, JSON, YAML, XML, Markdown, PDF oder Bilder auswählen.",
-      en: "Select text, code, configuration, logs, CSV, JSON, YAML, XML, Markdown, PDF, or images.",
-      fr: "Sélectionnez du texte, du code, des configurations, journaux, CSV, JSON, YAML, XML, Markdown, PDF ou des images."
+      de: "Text, Code, PDF, Word, Excel, PowerPoint oder Bilder auswählen.",
+      en: "Select text, code, PDF, Word, Excel, PowerPoint, or image files.",
+      fr: "Sélectionnez des fichiers texte, code, PDF, Word, Excel, PowerPoint ou image."
     )
     panel.canChooseFiles = true
     panel.canChooseDirectories = false
@@ -212,16 +216,16 @@ public enum PromptAttachmentService {
       let sections = try attachments.map { attachment -> String in
         switch attachment.kind {
         case .text:
-          return """
-            <agentm5n_attachment name="\(escapedAttribute(attachment.name))" media_type="\(escapedAttribute(attachment.mediaType))" bytes="\(attachment.byteCount)" truncated="\(attachment.wasTruncated)">
-            \(attachment.extractedText)
-            </agentm5n_attachment>
-            """
+          return textMarker(for: attachment)
 
         case .image:
           let reference = try PromptImageAttachmentStorage.persist(attachment)
           persistedReferences.append(reference)
-          return imageMarker(for: reference)
+          var payload = imageMarker(for: reference)
+          if !attachment.extractedText.isEmpty {
+            payload += "\n\n" + ocrMarker(for: attachment)
+          }
+          return payload
         }
       }
 
@@ -256,6 +260,16 @@ public enum PromptAttachmentService {
       return try imageAttachment(for: url)
     }
 
+    if documentExtensions.contains(extensionName) {
+      guard byteCount <= maximumDocumentSourceBytes else {
+        throw PromptAttachmentError.fileTooLarge(
+          url.lastPathComponent,
+          maximumDocumentSourceBytes
+        )
+      }
+      return try documentAttachment(for: url, byteCount: byteCount)
+    }
+
     guard byteCount <= maximumFileBytes else {
       throw PromptAttachmentError.fileTooLarge(
         url.lastPathComponent,
@@ -263,42 +277,67 @@ public enum PromptAttachmentService {
       )
     }
 
-    let rawText: String
-    let mediaType: String
-    if extensionName == "pdf" {
-      guard let document = PDFDocument(url: url) else {
-        throw PromptAttachmentError.unreadableFile(url.lastPathComponent)
-      }
-      rawText = (0..<document.pageCount)
-        .compactMap { document.page(at: $0)?.string }
-        .joined(separator: "\n\n")
-      mediaType = "application/pdf"
-    } else if textExtensions.contains(extensionName)
+    guard textExtensions.contains(extensionName)
       || textExtensions.contains(url.lastPathComponent.lowercased())
-    {
-      let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-      guard let decoded = String(data: data, encoding: .utf8) else {
-        throw PromptAttachmentError.unreadableFile(url.lastPathComponent)
-      }
-      rawText = decoded
-      mediaType = inferredTextMediaType(extensionName)
-    } else {
+    else {
       throw PromptAttachmentError.unsupportedFile(url.lastPathComponent)
     }
 
+    let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+    guard let decoded = String(data: data, encoding: .utf8) else {
+      throw PromptAttachmentError.unreadableFile(url.lastPathComponent)
+    }
+    let rawText = decoded
     let wasTruncated = rawText.count > maximumExtractedCharactersPerFile
     let extractedText = wasTruncated
       ? String(rawText.prefix(maximumExtractedCharactersPerFile))
         + "\n… [AgenTM5N: Inhalt gekürzt]"
       : rawText
+    let section = PromptAttachmentSection(
+      locator: "Dokument",
+      text: extractedText
+    )
 
     return PromptAttachment(
       name: url.lastPathComponent,
       byteCount: byteCount,
-      mediaType: mediaType,
+      mediaType: inferredTextMediaType(extensionName),
       kind: .text,
       extractedText: extractedText,
-      wasTruncated: wasTruncated
+      wasTruncated: wasTruncated,
+      sections: [section],
+      metadata: PromptAttachmentMetadata(
+        documentKind: .plainText,
+        extractionMethod: .directText,
+        sectionCount: 1
+      )
+    )
+  }
+
+  private static func documentAttachment(
+    for url: URL,
+    byteCount: Int
+  ) throws -> PromptAttachment {
+    let result = try DocumentIntelligenceService.extract(url: url)
+    let wasTruncated = result.text.count > maximumExtractedCharactersPerFile
+    let extractedText = wasTruncated
+      ? String(result.text.prefix(maximumExtractedCharactersPerFile))
+        + "\n… [AgenTM5N: Dokumentinhalt gekürzt]"
+      : result.text
+    let sections = boundedSections(
+      result.sections,
+      maximumCharacters: maximumExtractedCharactersPerFile
+    )
+
+    return PromptAttachment(
+      name: url.lastPathComponent,
+      byteCount: byteCount,
+      mediaType: documentMediaType(url.pathExtension.lowercased()),
+      kind: .text,
+      extractedText: extractedText,
+      wasTruncated: wasTruncated,
+      sections: sections,
+      metadata: result.metadata
     )
   }
 
@@ -376,15 +415,61 @@ public enum PromptAttachmentService {
       )
     }
 
+    let recognized = (try? LocalOCRService.recognizeText(in: cgImage)) ?? ""
+    let boundedOCR = recognized.count > maximumImageOCRCharacters
+      ? String(recognized.prefix(maximumImageOCRCharacters))
+      : recognized
+    let ocrSections = boundedOCR.isEmpty
+      ? []
+      : [
+        PromptAttachmentSection(
+          locator: "Bild, OCR",
+          title: "Lokale Texterkennung",
+          text: boundedOCR
+        )
+      ]
+    let metadata = boundedOCR.isEmpty
+      ? nil
+      : PromptAttachmentMetadata(
+        documentKind: .plainText,
+        extractionMethod: .visionOCR,
+        sectionCount: 1,
+        ocrUsed: true
+      )
+
     return PromptAttachment(
       name: url.lastPathComponent,
       byteCount: jpegData.count,
       mediaType: "image/jpeg",
       kind: .image,
+      extractedText: boundedOCR,
       imageData: jpegData,
       pixelWidth: targetWidth,
-      pixelHeight: targetHeight
+      pixelHeight: targetHeight,
+      sections: ocrSections,
+      metadata: metadata
     )
+  }
+
+  private static func textMarker(for attachment: PromptAttachment) -> String {
+    let documentKind = attachment.metadata?.documentKind.rawValue ?? "plainText"
+    let method = attachment.metadata?.extractionMethod.rawValue ?? "directText"
+    let sectionCount = attachment.metadata?.sectionCount ?? attachment.sections.count
+    let cacheHit = attachment.metadata?.cacheHit ?? false
+    return """
+      <agentm5n_attachment name="\(escapedAttribute(attachment.name))" media_type="\(escapedAttribute(attachment.mediaType))" bytes="\(attachment.byteCount)" truncated="\(attachment.wasTruncated)" document_kind="\(documentKind)" extraction_method="\(method)" sections="\(sectionCount)" cache_hit="\(cacheHit)">
+      \(attachment.extractedText)
+      </agentm5n_attachment>
+      """
+  }
+
+  private static func ocrMarker(for attachment: PromptAttachment) -> String {
+    """
+      <agentm5n_ocr_attachment name="\(escapedAttribute(attachment.name))" characters="\(attachment.extractedText.count)">
+      [Datei: \(attachment.name), Bild, OCR]
+      \(attachment.extractedText)
+      </agentm5n_ocr_attachment>
+      """
   }
 
   private static func imageMarker(
@@ -393,6 +478,41 @@ public enum PromptAttachmentService {
     """
     <agentm5n_image_attachment id="\(reference.id.uuidString.lowercased())" name="\(escapedAttribute(reference.name))" media_type="\(escapedAttribute(reference.mediaType))" bytes="\(reference.byteCount)" path="\(escapedAttribute(reference.relativePath))" width="\(reference.pixelWidth)" height="\(reference.pixelHeight)" />
     """
+  }
+
+  private static func boundedSections(
+    _ sections: [PromptAttachmentSection],
+    maximumCharacters: Int
+  ) -> [PromptAttachmentSection] {
+    var result: [PromptAttachmentSection] = []
+    var total = 0
+    for section in sections {
+      let remaining = maximumCharacters - total
+      guard remaining > 0 else { break }
+      let text = section.text.count > remaining
+        ? String(section.text.prefix(remaining))
+        : section.text
+      result.append(
+        PromptAttachmentSection(
+          id: section.id,
+          locator: section.locator,
+          title: section.title,
+          text: text
+        )
+      )
+      total += text.count
+    }
+    return result
+  }
+
+  private static func documentMediaType(_ extensionName: String) -> String {
+    switch extensionName {
+    case "pdf": "application/pdf"
+    case "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    case "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    case "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    default: "application/octet-stream"
+    }
   }
 
   private static func inferredTextMediaType(_ extensionName: String) -> String {

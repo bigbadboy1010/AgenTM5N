@@ -38,6 +38,7 @@ let package = Package(
         .linkedFramework("FoundationModels"),
         .linkedFramework("OSLog"),
         .linkedFramework("Security"),
+        .linkedFramework("Vision"),
       ]
     ),
   ]
