@@ -74,6 +74,10 @@ public enum AppPaths {
         ofItemAtPath: directory.path
       )
     }
+
+    try SSHHostStoreMigration.repairDuplicateIdentifiersIfNeeded(
+      at: sshHostsFile
+    )
   }
 
   public static func purgeRuntimeDirectory() throws {
