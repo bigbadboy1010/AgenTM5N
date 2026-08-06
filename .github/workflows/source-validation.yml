@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   integrate-document-intelligence-tools:
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/document-intelligence-tools'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/agent/document-intelligence-tools'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
