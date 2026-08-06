@@ -4,6 +4,7 @@ struct RootView: View {
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
   @State private var isImportingPromptFiles = false
+  @State private var showingAttachmentCenter = false
 
   var body: some View {
     NavigationSplitView {
@@ -36,7 +37,7 @@ struct RootView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .toolbar {
         if appState.selectedSection == .chat {
-          ToolbarItem {
+          ToolbarItemGroup {
             Button {
               importPromptFiles()
             } label: {
@@ -57,16 +58,48 @@ struct RootView: View {
             .disabled(isImportingPromptFiles || appState.isGenerating)
             .help(
               L10n.text(
-                de: "Text-, Code-, Konfigurations-, Log-, PDF- oder Bilddateien an den aktuellen Prompt anhängen.",
-                en: "Attach text, code, configuration, log, PDF, or image files to the current prompt.",
-                fr: "Joindre des fichiers texte, code, configuration, journal, PDF ou image à l’invite actuelle."
+                de: "Text-, Office-, PDF- oder Bilddateien an den aktuellen Prompt anhängen.",
+                en: "Attach text, Office, PDF, or image files to the current prompt.",
+                fr: "Joindre des fichiers texte, Office, PDF ou image à l’invite actuelle."
               )
+            )
+
+            Button {
+              showingAttachmentCenter = true
+            } label: {
+              Label(
+                L10n.text(
+                  de: "Anhangscenter",
+                  en: "Attachment Center",
+                  fr: "Centre des pièces jointes"
+                ),
+                systemImage: "doc.text.magnifyingglass"
+              )
+            }
+            .disabled(attachmentStore.attachments.isEmpty)
+            .help(
+              attachmentStore.attachments.isEmpty
+                ? L10n.text(
+                  de: "Der aktuelle Prompt enthält noch keine Anhänge.",
+                  en: "The current prompt does not contain attachments yet.",
+                  fr: "L’invite actuelle ne contient pas encore de pièces jointes."
+                )
+                : L10n.text(
+                  de: "Anhänge und extrahierte Dokumentabschnitte prüfen.",
+                  en: "Inspect attachments and extracted document sections.",
+                  fr: "Inspecter les pièces jointes et les sections extraites."
+                )
             )
           }
         }
       }
     }
     .navigationSplitViewStyle(.balanced)
+    .sheet(isPresented: $showingAttachmentCenter) {
+      AttachmentCenterView()
+        .environmentObject(appState)
+        .frame(minWidth: 840, minHeight: 640)
+    }
     .alert(
       L10n.text(de: "Fehler", en: "Error", fr: "Erreur"),
       isPresented: Binding(
