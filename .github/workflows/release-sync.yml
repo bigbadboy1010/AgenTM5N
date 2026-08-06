@@ -1,0 +1,37 @@
+name: Consolidate tested 0.3.2 release
+
+on:
+  push:
+    branches:
+      - release/0.3.2-clean
+    paths:
+      - .github/workflows/release-sync.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync-release-tree:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out clean release branch
+        uses: actions/checkout@v4
+        with:
+          ref: release/0.3.2-clean
+          fetch-depth: 0
+
+      - name: Replace tree with tested 0.3.2 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin agent/ssh-profile-hardening
+          git rm -r -f .
+          git checkout origin/agent/ssh-profile-hardening -- .
+          rm -f .github/workflows/release-sync.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          git commit -m "release AgenTM5N 0.3.2 build 11"
+          git push origin HEAD:release/0.3.2-clean
