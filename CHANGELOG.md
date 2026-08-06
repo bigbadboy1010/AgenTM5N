@@ -2,6 +2,63 @@
 
 All notable changes to AgenTM5N are documented in this file.
 
+## [0.3.0] - 2026-08-06
+
+### Added
+
+- Persistent Core ML model registry with stable model UUIDs, unique display names
+  and automatic restoration of the active compiled model after app restart.
+- `coreml_list_models` returns registered models without internal filesystem
+  paths.
+- `coreml_describe_model` reports the selected or active model inputs, outputs
+  and requested compute policy.
+- `coreml_predict` runs a scalar JSON prediction through the controlled agent
+  permission and audit workflow.
+- Chat toolbar paperclip imports text, source, configuration, log, CSV, JSON,
+  YAML, XML, Markdown and PDF content into the current prompt.
+- PDF text extraction runs locally through PDFKit.
+- Dedicated Neural Agent Tools documentation.
+
+### Security
+
+- Core ML tool results omit imported source and compiled model paths.
+- Prediction JSON is capped at 1 MiB.
+- Prompt import is capped at eight files, 2 MiB per file and 180,000 extracted
+  characters per file.
+- Unsupported binary and image content is rejected rather than silently
+  ignored or misrepresented as analyzed.
+- `coreml_predict` requires approval in Confirm mode and remains fully audited.
+
+### Changed
+
+- App version is 0.3.0 build 9.
+- Imported Core ML models remain persistent and no longer need to be selected
+  again after each application restart.
+
+## [0.2.3] - 2026-08-06
+
+### Added
+
+- Native macOS Core ML importer for `.mlmodel`, `.mlpackage` and `.mlmodelc`.
+- Persistent source and compiled model copies under AgenTM5N Application Support.
+- Central macOS language detection through `Locale.preferredLanguages`.
+- Binding language instructions for Ollama Local, Ollama Cloud and Apple
+  Foundation Models.
+- Localized Chat, Settings, Vault and Neural Engine core interfaces.
+
+### Fixed
+
+- `.mlpackage` and `.mlmodelc` package directories can be selected reliably.
+- Core ML source models are compiled before asynchronous loading.
+- Agent responses follow the current preferred macOS language while technical
+  tool names, paths and command output retain their original form.
+
+### Changed
+
+- App version is 0.2.3 build 8.
+- Core ML compute policy is described accurately as CPU + Apple Neural Engine
+  requested; actual operator placement remains controlled by Core ML.
+
 ## [0.2.2] - 2026-08-06
 
 ### Added

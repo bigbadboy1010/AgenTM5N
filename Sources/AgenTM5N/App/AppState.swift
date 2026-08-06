@@ -30,6 +30,24 @@ private struct SSHHostToolDescriptor: Encodable {
   let passphraseConfigured: Bool
 }
 
+private struct CoreMLToolModelDescriptor: Encodable {
+  let id: String
+  let name: String
+  let active: Bool
+  let inputs: [String]
+  let outputs: [String]
+  let computePolicy: String
+  let importedAt: Date
+}
+
+private struct CoreMLToolPredictionDescriptor: Encodable {
+  let modelID: String
+  let modelName: String
+  let computePolicy: String
+  let durationMilliseconds: Double
+  let values: [String: String]
+}
+
 @MainActor
 public final class AppState: ObservableObject {
   @Published public var selectedSection: AppSection = .chat
@@ -59,6 +77,8 @@ public final class AppState: ObservableObject {
     appleFoundationModelStatus: "Wird geprüft"
   )
   @Published public var coreMLDescriptor: CoreMLModelDescriptor?
+  @Published public var coreMLModels: [CoreMLRegisteredModel] = []
+  @Published public var activeCoreMLModelID: UUID?
   @Published public var coreMLPredictionInput = "{\n  \"input\": 1.0\n}"
   @Published public var coreMLPredictionResult: CoreMLPredictionResult?
   @Published public var isRunningCoreML = false
@@ -112,16 +132,21 @@ public final class AppState: ObservableObject {
       async let loadedConfiguration = configurationStore.load()
       async let loadedMessages = conversationStore.load()
       async let loadedHosts = sshHostStore.load()
-      let (configuration, messages, hosts) = try await (
+      async let neuralSnapshot = coreMLService.bootstrap()
+      let (configuration, messages, hosts, snapshot) = try await (
         loadedConfiguration,
         loadedMessages,
-        loadedHosts
+        loadedHosts,
+        neuralSnapshot
       )
       self.configuration = configuration
       self.messages = messages
       self.sshHosts = hosts.sorted {
         $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
       }
+      coreMLModels = snapshot.models
+      activeCoreMLModelID = snapshot.activeModelID
+      coreMLDescriptor = snapshot.activeDescriptor
 
       let appleStatus = await appleProvider.availabilityDescription()
       hardwareProfile = HardwareService.makeProfile(
@@ -339,7 +364,10 @@ public final class AppState: ObservableObject {
 
   public func loadCoreMLModel(from url: URL) async {
     do {
-      coreMLDescriptor = try await coreMLService.loadModel(sourceURL: url)
+      let record = try await coreMLService.loadModel(sourceURL: url)
+      coreMLModels = await coreMLService.listModels()
+      activeCoreMLModelID = record.id
+      coreMLDescriptor = record.descriptor
       coreMLPredictionResult = nil
     } catch {
       present(error)
@@ -354,6 +382,7 @@ public final class AppState: ObservableObject {
       coreMLPredictionResult = try await coreMLService.predict(
         jsonInput: coreMLPredictionInput
       )
+      activeCoreMLModelID = await coreMLService.activeModelID()
     } catch {
       present(error)
     }
@@ -409,7 +438,9 @@ public final class AppState: ObservableObject {
   private func performOllamaSend(assistantID: UUID) async throws {
     let apiKey = try await configuredAPIKey()
     var providerMessages = makeOllamaMessages(excludingAssistantID: assistantID)
-    let tools = configuration.agentEnabled ? AgentRuntime.toolDefinitions : []
+    let tools = configuration.agentEnabled
+      ? AgentRuntime.toolDefinitions + CoreMLAgentTools.definitions
+      : []
     var completedToolIterations = 0
 
     while true {
@@ -469,8 +500,15 @@ public final class AppState: ObservableObject {
     _ call: ProviderToolCall,
     assistantID: UUID
   ) async -> ProviderMessage {
-    let risk = await agentRuntime.risk(for: call)
-    let summary = await agentRuntime.summary(for: call)
+    let risk: ToolRisk
+    let summary: String
+    if CoreMLAgentTools.handles(call) {
+      risk = CoreMLAgentTools.risk(for: call)
+      summary = CoreMLAgentTools.summary(for: call)
+    } else {
+      risk = await agentRuntime.risk(for: call)
+      summary = await agentRuntime.summary(for: call)
+    }
     let allowed = await authorize(call: call, risk: risk, summary: summary)
     let recordID = UUID()
     appendToolRecord(
@@ -519,6 +557,12 @@ public final class AppState: ObservableObject {
       return await runSSHTool(call)
     case "ssh_open_terminal":
       return await openSSHTerminalTool(call)
+    case "coreml_list_models":
+      return await listCoreMLModelsTool()
+    case "coreml_describe_model":
+      return await describeCoreMLModelTool(call)
+    case "coreml_predict":
+      return await predictCoreMLTool(call)
     default:
       return await agentRuntime.execute(
         call: call,
@@ -556,17 +600,7 @@ public final class AppState: ObservableObject {
       )
     }
 
-    do {
-      let encoder = JSONEncoder()
-      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      let data = try encoder.encode(descriptors)
-      return ToolExecutionResult(
-        success: true,
-        output: String(decoding: data, as: UTF8.self)
-      )
-    } catch {
-      return ToolExecutionResult(success: false, output: error.localizedDescription)
-    }
+    return encodedToolResult(descriptors)
   }
 
   private func runSSHTool(
@@ -617,6 +651,98 @@ public final class AppState: ObservableObject {
       return ToolExecutionResult(
         success: true,
         output: "Interaktive SSH-Sitzung zu \(host.name) wurde im sichtbaren Terminal geöffnet."
+      )
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func listCoreMLModelsTool() async -> ToolExecutionResult {
+    let activeID = await coreMLService.activeModelID()
+    let descriptors = (await coreMLService.listModels()).map { model in
+      CoreMLToolModelDescriptor(
+        id: model.id.uuidString,
+        name: model.name,
+        active: model.id == activeID,
+        inputs: model.inputs,
+        outputs: model.outputs,
+        computePolicy: model.computeUnits,
+        importedAt: model.importedAt
+      )
+    }
+    return encodedToolResult(descriptors)
+  }
+
+  private func describeCoreMLModelTool(
+    _ call: ProviderToolCall
+  ) async -> ToolExecutionResult {
+    do {
+      let query = optionalToolString("model", in: call)
+      let model = try await coreMLService.registeredModel(query: query)
+      let activeID = await coreMLService.activeModelID()
+      return encodedToolResult(
+        CoreMLToolModelDescriptor(
+          id: model.id.uuidString,
+          name: model.name,
+          active: model.id == activeID,
+          inputs: model.inputs,
+          outputs: model.outputs,
+          computePolicy: model.computeUnits,
+          importedAt: model.importedAt
+        )
+      )
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func predictCoreMLTool(
+    _ call: ProviderToolCall
+  ) async -> ToolExecutionResult {
+    do {
+      guard let input = call.function.arguments["input"]?.objectValue else {
+        throw AgentRuntimeError.missingArgument(
+          tool: call.function.name,
+          name: "input"
+        )
+      }
+      let modelQuery = optionalToolString("model", in: call)
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.sortedKeys]
+      let inputData = try encoder.encode(JSONValue.object(input))
+      let inputText = String(decoding: inputData, as: UTF8.self)
+      let model = try await coreMLService.registeredModel(query: modelQuery)
+      let result = try await coreMLService.predict(
+        jsonInput: inputText,
+        modelQuery: modelQuery
+      )
+      activeCoreMLModelID = model.id
+      coreMLDescriptor = model.descriptor
+      coreMLModels = await coreMLService.listModels()
+      coreMLPredictionResult = result
+      return encodedToolResult(
+        CoreMLToolPredictionDescriptor(
+          modelID: model.id.uuidString,
+          modelName: model.name,
+          computePolicy: model.computeUnits,
+          durationMilliseconds: result.durationMilliseconds,
+          values: result.values
+        )
+      )
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func encodedToolResult<T: Encodable>(_ value: T) -> ToolExecutionResult {
+    do {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      encoder.dateEncodingStrategy = .iso8601
+      let data = try encoder.encode(value)
+      return ToolExecutionResult(
+        success: true,
+        output: String(decoding: data, as: UTF8.self)
       )
     } catch {
       return ToolExecutionResult(success: false, output: error.localizedDescription)
