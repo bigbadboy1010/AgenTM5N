@@ -50,14 +50,6 @@ private struct EmbeddedTerminalView: NSViewRepresentable {
     terminal.layer?.backgroundColor = terminal.nativeBackgroundColor.cgColor
     terminal.caretColor = .systemGreen
     terminal.getTerminal().setCursorStyle(.steadyBlock)
-    terminal.metalBufferingMode = .perFrameAggregated
-
-    do {
-      try terminal.setUseMetal(true)
-    } catch {
-      AppLogger.terminal.error(
-        "SwiftTerm Metal renderer failed: \(error.localizedDescription, privacy: .public)")
-    }
 
     let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
     let executable = FileManager.default.isExecutableFile(atPath: shell) ? shell : "/bin/zsh"
