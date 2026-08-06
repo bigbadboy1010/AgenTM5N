@@ -8,6 +8,10 @@ struct ChatView: View {
       header
       Divider()
       messages
+      if let approval = appState.pendingToolApproval {
+        Divider()
+        ToolApprovalBanner(approval: approval)
+      }
       Divider()
       composer
     }
@@ -55,6 +59,19 @@ struct ChatView: View {
           .labelsHidden()
           .frame(maxWidth: 280)
         }
+      }
+
+      if appState.configuration.agentEnabled,
+        appState.configuration.providerKind != .appleOnDevice
+      {
+        Label(
+          appState.configuration.permissionMode.displayName,
+          systemImage: "wrench.and.screwdriver"
+        )
+        .font(.caption)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(.quaternary, in: Capsule())
       }
 
       Spacer()
@@ -144,6 +161,46 @@ struct ChatView: View {
   }
 }
 
+private struct ToolApprovalBanner: View {
+  @EnvironmentObject private var appState: AppState
+  let approval: PendingToolApproval
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack {
+        Label(
+          "Tool-Freigabe erforderlich",
+          systemImage: "lock.open.trianglebadge.exclamationmark"
+        )
+        .font(.headline)
+        Spacer()
+        Text(approval.risk.displayName)
+          .font(.caption)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(.quaternary, in: Capsule())
+      }
+
+      Text(approval.summary)
+        .font(.system(.caption, design: .monospaced))
+        .textSelection(.enabled)
+
+      HStack {
+        Spacer()
+        Button("Ablehnen", role: .destructive) {
+          appState.denyPendingTool()
+        }
+        Button("Einmal erlauben") {
+          appState.approvePendingTool()
+        }
+        .keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(12)
+    .background(.orange.opacity(0.12))
+  }
+}
+
 private struct MessageBubble: View {
   let message: ChatMessage
 
@@ -160,7 +217,7 @@ private struct MessageBubble: View {
   }
 
   private var bubble: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 10) {
       Text(message.role == .assistant ? "Agent" : "Du")
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -175,6 +232,14 @@ private struct MessageBubble: View {
         }
       }
 
+      if let executions = message.toolExecutions, !executions.isEmpty {
+        VStack(alignment: .leading, spacing: 8) {
+          ForEach(executions) { execution in
+            ToolExecutionCard(execution: execution)
+          }
+        }
+      }
+
       Text(message.content.isEmpty ? "…" : message.content)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -185,7 +250,53 @@ private struct MessageBubble: View {
         ? Color(nsColor: .controlBackgroundColor) : Color.accentColor.opacity(0.16),
       in: RoundedRectangle(cornerRadius: 12)
     )
-    .frame(maxWidth: 760, alignment: .leading)
+    .frame(maxWidth: 820, alignment: .leading)
+  }
+}
+
+private struct ToolExecutionCard: View {
+  let execution: ToolExecutionRecord
+
+  var body: some View {
+    DisclosureGroup {
+      VStack(alignment: .leading, spacing: 6) {
+        Text(execution.argumentsSummary)
+          .font(.system(.caption, design: .monospaced))
+          .textSelection(.enabled)
+
+        if !execution.output.isEmpty {
+          ScrollView(.horizontal) {
+            Text(execution.output)
+              .font(.system(.caption2, design: .monospaced))
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+          .frame(maxHeight: 220)
+        }
+      }
+      .padding(.top, 5)
+    } label: {
+      HStack {
+        Image(systemName: statusIcon)
+        Text(execution.toolName)
+          .font(.system(.caption, design: .monospaced))
+        Spacer()
+        Text(execution.status.rawValue)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .padding(9)
+    .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+  }
+
+  private var statusIcon: String {
+    switch execution.status {
+    case .running: "hourglass"
+    case .succeeded: "checkmark.circle.fill"
+    case .failed: "xmark.octagon.fill"
+    case .denied: "hand.raised.fill"
+    }
   }
 }
 
