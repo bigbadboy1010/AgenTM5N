@@ -3,6 +3,7 @@
 ## Neu
 
 - Echte Bildanhänge für visionfähige Ollama-Modelle.
+- Dauerhaft sichtbarer Button **Anhängen** mit Büroklammer direkt neben den Aktionen im Chat-Composer.
 - Auswahl von Text-, PDF- und Bilddateien über die Büroklammer.
 - Drag-and-drop von Dateien und Bildern direkt in den Chat-Composer.
 - Lokale Bildvorschau vor dem Senden.
