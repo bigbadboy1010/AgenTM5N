@@ -67,11 +67,48 @@ public actor AgentRuntime {
     ),
     ProviderToolDefinition(
       name: "run_command",
-      description: "Run a zsh command in the configured workspace and return stdout, stderr and exit status.",
+      description: "Run a local zsh command in the configured workspace and return stdout, stderr and exit status. Use this for non-interactive local work.",
       parameters: objectSchema(
         required: ["command"],
         properties: [
-          "command": stringSchema("Shell command to execute.")
+          "command": stringSchema("Local shell command to execute.")
+        ]
+      )
+    ),
+    ProviderToolDefinition(
+      name: "terminal_open",
+      description: "Open the visible local AgenTM5N terminal, optionally with an initial command. Use run_command instead when command output must be analyzed.",
+      parameters: objectSchema(
+        properties: [
+          "command": stringSchema("Optional initial command shown in the interactive terminal."),
+          "title": stringSchema("Optional terminal session title.")
+        ]
+      )
+    ),
+    ProviderToolDefinition(
+      name: "ssh_list_hosts",
+      description: "List configured AgenTM5N SSH host profiles without exposing passwords, private keys, passphrases or secret identifiers.",
+      parameters: objectSchema(properties: [:])
+    ),
+    ProviderToolDefinition(
+      name: "ssh_run",
+      description: "Execute a non-interactive command on a configured SSH host profile. AgenTM5N resolves authentication internally and returns stdout, stderr and exit status. Never request secret values.",
+      parameters: objectSchema(
+        required: ["host", "command"],
+        properties: [
+          "host": stringSchema("Configured SSH host name, hostname or host UUID."),
+          "command": stringSchema("Remote shell command to execute non-interactively.")
+        ]
+      )
+    ),
+    ProviderToolDefinition(
+      name: "ssh_open_terminal",
+      description: "Open a configured SSH host in the visible interactive AgenTM5N terminal. An optional initial remote command may be supplied.",
+      parameters: objectSchema(
+        required: ["host"],
+        properties: [
+          "host": stringSchema("Configured SSH host name, hostname or host UUID."),
+          "command": stringSchema("Optional remote command to start after connecting.")
         ]
       )
     ),
@@ -100,11 +137,11 @@ public actor AgentRuntime {
 
   public func risk(for call: ProviderToolCall) -> ToolRisk {
     switch call.function.name {
-    case "list_directory", "read_file", "git_status", "git_diff":
+    case "list_directory", "read_file", "git_status", "git_diff", "ssh_list_hosts":
       .read
     case "write_file":
       .write
-    case "run_command":
+    case "run_command", "terminal_open", "ssh_run", "ssh_open_terminal":
       .execute
     default:
       .execute
@@ -173,6 +210,21 @@ public actor AgentRuntime {
       default:
         throw AgentRuntimeError.unsupportedTool(call.function.name)
       }
+    } catch {
+      return ToolExecutionResult(
+        success: false,
+        output: error.localizedDescription
+      )
+    }
+  }
+
+  public func executeCommand(
+    _ command: String,
+    workspacePath: String
+  ) async -> ToolExecutionResult {
+    do {
+      let workspace = try makeWorkspaceURL(workspacePath)
+      return try await runCommand(command, workspace: workspace)
     } catch {
       return ToolExecutionResult(
         success: false,
