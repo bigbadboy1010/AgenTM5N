@@ -105,7 +105,7 @@ public final class SafeZipArchiveReader: @unchecked Sendable {
     }
 
     let listed = text
-      .split(whereSeparator: \ .isNewline)
+      .split(whereSeparator: { $0.isNewline })
       .map(String.init)
       .filter { !$0.isEmpty }
 
@@ -160,11 +160,19 @@ public final class SafeZipArchiveReader: @unchecked Sendable {
 
   private static func validate(entry: String) throws {
     let normalized = entry.replacingOccurrences(of: "\\", with: "/")
-    let components = normalized.split(separator: "/", omittingEmptySubsequences: false)
+    let components = normalized.split(
+      separator: "/",
+      omittingEmptySubsequences: false
+    )
+    let hasInteriorEmptyComponent = components.enumerated().contains {
+      index, component in
+      component.isEmpty && index != components.index(before: components.endIndex)
+    }
+
     guard !normalized.hasPrefix("/"),
       !normalized.contains("\0"),
       !components.contains(where: { $0 == ".." }),
-      !components.contains(where: { $0.isEmpty && components.count > 1 })
+      !hasInteriorEmptyComponent
     else {
       throw SafeZipArchiveError.unsafeEntry(entry)
     }
@@ -200,11 +208,11 @@ public final class SafeZipArchiveReader: @unchecked Sendable {
     process.waitUntilExit()
     let errorData = try errorPipe.fileHandleForReading.readToEnd() ?? Data()
     guard process.terminationStatus == 0 else {
-      let detail = String(data: errorData, encoding: .utf8)?
+      let decodedDetail = String(data: errorData, encoding: .utf8)?
         .trimmingCharacters(in: .whitespacesAndNewlines)
-      throw SafeZipArchiveError.commandFailed(
-        detail?.isEmpty == false ? detail! : "Exit \(process.terminationStatus)"
-      )
+      let detail = decodedDetail.flatMap { $0.isEmpty ? nil : $0 }
+        ?? "Exit \(process.terminationStatus)"
+      throw SafeZipArchiveError.commandFailed(detail)
     }
     return output
   }
