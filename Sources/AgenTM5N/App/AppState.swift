@@ -48,6 +48,25 @@ private struct CoreMLToolPredictionDescriptor: Encodable {
   let values: [String: String]
 }
 
+private struct WorkspaceIndexToolStatusDescriptor: Encodable {
+  let indexed: Bool
+  let modelID: String?
+  let modelName: String?
+  let createdAt: Date?
+  let fileCount: Int?
+  let chunkCount: Int?
+  let embeddingDimension: Int?
+  let indexedCharacterCount: Int?
+}
+
+private struct WorkspaceSemanticToolMatchDescriptor: Encodable {
+  let relativePath: String
+  let startLine: Int
+  let endLine: Int
+  let score: Double
+  let excerpt: String
+}
+
 @MainActor
 public final class AppState: ObservableObject {
   @Published public var selectedSection: AppSection = .chat
@@ -83,6 +102,12 @@ public final class AppState: ObservableObject {
   @Published public var coreMLPredictionResult: CoreMLPredictionResult?
   @Published public var isRunningCoreML = false
 
+  @Published public var workspaceIndexStatus: WorkspaceIndexStatus?
+  @Published public var workspaceEmbeddingModelID: UUID?
+  @Published public var workspaceSemanticQuery = ""
+  @Published public var workspaceSemanticResults: [WorkspaceSemanticMatch] = []
+  @Published public var isBuildingWorkspaceIndex = false
+
   private let configurationStore: JSONDocumentStore<AppConfiguration>
   private let conversationStore: JSONDocumentStore<[ChatMessage]>
   private let sshHostStore: JSONDocumentStore<[SSHHost]>
@@ -90,6 +115,7 @@ public final class AppState: ObservableObject {
   private let ollamaProvider: OllamaProvider
   private let appleProvider: AppleFoundationModelsProvider
   private let coreMLService: CoreMLService
+  private let workspaceIndexService: WorkspaceIndexService
   private let sshLaunchService: SSHLaunchService
   private let agentRuntime: AgentRuntime
   private var generationTask: Task<Void, Never>?
@@ -112,6 +138,7 @@ public final class AppState: ObservableObject {
     ollamaProvider: OllamaProvider = OllamaProvider(),
     appleProvider: AppleFoundationModelsProvider = AppleFoundationModelsProvider(),
     coreMLService: CoreMLService = CoreMLService(),
+    workspaceIndexService: WorkspaceIndexService = WorkspaceIndexService(),
     sshLaunchService: SSHLaunchService = SSHLaunchService(),
     agentRuntime: AgentRuntime = AgentRuntime()
   ) {
@@ -122,6 +149,7 @@ public final class AppState: ObservableObject {
     self.ollamaProvider = ollamaProvider
     self.appleProvider = appleProvider
     self.coreMLService = coreMLService
+    self.workspaceIndexService = workspaceIndexService
     self.sshLaunchService = sshLaunchService
     self.agentRuntime = agentRuntime
   }
@@ -147,6 +175,11 @@ public final class AppState: ObservableObject {
       coreMLModels = snapshot.models
       activeCoreMLModelID = snapshot.activeModelID
       coreMLDescriptor = snapshot.activeDescriptor
+      workspaceIndexStatus = try? await workspaceIndexService.status(
+        workspacePath: configuration.workspacePath
+      )
+      workspaceEmbeddingModelID = workspaceIndexStatus?.modelID
+        ?? snapshot.activeModelID
 
       let appleStatus = await appleProvider.availabilityDescription()
       hardwareProfile = HardwareService.makeProfile(
@@ -200,6 +233,11 @@ public final class AppState: ObservableObject {
 
     guard panel.runModal() == .OK, let url = panel.url else { return }
     configuration.workspacePath = url.path
+    workspaceIndexStatus = nil
+    workspaceSemanticResults = []
+    Task { [weak self] in
+      await self?.refreshWorkspaceIndexStatus()
+    }
   }
 
   public func unlockVault(password: String) async -> Bool {
@@ -369,6 +407,9 @@ public final class AppState: ObservableObject {
       activeCoreMLModelID = record.id
       coreMLDescriptor = record.descriptor
       coreMLPredictionResult = nil
+      if workspaceEmbeddingModelID == nil {
+        workspaceEmbeddingModelID = record.id
+      }
     } catch {
       present(error)
     }
@@ -383,6 +424,67 @@ public final class AppState: ObservableObject {
         jsonInput: coreMLPredictionInput
       )
       activeCoreMLModelID = await coreMLService.activeModelID()
+    } catch {
+      present(error)
+    }
+  }
+
+  public func refreshWorkspaceIndexStatus() async {
+    do {
+      workspaceIndexStatus = try await workspaceIndexService.status(
+        workspacePath: configuration.workspacePath
+      )
+      if let modelID = workspaceIndexStatus?.modelID {
+        workspaceEmbeddingModelID = modelID
+      }
+    } catch {
+      present(error)
+    }
+  }
+
+  public func buildWorkspaceIndex() async {
+    guard !isBuildingWorkspaceIndex else { return }
+    isBuildingWorkspaceIndex = true
+    defer { isBuildingWorkspaceIndex = false }
+
+    do {
+      let model = try await selectedWorkspaceEmbeddingModel()
+      workspaceIndexStatus = try await workspaceIndexService.build(
+        workspacePath: configuration.workspacePath,
+        model: model
+      )
+      workspaceEmbeddingModelID = model.id
+      workspaceSemanticResults = []
+    } catch {
+      present(error)
+    }
+  }
+
+  public func searchWorkspaceMemory() async {
+    do {
+      guard let status = workspaceIndexStatus else {
+        throw WorkspaceIndexError.indexNotFound(configuration.workspacePath)
+      }
+      let model = try await coreMLService.registeredModel(
+        query: status.modelID.uuidString
+      )
+      workspaceSemanticResults = try await workspaceIndexService.search(
+        query: workspaceSemanticQuery,
+        workspacePath: configuration.workspacePath,
+        model: model
+      )
+    } catch {
+      present(error)
+    }
+  }
+
+  public func clearWorkspaceIndex() async {
+    do {
+      try await workspaceIndexService.clear(
+        workspacePath: configuration.workspacePath
+      )
+      workspaceIndexStatus = nil
+      workspaceSemanticResults = []
     } catch {
       present(error)
     }
@@ -439,7 +541,9 @@ public final class AppState: ObservableObject {
     let apiKey = try await configuredAPIKey()
     var providerMessages = makeOllamaMessages(excludingAssistantID: assistantID)
     let tools = configuration.agentEnabled
-      ? AgentRuntime.toolDefinitions + CoreMLAgentTools.definitions
+      ? AgentRuntime.toolDefinitions
+        + CoreMLAgentTools.definitions
+        + WorkspaceMemoryAgentTools.definitions
       : []
     var completedToolIterations = 0
 
@@ -505,6 +609,9 @@ public final class AppState: ObservableObject {
     if CoreMLAgentTools.handles(call) {
       risk = CoreMLAgentTools.risk(for: call)
       summary = CoreMLAgentTools.summary(for: call)
+    } else if WorkspaceMemoryAgentTools.handles(call) {
+      risk = WorkspaceMemoryAgentTools.risk(for: call)
+      summary = WorkspaceMemoryAgentTools.summary(for: call)
     } else {
       risk = await agentRuntime.risk(for: call)
       summary = await agentRuntime.summary(for: call)
@@ -563,6 +670,14 @@ public final class AppState: ObservableObject {
       return await describeCoreMLModelTool(call)
     case "coreml_predict":
       return await predictCoreMLTool(call)
+    case "workspace_index_status":
+      return await workspaceIndexStatusTool()
+    case "workspace_index_build":
+      return await buildWorkspaceIndexTool(call)
+    case "workspace_semantic_search":
+      return await searchWorkspaceIndexTool(call)
+    case "workspace_index_clear":
+      return await clearWorkspaceIndexTool()
     default:
       return await agentRuntime.execute(
         call: call,
@@ -734,6 +849,120 @@ public final class AppState: ObservableObject {
     }
   }
 
+  private func workspaceIndexStatusTool() async -> ToolExecutionResult {
+    do {
+      let status = try await workspaceIndexService.status(
+        workspacePath: configuration.workspacePath
+      )
+      workspaceIndexStatus = status
+      return encodedToolResult(workspaceStatusDescriptor(status))
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func buildWorkspaceIndexTool(
+    _ call: ProviderToolCall
+  ) async -> ToolExecutionResult {
+    do {
+      let modelQuery = optionalToolString("model", in: call)
+      let model = try await coreMLService.registeredModel(query: modelQuery)
+      let status = try await workspaceIndexService.build(
+        workspacePath: configuration.workspacePath,
+        model: model
+      )
+      workspaceIndexStatus = status
+      workspaceEmbeddingModelID = model.id
+      workspaceSemanticResults = []
+      return encodedToolResult(workspaceStatusDescriptor(status))
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func searchWorkspaceIndexTool(
+    _ call: ProviderToolCall
+  ) async -> ToolExecutionResult {
+    do {
+      let query = try requiredToolString("query", in: call)
+      let limit = optionalToolInt("limit", in: call) ?? 8
+      guard let status = try await workspaceIndexService.status(
+        workspacePath: configuration.workspacePath
+      ) else {
+        throw WorkspaceIndexError.indexNotFound(configuration.workspacePath)
+      }
+      let model = try await coreMLService.registeredModel(
+        query: status.modelID.uuidString
+      )
+      let matches = try await workspaceIndexService.search(
+        query: query,
+        workspacePath: configuration.workspacePath,
+        model: model,
+        limit: limit
+      )
+      workspaceIndexStatus = status
+      workspaceSemanticQuery = query
+      workspaceSemanticResults = matches
+      return encodedToolResult(
+        matches.map {
+          WorkspaceSemanticToolMatchDescriptor(
+            relativePath: $0.relativePath,
+            startLine: $0.startLine,
+            endLine: $0.endLine,
+            score: $0.score,
+            excerpt: $0.excerpt
+          )
+        }
+      )
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func clearWorkspaceIndexTool() async -> ToolExecutionResult {
+    do {
+      try await workspaceIndexService.clear(
+        workspacePath: configuration.workspacePath
+      )
+      workspaceIndexStatus = nil
+      workspaceSemanticResults = []
+      return ToolExecutionResult(
+        success: true,
+        output: L10n.text(
+          de: "Der lokale semantische Workspace-Index wurde gelöscht.",
+          en: "The local semantic workspace index was deleted.",
+          fr: "L’index sémantique local de l’espace de travail a été supprimé."
+        )
+      )
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func workspaceStatusDescriptor(
+    _ status: WorkspaceIndexStatus?
+  ) -> WorkspaceIndexToolStatusDescriptor {
+    WorkspaceIndexToolStatusDescriptor(
+      indexed: status != nil,
+      modelID: status?.modelID.uuidString,
+      modelName: status?.modelName,
+      createdAt: status?.createdAt,
+      fileCount: status?.fileCount,
+      chunkCount: status?.chunkCount,
+      embeddingDimension: status?.embeddingDimension,
+      indexedCharacterCount: status?.indexedCharacterCount
+    )
+  }
+
+  private func selectedWorkspaceEmbeddingModel() async throws -> CoreMLRegisteredModel {
+    if let modelID = workspaceEmbeddingModelID {
+      return try await coreMLService.registeredModel(
+        query: modelID.uuidString
+      )
+    }
+    return try await coreMLService.registeredModel(query: nil)
+  }
+
   private func encodedToolResult<T: Encodable>(_ value: T) -> ToolExecutionResult {
     do {
       let encoder = JSONEncoder()
@@ -748,7 +977,6 @@ public final class AppState: ObservableObject {
       return ToolExecutionResult(success: false, output: error.localizedDescription)
     }
   }
-
   private func authorize(
     call: ProviderToolCall,
     risk: ToolRisk,
@@ -851,6 +1079,15 @@ public final class AppState: ObservableObject {
     }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
+  }
+
+  private func optionalToolInt(
+    _ name: String,
+    in call: ProviderToolCall
+  ) -> Int? {
+    guard let value = call.function.arguments[name] else { return nil }
+    guard case .number(let number) = value, number.isFinite else { return nil }
+    return Int(number)
   }
 
   private func cleanupRuntimePaths(_ paths: [URL]) {

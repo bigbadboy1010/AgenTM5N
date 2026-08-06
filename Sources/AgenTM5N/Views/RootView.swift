@@ -26,6 +26,8 @@ struct RootView: View {
           VaultView()
         case .neuralEngine:
           NeuralEngineView()
+        case .memory:
+          WorkspaceMemoryView()
         case .settings:
           SettingsView()
         }
@@ -120,6 +122,12 @@ struct RootView: View {
       return L10n.text(de: "Tresor", en: "Vault", fr: "Coffre")
     case .neuralEngine:
       return "Neural Engine"
+    case .memory:
+      return L10n.text(
+        de: "Workspace-Gedächtnis",
+        en: "Workspace Memory",
+        fr: "Mémoire de l’espace de travail"
+      )
     case .settings:
       return L10n.text(
         de: "Einstellungen",
