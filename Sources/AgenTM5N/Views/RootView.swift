@@ -2,11 +2,13 @@ import SwiftUI
 
 struct RootView: View {
   @EnvironmentObject private var appState: AppState
+  @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
+  @State private var isImportingPromptFiles = false
 
   var body: some View {
     NavigationSplitView {
       List(AppSection.allCases, selection: $appState.selectedSection) { section in
-        Label(section.rawValue, systemImage: section.systemImage)
+        Label(sectionTitle(section), systemImage: section.systemImage)
           .tag(section)
       }
       .navigationTitle("AgenTM5N")
@@ -30,10 +32,41 @@ struct RootView: View {
       }
       .environmentObject(appState)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .toolbar {
+        if appState.selectedSection == .chat {
+          ToolbarItem {
+            Button {
+              importPromptFiles()
+            } label: {
+              if isImportingPromptFiles {
+                ProgressView()
+                  .controlSize(.small)
+              } else {
+                Label(
+                  L10n.text(
+                    de: "Dateien zum Prompt hinzufügen",
+                    en: "Add Files to Prompt",
+                    fr: "Ajouter des fichiers à l’invite"
+                  ),
+                  systemImage: "paperclip"
+                )
+              }
+            }
+            .disabled(isImportingPromptFiles || appState.isGenerating)
+            .help(
+              L10n.text(
+                de: "Text-, Code-, Konfigurations-, Log- oder PDF-Dateien an den aktuellen Prompt anhängen.",
+                en: "Attach text, code, configuration, log, or PDF files to the current prompt.",
+                fr: "Joindre des fichiers texte, code, configuration, journal ou PDF à l’invite actuelle."
+              )
+            )
+          }
+        }
+      }
     }
     .navigationSplitViewStyle(.balanced)
     .alert(
-      "Fehler",
+      L10n.text(de: "Fehler", en: "Error", fr: "Erreur"),
       isPresented: Binding(
         get: { appState.errorMessage != nil },
         set: { visible in
@@ -47,7 +80,52 @@ struct RootView: View {
         appState.dismissError()
       }
     } message: {
-      Text(appState.errorMessage ?? "Unbekannter Fehler")
+      Text(
+        appState.errorMessage
+          ?? L10n.text(
+            de: "Unbekannter Fehler",
+            en: "Unknown error",
+            fr: "Erreur inconnue"
+          )
+      )
+    }
+  }
+
+  private func importPromptFiles() {
+    isImportingPromptFiles = true
+    defer { isImportingPromptFiles = false }
+
+    do {
+      guard let imported = try PromptAttachmentService.selectPromptFiles(
+        existingCount: attachmentStore.attachments.count,
+        existingCharacterCount: attachmentStore.extractedCharacterCount
+      ) else {
+        return
+      }
+      attachmentStore.add(imported)
+    } catch {
+      appState.errorMessage = error.localizedDescription
+    }
+  }
+
+  private func sectionTitle(_ section: AppSection) -> String {
+    switch section {
+    case .chat:
+      return L10n.text(de: "Chat", en: "Chat", fr: "Chat")
+    case .terminal:
+      return L10n.text(de: "Terminal", en: "Terminal", fr: "Terminal")
+    case .ssh:
+      return "SSH"
+    case .vault:
+      return L10n.text(de: "Tresor", en: "Vault", fr: "Coffre")
+    case .neuralEngine:
+      return "Neural Engine"
+    case .settings:
+      return L10n.text(
+        de: "Einstellungen",
+        en: "Settings",
+        fr: "Réglages"
+      )
     }
   }
 }

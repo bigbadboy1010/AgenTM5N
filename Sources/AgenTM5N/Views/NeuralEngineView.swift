@@ -1,43 +1,69 @@
+import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct NeuralEngineView: View {
   @EnvironmentObject private var appState: AppState
-  @State private var showingModelImporter = false
+  @State private var isImportingModel = false
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
+        languageCard
         hardwareCard
         appleModelCard
         coreMLCard
       }
       .padding(20)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .navigationTitle("Neural Engine")
-    .fileImporter(
-      isPresented: $showingModelImporter,
-      allowedContentTypes: modelContentTypes,
-      allowsMultipleSelection: false
-    ) { result in
-      switch result {
-      case .success(let urls):
-        guard let url = urls.first else { return }
-        let accessed = url.startAccessingSecurityScopedResource()
-        Task {
-          await appState.loadCoreMLModel(from: url)
-          if accessed {
-            url.stopAccessingSecurityScopedResource()
-          }
+    .navigationTitle(
+      L10n.text(
+        de: "Neural Engine",
+        en: "Neural Engine",
+        fr: "Neural Engine"
+      )
+    )
+  }
+
+  private var languageCard: some View {
+    GroupBox(
+      L10n.text(
+        de: "Sprache",
+        en: "Language",
+        fr: "Langue"
+      )
+    ) {
+      HStack(alignment: .top, spacing: 12) {
+        Image(systemName: "character.bubble")
+          .font(.title2)
+          .foregroundStyle(.secondary)
+
+        VStack(alignment: .leading, spacing: 4) {
+          Text(SystemLanguage.current.displayName)
+            .font(.headline)
+          Text(
+            L10n.text(
+              de: "Agent-Antworten, Diagnosen und Statusmeldungen folgen automatisch der aktuell bevorzugten macOS-Sprache.",
+              en: "Agent replies, diagnostics, and status messages automatically follow the currently preferred macOS language.",
+              fr: "Les réponses de l’agent, les diagnostics et les messages d’état suivent automatiquement la langue macOS actuellement préférée."
+            )
+          )
+          .foregroundStyle(.secondary)
         }
-      case .failure(let error):
-        appState.errorMessage = error.localizedDescription
       }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(8)
     }
   }
 
   private var hardwareCard: some View {
-    GroupBox("Hardware") {
+    GroupBox(
+      L10n.text(
+        de: "Hardware",
+        en: "Hardware",
+        fr: "Matériel"
+      )
+    ) {
       Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
         GridRow {
           Text("Chip")
@@ -45,8 +71,14 @@ struct NeuralEngineView: View {
           Text(appState.hardwareProfile.chipName)
         }
         GridRow {
-          Text("Unified Memory")
-            .foregroundStyle(.secondary)
+          Text(
+            L10n.text(
+              de: "Gemeinsamer Speicher",
+              en: "Unified Memory",
+              fr: "Mémoire unifiée"
+            )
+          )
+          .foregroundStyle(.secondary)
           Text(appState.hardwareProfile.memoryDescription)
         }
         GridRow {
@@ -55,9 +87,21 @@ struct NeuralEngineView: View {
           Text(appState.hardwareProfile.operatingSystem)
         }
         GridRow {
-          Text("Core ML Compute Units")
-            .foregroundStyle(.secondary)
-          Text("CPU + Apple Neural Engine")
+          Text(
+            L10n.text(
+              de: "Core-ML-Recheneinheiten",
+              en: "Core ML Compute Units",
+              fr: "Unités de calcul Core ML"
+            )
+          )
+          .foregroundStyle(.secondary)
+          Text(
+            L10n.text(
+              de: "CPU + Apple Neural Engine",
+              en: "CPU + Apple Neural Engine",
+              fr: "CPU + Apple Neural Engine"
+            )
+          )
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -66,14 +110,33 @@ struct NeuralEngineView: View {
   }
 
   private var appleModelCard: some View {
-    GroupBox("Apple On-Device Foundation Model") {
+    GroupBox(
+      L10n.text(
+        de: "Lokales Apple Foundation Model",
+        en: "Apple On-Device Foundation Model",
+        fr: "Modèle Foundation local d’Apple"
+      )
+    ) {
       VStack(alignment: .leading, spacing: 10) {
-        LabeledContent("Status", value: appState.hardwareProfile.appleFoundationModelStatus)
+        LabeledContent(
+          L10n.text(de: "Status", en: "Status", fr: "État"),
+          value: appState.hardwareProfile.appleFoundationModelStatus
+        )
         Text(
-          "Der Chat-Provider „Apple On-Device“ verwendet Apples lokales System Language Model. Apple entscheidet intern über die Hardware-Verteilung."
+          L10n.text(
+            de: "Der Chat-Provider „Apple lokal“ verwendet Apples System-Sprachmodell. Apple entscheidet intern über die tatsächliche Hardware-Verteilung.",
+            en: "The Apple on-device chat provider uses Apple’s system language model. Apple decides the actual hardware placement internally.",
+            fr: "Le fournisseur de chat Apple local utilise le modèle linguistique système d’Apple. Apple décide en interne de l’affectation matérielle réelle."
+          )
         )
         .foregroundStyle(.secondary)
-        Button("Im Chat auswählen") {
+        Button(
+          L10n.text(
+            de: "Im Chat auswählen",
+            en: "Select in Chat",
+            fr: "Sélectionner dans le chat"
+          )
+        ) {
           appState.providerChanged(to: .appleOnDevice)
           appState.selectedSection = .chat
         }
@@ -84,91 +147,77 @@ struct NeuralEngineView: View {
   }
 
   private var coreMLCard: some View {
-    GroupBox("Core ML – expliziter Neural-Engine-Pfad") {
+    GroupBox(
+      L10n.text(
+        de: "Core ML – expliziter Neural-Engine-Pfad",
+        en: "Core ML – explicit Neural Engine path",
+        fr: "Core ML – chemin Neural Engine explicite"
+      )
+    ) {
       VStack(alignment: .leading, spacing: 14) {
-        HStack {
-          Button {
-            showingModelImporter = true
-          } label: {
-            Label("Core-ML-Modell laden", systemImage: "square.and.arrow.down")
+        HStack(spacing: 12) {
+          Button(action: selectCoreMLModel) {
+            if isImportingModel {
+              ProgressView()
+                .controlSize(.small)
+            } else {
+              Label(
+                L10n.text(
+                  de: "Core-ML-Modell importieren",
+                  en: "Import Core ML Model",
+                  fr: "Importer un modèle Core ML"
+                ),
+                systemImage: "square.and.arrow.down"
+              )
+            }
           }
+          .disabled(isImportingModel)
 
           if let descriptor = appState.coreMLDescriptor {
+            Label(
+              L10n.text(
+                de: "Geladen",
+                en: "Loaded",
+                fr: "Chargé"
+              ),
+              systemImage: "checkmark.circle.fill"
+            )
+            .foregroundStyle(.green)
+
             Text(descriptor.sourceURL.lastPathComponent)
               .font(.system(.caption, design: .monospaced))
               .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.middle)
           }
         }
 
         if let descriptor = appState.coreMLDescriptor {
-          LabeledContent("Compute Units", value: descriptor.computeUnits)
-
-          HStack(alignment: .top, spacing: 32) {
-            VStack(alignment: .leading, spacing: 5) {
-              Text("Inputs")
-                .font(.headline)
-              ForEach(descriptor.inputs, id: \.self) { input in
-                Text(input)
-                  .font(.system(.caption, design: .monospaced))
-              }
-            }
-
-            VStack(alignment: .leading, spacing: 5) {
-              Text("Outputs")
-                .font(.headline)
-              ForEach(descriptor.outputs, id: \.self) { output in
-                Text(output)
-                  .font(.system(.caption, design: .monospaced))
-              }
-            }
-          }
-
-          Text("Numerische Inputs als JSON")
-            .font(.headline)
-          TextEditor(text: $appState.coreMLPredictionInput)
-            .font(.system(.body, design: .monospaced))
-            .frame(minHeight: 120)
-            .overlay {
-              RoundedRectangle(cornerRadius: 6)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-            }
-
-          Button {
-            Task { await appState.runCoreMLPrediction() }
-          } label: {
-            if appState.isRunningCoreML {
-              ProgressView()
-                .controlSize(.small)
-            } else {
-              Label("Prediction ausführen", systemImage: "play.fill")
-            }
-          }
-          .disabled(appState.isRunningCoreML)
-
-          if let result = appState.coreMLPredictionResult {
-            VStack(alignment: .leading, spacing: 6) {
-              Text(
-                "Resultat – \(result.durationMilliseconds, format: .number.precision(.fractionLength(3))) ms"
-              )
-              .font(.headline)
-              ForEach(result.values.keys.sorted(), id: \.self) { key in
-                HStack(alignment: .top) {
-                  Text(key)
-                    .font(.system(.caption, design: .monospaced).bold())
-                  Text(result.values[key] ?? "")
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                }
-              }
-            }
-            .padding(12)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-          }
+          modelDetails(descriptor)
+          predictionEditor
         } else {
-          Text(
-            "Lade ein `.mlmodel`, `.mlpackage` oder kompiliertes `.mlmodelc`. Das Modell wird mit `MLComputeUnits.cpuAndNeuralEngine` initialisiert."
-          )
-          .foregroundStyle(.secondary)
+          VStack(alignment: .leading, spacing: 8) {
+            Text(
+              L10n.text(
+                de: "Unterstützte Formate",
+                en: "Supported formats",
+                fr: "Formats pris en charge"
+              )
+            )
+            .font(.headline)
+
+            Text(".mlmodel  ·  .mlpackage  ·  .mlmodelc")
+              .font(.system(.body, design: .monospaced))
+
+            Text(
+              L10n.text(
+                de: "Das ausgewählte Modell wird in den geschützten AgenTM5N-Anwendungsordner kopiert, bei Bedarf kompiliert und mit der Rechenrichtlinie CPU + Apple Neural Engine geladen. Diese Richtlinie fordert den Neural-Engine-Pfad an; Core ML entscheidet weiterhin pro Operator über die tatsächliche Ausführung.",
+                en: "The selected model is copied into AgenTM5N’s protected application directory, compiled when required, and loaded with the CPU + Apple Neural Engine compute policy. This policy requests the Neural Engine path; Core ML still decides the actual placement per operator.",
+                fr: "Le modèle sélectionné est copié dans le dossier d’application protégé d’AgenTM5N, compilé si nécessaire, puis chargé avec la politique CPU + Apple Neural Engine. Cette politique demande le chemin Neural Engine ; Core ML décide toujours de l’exécution réelle pour chaque opérateur."
+              )
+            )
+            .foregroundStyle(.secondary)
+          }
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,9 +225,205 @@ struct NeuralEngineView: View {
     }
   }
 
-  private var modelContentTypes: [UTType] {
-    ["mlmodel", "mlpackage", "mlmodelc"].compactMap { extensionName in
-      UTType(filenameExtension: extensionName)
-    } + [.data]
+  private func modelDetails(_ descriptor: CoreMLModelDescriptor) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+      LabeledContent(
+        L10n.text(
+          de: "Rechenrichtlinie",
+          en: "Compute Policy",
+          fr: "Politique de calcul"
+        ),
+        value: descriptor.computeUnits
+      )
+
+      VStack(alignment: .leading, spacing: 5) {
+        Text(
+          L10n.text(
+            de: "Importierte Quelle",
+            en: "Imported Source",
+            fr: "Source importée"
+          )
+        )
+        .font(.headline)
+        Text(descriptor.sourceURL.path)
+          .font(.system(.caption, design: .monospaced))
+          .textSelection(.enabled)
+      }
+
+      VStack(alignment: .leading, spacing: 5) {
+        Text(
+          L10n.text(
+            de: "Kompiliertes Modell",
+            en: "Compiled Model",
+            fr: "Modèle compilé"
+          )
+        )
+        .font(.headline)
+        Text(descriptor.compiledURL.path)
+          .font(.system(.caption, design: .monospaced))
+          .textSelection(.enabled)
+      }
+
+      ViewThatFits(in: .horizontal) {
+        HStack(alignment: .top, spacing: 32) {
+          featureList(
+            title: L10n.text(de: "Eingaben", en: "Inputs", fr: "Entrées"),
+            values: descriptor.inputs
+          )
+          featureList(
+            title: L10n.text(de: "Ausgaben", en: "Outputs", fr: "Sorties"),
+            values: descriptor.outputs
+          )
+        }
+
+        VStack(alignment: .leading, spacing: 14) {
+          featureList(
+            title: L10n.text(de: "Eingaben", en: "Inputs", fr: "Entrées"),
+            values: descriptor.inputs
+          )
+          featureList(
+            title: L10n.text(de: "Ausgaben", en: "Outputs", fr: "Sorties"),
+            values: descriptor.outputs
+          )
+        }
+      }
+    }
+  }
+
+  private func featureList(title: String, values: [String]) -> some View {
+    VStack(alignment: .leading, spacing: 5) {
+      Text(title)
+        .font(.headline)
+      if values.isEmpty {
+        Text("–")
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(values, id: \.self) { value in
+          Text(value)
+            .font(.system(.caption, design: .monospaced))
+            .textSelection(.enabled)
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private var predictionEditor: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text(
+        L10n.text(
+          de: "Skalare Eingaben als JSON",
+          en: "Scalar Inputs as JSON",
+          fr: "Entrées scalaires en JSON"
+        )
+      )
+      .font(.headline)
+
+      Text(
+        L10n.text(
+          de: "Der generische Runner unterstützt aktuell Zahlen, Ganzzahlen und Text. Bild-, MultiArray-, Sequenz- oder State-Modelle können geladen und analysiert werden, benötigen für Vorhersagen jedoch einen typgerechten Adapter.",
+          en: "The generic runner currently supports numbers, integers, and text. Image, MultiArray, sequence, or state models can be loaded and inspected, but prediction requires a type-specific adapter.",
+          fr: "L’exécuteur générique prend actuellement en charge les nombres, les entiers et le texte. Les modèles Image, MultiArray, séquence ou état peuvent être chargés et inspectés, mais la prédiction nécessite un adaptateur spécifique."
+        )
+      )
+      .foregroundStyle(.secondary)
+
+      TextEditor(text: $appState.coreMLPredictionInput)
+        .font(.system(.body, design: .monospaced))
+        .frame(minHeight: 120)
+        .overlay {
+          RoundedRectangle(cornerRadius: 6)
+            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        }
+
+      Button {
+        Task { await appState.runCoreMLPrediction() }
+      } label: {
+        if appState.isRunningCoreML {
+          ProgressView()
+            .controlSize(.small)
+        } else {
+          Label(
+            L10n.text(
+              de: "Vorhersage ausführen",
+              en: "Run Prediction",
+              fr: "Exécuter la prédiction"
+            ),
+            systemImage: "play.fill"
+          )
+        }
+      }
+      .disabled(appState.isRunningCoreML)
+
+      if let result = appState.coreMLPredictionResult {
+        VStack(alignment: .leading, spacing: 6) {
+          Text(
+            L10n.text(
+              de: "Ergebnis – \(result.durationMilliseconds.formatted(.number.precision(.fractionLength(3)))) ms",
+              en: "Result – \(result.durationMilliseconds.formatted(.number.precision(.fractionLength(3)))) ms",
+              fr: "Résultat – \(result.durationMilliseconds.formatted(.number.precision(.fractionLength(3)))) ms"
+            )
+          )
+          .font(.headline)
+          ForEach(result.values.keys.sorted(), id: \.self) { key in
+            HStack(alignment: .top) {
+              Text(key)
+                .font(.system(.caption, design: .monospaced).bold())
+              Text(result.values[key] ?? "")
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+            }
+          }
+        }
+        .padding(12)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+      }
+    }
+  }
+
+  private func selectCoreMLModel() {
+    let panel = NSOpenPanel()
+    panel.title = L10n.text(
+      de: "Core-ML-Modell auswählen",
+      en: "Select Core ML Model",
+      fr: "Sélectionner un modèle Core ML"
+    )
+    panel.prompt = L10n.text(
+      de: "Importieren",
+      en: "Import",
+      fr: "Importer"
+    )
+    panel.message = L10n.text(
+      de: "Wähle eine .mlmodel-, .mlpackage- oder .mlmodelc-Datei beziehungsweise ein entsprechendes Paketverzeichnis aus.",
+      en: "Select an .mlmodel, .mlpackage, or .mlmodelc file or package directory.",
+      fr: "Sélectionnez un fichier ou paquet .mlmodel, .mlpackage ou .mlmodelc."
+    )
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = false
+    panel.resolvesAliases = true
+    panel.treatsFilePackagesAsDirectories = false
+
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let supportedExtensions: Set<String> = ["mlmodel", "mlpackage", "mlmodelc"]
+    guard supportedExtensions.contains(url.pathExtension.lowercased()) else {
+      appState.errorMessage = L10n.text(
+        de: "Nicht unterstütztes Modell. Erlaubt sind .mlmodel, .mlpackage und .mlmodelc.",
+        en: "Unsupported model. Supported types are .mlmodel, .mlpackage, and .mlmodelc.",
+        fr: "Modèle non pris en charge. Les types acceptés sont .mlmodel, .mlpackage et .mlmodelc."
+      )
+      return
+    }
+
+    let accessed = url.startAccessingSecurityScopedResource()
+    isImportingModel = true
+    Task {
+      await appState.loadCoreMLModel(from: url)
+      if accessed {
+        url.stopAccessingSecurityScopedResource()
+      }
+      isImportingModel = false
+    }
   }
 }
