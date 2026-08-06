@@ -6,7 +6,6 @@ struct ChatView: View {
   var body: some View {
     VStack(spacing: 0) {
       header
-      runtimeStatus
       Divider()
       messages
       if let approval = appState.pendingToolApproval {
@@ -16,73 +15,147 @@ struct ChatView: View {
       Divider()
       composer
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .navigationTitle("Chat")
   }
 
   private var header: some View {
-    HStack(spacing: 12) {
-      Picker(
-        "Provider",
-        selection: Binding(
-          get: { appState.configuration.providerKind },
-          set: { appState.providerChanged(to: $0) }
-        )
-      ) {
-        ForEach(ProviderKind.allCases) { provider in
-          Text(provider.displayName).tag(provider)
-        }
+    VStack(alignment: .leading, spacing: 8) {
+      ViewThatFits(in: .horizontal) {
+        wideHeader
+        compactHeader
       }
-      .frame(width: 190)
-
-      if appState.configuration.providerKind != .appleOnDevice {
-        TextField("Modell", text: $appState.configuration.model)
-          .textFieldStyle(.roundedBorder)
-          .frame(minWidth: 220)
-
-        Button {
-          Task { await appState.fetchModels() }
-        } label: {
-          if appState.isLoadingModels {
-            ProgressView()
-              .controlSize(.small)
-          } else {
-            Label("Modelle", systemImage: "arrow.clockwise")
-          }
-        }
-        .disabled(appState.isLoadingModels)
-
-        if !appState.availableModels.isEmpty {
-          Picker("Verfügbar", selection: $appState.configuration.model) {
-            ForEach(appState.availableModels, id: \.self) { model in
-              Text(model).tag(model)
-            }
-          }
-          .labelsHidden()
-          .frame(maxWidth: 280)
-        }
-      }
-
-      agentModeBadge
-
-      Spacer()
-
-      if let metrics = appState.latestMetrics {
-        MetricsBadge(metrics: metrics)
-      }
-
-      Button(role: .destructive) {
-        Task { await appState.resetConversation() }
-      } label: {
-        Label("Neue Sitzung", systemImage: "plus.bubble")
-      }
+      runtimeStatus
     }
     .padding(.horizontal, 12)
     .padding(.top, 12)
-    .padding(.bottom, 7)
+    .padding(.bottom, 9)
+  }
+
+  private var wideHeader: some View {
+    HStack(spacing: 10) {
+      providerPicker
+      modelField
+      modelsButton
+      availableModelPicker
+      agentModeBadge
+      Spacer(minLength: 12)
+      metricsBadge
+      newSessionButton
+    }
+  }
+
+  private var compactHeader: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 8) {
+        providerPicker
+          .frame(width: 165)
+        modelField
+        modelsButton
+        Spacer(minLength: 8)
+        newSessionButton
+      }
+
+      HStack(spacing: 8) {
+        agentModeBadge
+        availableModelMenu
+        Spacer(minLength: 8)
+        metricsBadge
+      }
+    }
+  }
+
+  private var providerPicker: some View {
+    Picker(
+      "Provider",
+      selection: Binding(
+        get: { appState.configuration.providerKind },
+        set: { appState.providerChanged(to: $0) }
+      )
+    ) {
+      ForEach(ProviderKind.allCases) { provider in
+        Text(provider.displayName).tag(provider)
+      }
+    }
+    .labelsHidden()
+    .frame(width: 185)
+  }
+
+  @ViewBuilder
+  private var modelField: some View {
+    if appState.configuration.providerKind != .appleOnDevice {
+      TextField("Modell", text: $appState.configuration.model)
+        .textFieldStyle(.roundedBorder)
+        .frame(minWidth: 150, idealWidth: 220, maxWidth: 280)
+    }
+  }
+
+  @ViewBuilder
+  private var modelsButton: some View {
+    if appState.configuration.providerKind != .appleOnDevice {
+      Button {
+        Task { await appState.fetchModels() }
+      } label: {
+        if appState.isLoadingModels {
+          ProgressView()
+            .controlSize(.small)
+        } else {
+          Label("Modelle", systemImage: "arrow.clockwise")
+        }
+      }
+      .disabled(appState.isLoadingModels)
+    }
+  }
+
+  @ViewBuilder
+  private var availableModelPicker: some View {
+    if appState.configuration.providerKind != .appleOnDevice,
+      !appState.availableModels.isEmpty
+    {
+      Picker("Verfügbar", selection: $appState.configuration.model) {
+        ForEach(appState.availableModels, id: \.self) { model in
+          Text(model).tag(model)
+        }
+      }
+      .labelsHidden()
+      .frame(minWidth: 150, idealWidth: 220, maxWidth: 260)
+    }
+  }
+
+  @ViewBuilder
+  private var availableModelMenu: some View {
+    if appState.configuration.providerKind != .appleOnDevice,
+      !appState.availableModels.isEmpty
+    {
+      Menu {
+        ForEach(appState.availableModels, id: \.self) { model in
+          Button(model) {
+            appState.configuration.model = model
+          }
+        }
+      } label: {
+        Label("Modell wählen", systemImage: "list.bullet")
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var metricsBadge: some View {
+    if let metrics = appState.latestMetrics {
+      MetricsBadge(metrics: metrics)
+    }
+  }
+
+  private var newSessionButton: some View {
+    Button {
+      Task { await appState.resetConversation() }
+    } label: {
+      Label("Neue Sitzung", systemImage: "plus.bubble")
+    }
   }
 
   private var runtimeStatus: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: 10) {
       Label(
         appState.configuration.providerKind.displayName,
         systemImage: "cpu"
@@ -91,6 +164,7 @@ struct ChatView: View {
       if appState.configuration.providerKind != .appleOnDevice {
         Text(appState.configuration.model)
           .font(.system(.caption, design: .monospaced))
+          .lineLimit(1)
       }
 
       Divider()
@@ -104,21 +178,19 @@ struct ChatView: View {
       .truncationMode(.middle)
       .help(appState.configuration.workspacePath)
 
-      Spacer()
+      Spacer(minLength: 8)
 
       if appState.configuration.agentEnabled,
         appState.configuration.providerKind != .appleOnDevice
       {
-        Text("Lokale Werkzeuge werden dem Modell bereitgestellt.")
+        Text("Lokale Werkzeuge aktiv")
           .foregroundStyle(.secondary)
       } else {
-        Text("Keine Tool-Ausführung in diesem Modus.")
+        Text("Keine Tool-Ausführung")
           .foregroundStyle(.orange)
       }
     }
     .font(.caption)
-    .padding(.horizontal, 12)
-    .padding(.bottom, 9)
   }
 
   @ViewBuilder
@@ -131,6 +203,7 @@ struct ChatView: View {
         systemImage: "wrench.and.screwdriver"
       )
       .font(.caption)
+      .lineLimit(1)
       .padding(.horizontal, 9)
       .padding(.vertical, 5)
       .background(.green.opacity(0.16), in: Capsule())
@@ -138,6 +211,7 @@ struct ChatView: View {
     } else {
       Label("Chat-only", systemImage: "bubble.left")
         .font(.caption)
+        .lineLimit(1)
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
         .background(.orange.opacity(0.16), in: Capsule())
@@ -157,7 +231,7 @@ struct ChatView: View {
                 "Für lokale Werkzeuge einen Ollama-Provider wählen, Agent aktivieren und den grünen Agent-Badge prüfen."
               )
             )
-            .frame(maxWidth: .infinity, minHeight: 420)
+            .frame(maxWidth: .infinity, minHeight: 320)
           } else {
             ForEach(appState.messages) { message in
               MessageBubble(message: message)
@@ -167,6 +241,7 @@ struct ChatView: View {
         }
         .padding(18)
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
       .onChange(of: appState.messages) { _, messages in
         guard let last = messages.last else { return }
         withAnimation {
@@ -180,7 +255,7 @@ struct ChatView: View {
     HStack(alignment: .bottom, spacing: 12) {
       TextEditor(text: $appState.inputText)
         .font(.body)
-        .frame(minHeight: 70, maxHeight: 180)
+        .frame(minHeight: 56, idealHeight: 76, maxHeight: 160)
         .padding(6)
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
         .overlay {
@@ -209,7 +284,7 @@ struct ChatView: View {
         Button {
           Task { await appState.saveConfiguration() }
         } label: {
-          Label("Konfiguration", systemImage: "square.and.arrow.down")
+          Label("Speichern", systemImage: "square.and.arrow.down")
         }
       }
     }
@@ -264,9 +339,9 @@ private struct MessageBubble: View {
     HStack(alignment: .top) {
       if message.role == .assistant {
         bubble
-        Spacer(minLength: 80)
+        Spacer(minLength: 40)
       } else {
-        Spacer(minLength: 80)
+        Spacer(minLength: 40)
         bubble
       }
     }
