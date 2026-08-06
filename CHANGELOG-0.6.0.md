@@ -1,48 +1,49 @@
 # AgenTM5N 0.6.0 Build 16
 
-## Neu
+## Document Intelligence
 
-- Lokale Extraktion von DOCX-, XLSX- und PPTX-Dokumenten.
-- Seitenbezogene PDF-Extraktion mit Apple-Vision-OCR-Fallback für gescannte PDFs.
+- DOCX-Extraktion aus Office Open XML mit Dokumenttext, Kopf- und Fußzeilen, Fußnoten, Endnoten und Kommentaren.
+- XLSX-Extraktion mit Blattnamen, Zeilenbereichen, Zellreferenzen, Werten und Formeln.
+- PPTX-Extraktion mit Folientext und Sprechernotizen.
+- PDF-Textebene mit Quellenangaben pro Seite.
+- Lokaler Apple-Vision-OCR-Fallback für gescannte PDFs.
 - Lokale OCR für Bildanhänge.
-- Strukturierte Quellenmarker für Dokumentabschnitte:
-  - Word: Abschnitt
-  - Excel: Arbeitsblatt und Zeilenbereich
-  - PowerPoint: Folie und Sprechernotizen
-  - PDF: Seite
-- SHA-256-basierter Extraktionscache.
-- Attachment Inspector mit Extraktionsdetails und Inhaltsvorschau.
+- Strukturierte Quellenmarker werden bei der Extraktion erzeugt und nicht nachträglich vom Sprachmodell erfunden.
 
-## Office-Verarbeitung
+## Attachment Inspector
 
-- Office-Dateien werden als Open-XML-Archive gelesen.
-- Es werden nur explizit benötigte XML-Einträge verarbeitet.
-- Archive werden nicht in den Workspace entpackt.
-- Word extrahiert Dokumenttext, Kopf-/Fußzeilen, Fußnoten, Endnoten und Kommentare.
-- Excel extrahiert Blattnamen, Zellreferenzen, Werte und Formeln.
-- PowerPoint extrahiert Folientext und Sprechernotizen.
-- Makros, eingebettete Programme und externe Links werden nicht ausgeführt.
+- Jeder Anhangschip besitzt eine Info-Schaltfläche.
+- Der Inspector zeigt Dateityp, Extraktionsmethode, Dateigröße, Seiten, Folien oder Tabellenblätter, Anzahl Abschnitte, OCR-Nutzung, Cache-Treffer und Kürzungsstatus.
+- Strukturierte Dokumentabschnitte werden mit Quellen-Locator und lokaler Inhaltsvorschau angezeigt.
 
-## OCR
+## Agent-Werkzeuge
 
-- OCR verwendet ausschließlich Apples lokales Vision Framework.
-- Gescannte PDFs werden nur dann per OCR verarbeitet, wenn keine brauchbare Textebene vorhanden ist.
-- Maximal 40 PDF-Seiten werden per OCR verarbeitet.
-- Bild-OCR ist ergänzend; ein OCR-Fehler blockiert einen normalen Vision-Bildanhang nicht.
+- `attachment_list` listet Anhänge der aktuellen Unterhaltung mit stabilen IDs und begrenzten Metadaten.
+- `attachment_describe` beschreibt einen Anhang und liefert verfügbare Quellen-Locators.
+- `attachment_search` durchsucht lokal extrahierten Text und OCR-Text in Anhängen der aktuellen Unterhaltung.
+- `attachment_read_section` liest einen begrenzten Dokumentabschnitt anhand eines Quellen-Locators.
+- Alle vier Werkzeuge sind reine Leseoperationen.
+- Binärdaten, Base64-Bilder, interne Cachepfade und SHA-256-Werte werden nicht an das Sprachmodell ausgegeben.
 
 ## Cache und Sicherheit
 
-- Cache-Schlüssel ist der SHA-256-Hash der Originaldatei.
+- Extraktionsergebnisse werden anhand des SHA-256-Inhaltswerts wiederverwendet.
 - Originaldokumente werden nicht in den Cache kopiert.
-- Cache-Verzeichnis: `0700`.
-- Cachedateien: `0600`.
-- Maximal 25 MiB pro Office-/PDF-Quelldatei.
-- Maximal 5.000 Archiveinträge.
-- Maximal 8 MiB pro gelesener OOXML-Komponente.
-- Maximal 100 Excel-Arbeitsblätter.
-- Maximal 300 PowerPoint-Folien.
-- Pfadtraversal und absolute Archiveinträge werden abgelehnt.
-- Dokumentinhalte bleiben nicht vertrauenswürdige Benutzerdaten.
+- Cache-Verzeichnisse erhalten Berechtigung `0700`, Cachedateien `0600`.
+- Office-Makros und eingebettete Programme werden nicht ausgeführt.
+- Dokumente lösen keine externen Links oder Netzwerkzugriffe aus.
+- OOXML-Dateien werden nur über explizit erlaubte Archiveinträge gelesen und nicht in den Workspace entpackt.
+- Pfadtraversal, absolute Archiveinträge und unkontrollierte ZIP-Expansion werden blockiert.
+
+## Grenzen
+
+- maximal 25 MiB Quelldatei für PDF und Office-Dokumente
+- maximal 5.000 ZIP-Einträge
+- maximal 8 MiB pro gelesener OOXML-Komponente
+- maximal 100 Excel-Arbeitsblätter
+- maximal 300 PowerPoint-Folien
+- maximal 40 PDF-Seiten für OCR
+- maximal 240.000 extrahierte Zeichen pro Dokument
 
 ## Version
 
