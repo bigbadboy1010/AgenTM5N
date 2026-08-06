@@ -304,35 +304,55 @@ public actor AgentRuntime {
     process.standardOutput = stdoutHandle
     process.standardError = stderrHandle
 
-    do {
-      try process.run()
-    } catch {
-      try? stdoutHandle.close()
-      try? stderrHandle.close()
-      throw AgentRuntimeError.commandLaunchFailed(error.localizedDescription)
-    }
-
     let waitState = ProcessWaitState()
-    let (exitCode, timedOut) = await withCheckedContinuation {
-      (continuation: CheckedContinuation<(Int32, Bool), Never>) in
+    let processReference = ProcessReference(process)
+    let outcome = await withCheckedContinuation {
+      (continuation: CheckedContinuation<ProcessOutcome, Never>) in
       process.terminationHandler = { terminatedProcess in
         let state = waitState.finish()
         guard state.shouldResume else { return }
         continuation.resume(
-          returning: (terminatedProcess.terminationStatus, state.timedOut)
+          returning: .terminated(
+            exitCode: terminatedProcess.terminationStatus,
+            timedOut: state.timedOut
+          )
         )
+      }
+
+      do {
+        try process.run()
+      } catch {
+        let state = waitState.finish()
+        guard state.shouldResume else { return }
+        continuation.resume(
+          returning: .launchFailed(error.localizedDescription)
+        )
+        return
       }
 
       DispatchQueue.global(qos: .utility).asyncAfter(
         deadline: .now() + Self.commandTimeout
       ) {
-        guard waitState.markTimedOutIfRunning(), process.isRunning else { return }
-        process.terminate()
+        let runningProcess = processReference.process
+        guard waitState.markTimedOutIfRunning(), runningProcess.isRunning else {
+          return
+        }
+        runningProcess.terminate()
       }
     }
 
     try? stdoutHandle.close()
     try? stderrHandle.close()
+
+    let exitCode: Int32
+    let timedOut: Bool
+    switch outcome {
+    case .terminated(let status, let didTimeOut):
+      exitCode = status
+      timedOut = didTimeOut
+    case .launchFailed(let reason):
+      throw AgentRuntimeError.commandLaunchFailed(reason)
+    }
 
     let stdout = try readLimitedText(from: stdoutURL)
     let stderr = try readLimitedText(from: stderrURL)
@@ -516,5 +536,18 @@ private final class ProcessWaitState: @unchecked Sendable {
     }
     finished = true
     return (true, timeoutRequested)
+  }
+}
+
+private enum ProcessOutcome: Sendable {
+  case terminated(exitCode: Int32, timedOut: Bool)
+  case launchFailed(String)
+}
+
+private final class ProcessReference: @unchecked Sendable {
+  let process: Process
+
+  init(_ process: Process) {
+    self.process = process
   }
 }
