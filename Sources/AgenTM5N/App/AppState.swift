@@ -341,6 +341,7 @@ public final class AppState: ObservableObject {
     messages = []
     latestMetrics = nil
     do {
+      try PromptImageAttachmentStorage.removeAll()
       try await conversationStore.save(messages)
     } catch {
       present(error)
@@ -520,6 +521,9 @@ public final class AppState: ObservableObject {
         try await performOllamaSend(assistantID: assistantID)
 
       case .appleOnDevice:
+        if PromptAttachmentService.hasImageAttachments(in: text) {
+          throw PromptAttachmentError.imageProviderUnsupported
+        }
         let providerMessages = makeAppleMessages(excludingAssistantID: assistantID)
         let event = try await appleProvider.complete(
           configuration: configuration,
@@ -552,6 +556,21 @@ public final class AppState: ObservableObject {
   private func performOllamaSend(assistantID: UUID) async throws {
     let apiKey = try await configuredAPIKey()
     var providerMessages = makeOllamaMessages(excludingAssistantID: assistantID)
+
+    if providerMessages.contains(where: {
+      PromptAttachmentService.hasImageAttachments(in: $0.content)
+    }) {
+      let capabilities = try await ollamaProvider.modelCapabilities(
+        configuration: configuration,
+        apiKey: apiKey
+      )
+      guard capabilities.contains("vision") else {
+        throw PromptAttachmentError.modelDoesNotSupportVision(
+          configuration.model
+        )
+      }
+    }
+
     let tools = configuration.agentEnabled
       ? AgentRuntime.toolDefinitions
         + CoreMLAgentTools.definitions

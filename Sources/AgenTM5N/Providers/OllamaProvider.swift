@@ -42,10 +42,46 @@ public enum OllamaProviderError: LocalizedError {
 public final class OllamaProvider: @unchecked Sendable {
   private struct ChatRequestBody: Encodable {
     let model: String
-    let messages: [ProviderMessage]
+    let messages: [OllamaRequestMessage]
     let tools: [ProviderToolDefinition]?
     let stream: Bool
     let think: Bool
+  }
+
+  private struct OllamaRequestMessage: Encodable {
+    let role: ProviderMessageRole
+    let content: String
+    let thinking: String?
+    let toolCalls: [ProviderToolCall]?
+    let toolName: String?
+    let images: [String]?
+
+    init(_ message: ProviderMessage) throws {
+      role = message.role
+      content = message.content
+      thinking = message.thinking
+      toolCalls = message.toolCalls
+      toolName = message.toolName
+
+      let references = PromptAttachmentService.imageReferences(
+        from: message.content
+      )
+      images = references.isEmpty
+        ? nil
+        : try references.map { reference in
+          try PromptImageAttachmentStorage.data(for: reference)
+            .base64EncodedString()
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+      case role
+      case content
+      case thinking
+      case toolCalls = "tool_calls"
+      case toolName = "tool_name"
+      case images
+    }
   }
 
   private struct ChatChunk: Decodable {
@@ -86,6 +122,15 @@ public final class OllamaProvider: @unchecked Sendable {
     }
   }
 
+  private struct ShowRequest: Encodable {
+    let model: String
+    let verbose = false
+  }
+
+  private struct ShowResponse: Decodable {
+    let capabilities: [String]?
+  }
+
   private let session: URLSession
 
   public init(session: URLSession = .shared) {
@@ -106,6 +151,34 @@ public final class OllamaProvider: @unchecked Sendable {
     try validate(response: response, body: data)
     let decoded = try JSONDecoder().decode(TagsResponse.self, from: data)
     return decoded.models.map(\.name).sorted()
+  }
+
+  public func modelCapabilities(
+    configuration: AppConfiguration,
+    apiKey: String?
+  ) async throws -> Set<String> {
+    let model = configuration.model.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    )
+    guard !model.isEmpty else {
+      throw OllamaProviderError.emptyModel
+    }
+
+    let url = try endpointURL(
+      baseURL: configuration.baseURL,
+      path: "/api/show"
+    )
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.timeoutInterval = 60
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    applyAuthorization(apiKey: apiKey, to: &request)
+    request.httpBody = try JSONEncoder().encode(ShowRequest(model: model))
+
+    let (data, response) = try await session.data(for: request)
+    try validate(response: response, body: data)
+    let decoded = try JSONDecoder().decode(ShowResponse.self, from: data)
+    return Set((decoded.capabilities ?? []).map { $0.lowercased() })
   }
 
   public func streamChat(
@@ -129,10 +202,13 @@ public final class OllamaProvider: @unchecked Sendable {
           request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
           applyAuthorization(apiKey: apiKey, to: &request)
 
-          let requestMessages = enrichedMessages(
+          let providerMessages = enrichedMessages(
             messages,
             configuration: configuration,
             tools: tools
+          )
+          let requestMessages = try providerMessages.map(
+            OllamaRequestMessage.init
           )
           let body = ChatRequestBody(
             model: configuration.model,
