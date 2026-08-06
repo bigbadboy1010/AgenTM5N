@@ -13,6 +13,7 @@ public final class AppState: ObservableObject {
   @Published public var availableModels: [String] = []
   @Published public var latestMetrics: ChatMetrics?
   @Published public var errorMessage: String?
+  @Published public var pendingToolApproval: PendingToolApproval?
 
   @Published public var vaultUnlocked = false
   @Published public var secrets: [VaultSecret] = []
@@ -42,7 +43,9 @@ public final class AppState: ObservableObject {
   private let appleProvider: AppleFoundationModelsProvider
   private let coreMLService: CoreMLService
   private let sshLaunchService: SSHLaunchService
+  private let agentRuntime: AgentRuntime
   private var generationTask: Task<Void, Never>?
+  private var approvalContinuation: CheckedContinuation<Bool, Never>?
 
   public init(
     configurationStore: JSONDocumentStore<AppConfiguration> = JSONDocumentStore(
@@ -61,7 +64,8 @@ public final class AppState: ObservableObject {
     ollamaProvider: OllamaProvider = OllamaProvider(),
     appleProvider: AppleFoundationModelsProvider = AppleFoundationModelsProvider(),
     coreMLService: CoreMLService = CoreMLService(),
-    sshLaunchService: SSHLaunchService = SSHLaunchService()
+    sshLaunchService: SSHLaunchService = SSHLaunchService(),
+    agentRuntime: AgentRuntime = AgentRuntime()
   ) {
     self.configurationStore = configurationStore
     self.conversationStore = conversationStore
@@ -71,6 +75,7 @@ public final class AppState: ObservableObject {
     self.appleProvider = appleProvider
     self.coreMLService = coreMLService
     self.sshLaunchService = sshLaunchService
+    self.agentRuntime = agentRuntime
   }
 
   public func bootstrap() async {
@@ -117,11 +122,31 @@ public final class AppState: ObservableObject {
   }
 
   public func saveConfiguration() async {
+    configuration.maxToolIterations = max(
+      1,
+      min(configuration.maxToolIterations, 24)
+    )
     do {
       try await configurationStore.save(configuration)
     } catch {
       present(error)
     }
+  }
+
+  public func selectWorkspace() {
+    let panel = NSOpenPanel()
+    panel.title = "AgenTM5N Workspace auswählen"
+    panel.prompt = "Auswählen"
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = true
+    panel.directoryURL = URL(
+      fileURLWithPath: NSString(string: configuration.workspacePath).expandingTildeInPath
+    )
+
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    configuration.workspacePath = url.path
   }
 
   public func unlockVault(password: String) async -> Bool {
@@ -204,9 +229,18 @@ public final class AppState: ObservableObject {
   }
 
   public func stopGeneration() {
+    resolvePendingApproval(allowed: false)
     generationTask?.cancel()
     generationTask = nil
     isGenerating = false
+  }
+
+  public func approvePendingTool() {
+    resolvePendingApproval(allowed: true)
+  }
+
+  public func denyPendingTool() {
+    resolvePendingApproval(allowed: false)
   }
 
   public func resetConversation() async {
@@ -320,21 +354,12 @@ public final class AppState: ObservableObject {
     messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
 
     do {
-      let providerMessages = makeProviderMessages(excludingAssistantID: assistantID)
       switch configuration.providerKind {
       case .ollamaLocal, .ollamaCloud:
-        let apiKey = try await configuredAPIKey()
-        let stream = ollamaProvider.streamChat(
-          configuration: configuration,
-          apiKey: apiKey,
-          messages: providerMessages
-        )
-        for try await event in stream {
-          try Task.checkCancellation()
-          apply(event: event, to: assistantID)
-        }
+        try await performOllamaSend(assistantID: assistantID)
 
       case .appleOnDevice:
+        let providerMessages = makeAppleMessages(excludingAssistantID: assistantID)
         let event = try await appleProvider.complete(
           configuration: configuration,
           messages: providerMessages
@@ -358,11 +383,174 @@ public final class AppState: ObservableObject {
       present(error)
     }
 
+    resolvePendingApproval(allowed: false)
     isGenerating = false
     generationTask = nil
   }
 
-  private func makeProviderMessages(excludingAssistantID: UUID) -> [ChatMessage] {
+  private func performOllamaSend(assistantID: UUID) async throws {
+    let apiKey = try await configuredAPIKey()
+    var providerMessages = makeOllamaMessages(excludingAssistantID: assistantID)
+    let tools =
+      configuration.agentEnabled
+      ? AgentRuntime.toolDefinitions
+      : []
+    var completedToolIterations = 0
+
+    while true {
+      try Task.checkCancellation()
+      var turnContent = ""
+      var turnThinking = ""
+      var turnToolCalls: [ProviderToolCall] = []
+
+      let stream = ollamaProvider.streamChat(
+        configuration: configuration,
+        apiKey: apiKey,
+        messages: providerMessages,
+        tools: tools
+      )
+      for try await event in stream {
+        try Task.checkCancellation()
+        turnContent += event.contentDelta
+        turnThinking += event.thinkingDelta
+        mergeToolCalls(event.toolCalls, into: &turnToolCalls)
+        apply(event: event, to: assistantID)
+      }
+
+      providerMessages.append(
+        ProviderMessage(
+          role: .assistant,
+          content: turnContent,
+          thinking: turnThinking.isEmpty ? nil : turnThinking,
+          toolCalls: turnToolCalls.isEmpty ? nil : turnToolCalls
+        )
+      )
+
+      guard configuration.agentEnabled, !turnToolCalls.isEmpty else {
+        break
+      }
+
+      guard completedToolIterations < configuration.maxToolIterations else {
+        appendAssistantText(
+          "\n\nAgent-Limit erreicht: maximal \(configuration.maxToolIterations) Tool-Runden.",
+          to: assistantID
+        )
+        break
+      }
+      completedToolIterations += 1
+
+      for call in turnToolCalls {
+        try Task.checkCancellation()
+        let toolMessage = await executeToolCall(
+          call,
+          assistantID: assistantID
+        )
+        providerMessages.append(toolMessage)
+      }
+    }
+  }
+
+  private func executeToolCall(
+    _ call: ProviderToolCall,
+    assistantID: UUID
+  ) async -> ProviderMessage {
+    let risk = await agentRuntime.risk(for: call)
+    let summary = await agentRuntime.summary(for: call)
+    let allowed = await authorize(call: call, risk: risk, summary: summary)
+    let recordID = UUID()
+    appendToolRecord(
+      ToolExecutionRecord(
+        id: recordID,
+        toolName: call.function.name,
+        argumentsSummary: summary,
+        risk: risk,
+        status: allowed ? .running : .denied,
+        output: allowed ? "" : "Vom Benutzer oder Berechtigungsmodus abgelehnt.",
+        endedAt: allowed ? nil : Date()
+      ),
+      to: assistantID
+    )
+
+    guard allowed else {
+      return ProviderMessage(
+        role: .tool,
+        content: "Tool execution denied by the user or permission policy.",
+        toolName: call.function.name
+      )
+    }
+
+    let result = await agentRuntime.execute(
+      call: call,
+      workspacePath: configuration.workspacePath,
+      permissionMode: configuration.permissionMode
+    )
+    finishToolRecord(
+      id: recordID,
+      result: result,
+      assistantID: assistantID
+    )
+    return ProviderMessage(
+      role: .tool,
+      content: result.output,
+      toolName: call.function.name
+    )
+  }
+
+  private func authorize(
+    call: ProviderToolCall,
+    risk: ToolRisk,
+    summary: String
+  ) async -> Bool {
+    switch configuration.permissionMode {
+    case .fullAccess, .workspaceTrusted:
+      return true
+    case .confirm:
+      guard risk != .read else { return true }
+      return await withCheckedContinuation { continuation in
+        approvalContinuation = continuation
+        pendingToolApproval = PendingToolApproval(
+          call: call,
+          risk: risk,
+          summary: summary
+        )
+      }
+    }
+  }
+
+  private func resolvePendingApproval(allowed: Bool) {
+    pendingToolApproval = nil
+    guard let continuation = approvalContinuation else { return }
+    approvalContinuation = nil
+    continuation.resume(returning: allowed)
+  }
+
+  private func makeOllamaMessages(
+    excludingAssistantID: UUID
+  ) -> [ProviderMessage] {
+    var result = [
+      ProviderMessage(
+        role: .system,
+        content: configuration.systemPrompt
+      )
+    ]
+    result.append(
+      contentsOf: messages.compactMap { message -> ProviderMessage? in
+        guard message.id != excludingAssistantID, message.role != .system else {
+          return nil
+        }
+        return ProviderMessage(
+          role: message.role == .user ? .user : .assistant,
+          content: message.content,
+          thinking: message.thinking.isEmpty ? nil : message.thinking
+        )
+      }
+    )
+    return result
+  }
+
+  private func makeAppleMessages(
+    excludingAssistantID: UUID
+  ) -> [ChatMessage] {
     var result = [
       ChatMessage(role: .system, content: configuration.systemPrompt)
     ]
@@ -371,6 +559,22 @@ public final class AppState: ObservableObject {
         $0.id != excludingAssistantID && $0.role != .system
       })
     return result
+  }
+
+  private func mergeToolCalls(
+    _ incoming: [ProviderToolCall],
+    into accumulated: inout [ProviderToolCall]
+  ) {
+    for call in incoming {
+      if let index = call.function.index,
+        let existingIndex = accumulated.firstIndex(
+          where: { $0.function.index == index })
+      {
+        accumulated[existingIndex] = call
+      } else if !accumulated.contains(call) {
+        accumulated.append(call)
+      }
+    }
   }
 
   private func apply(event: ProviderStreamEvent, to assistantID: UUID) {
@@ -382,6 +586,43 @@ public final class AppState: ObservableObject {
     if let metrics = event.metrics {
       latestMetrics = metrics
     }
+  }
+
+  private func appendAssistantText(_ text: String, to assistantID: UUID) {
+    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else {
+      return
+    }
+    messages[index].content += text
+  }
+
+  private func appendToolRecord(
+    _ record: ToolExecutionRecord,
+    to assistantID: UUID
+  ) {
+    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else {
+      return
+    }
+    var records = messages[index].toolExecutions ?? []
+    records.append(record)
+    messages[index].toolExecutions = records
+  }
+
+  private func finishToolRecord(
+    id: UUID,
+    result: ToolExecutionResult,
+    assistantID: UUID
+  ) {
+    guard
+      let messageIndex = messages.firstIndex(where: { $0.id == assistantID }),
+      var records = messages[messageIndex].toolExecutions,
+      let recordIndex = records.firstIndex(where: { $0.id == id })
+    else {
+      return
+    }
+    records[recordIndex].status = result.success ? .succeeded : .failed
+    records[recordIndex].output = result.output
+    records[recordIndex].endedAt = Date()
+    messages[messageIndex].toolExecutions = records
   }
 
   private func configuredAPIKey() async throws -> String? {
