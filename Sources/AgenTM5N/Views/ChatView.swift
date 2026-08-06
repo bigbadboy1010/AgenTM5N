@@ -1,8 +1,11 @@
+import AppKit
 import SwiftUI
 
 struct ChatView: View {
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
+  @State private var isDropTargeted = false
+  @State private var isImportingPromptFiles = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -289,6 +292,33 @@ struct ChatView: View {
           }
 
         VStack(spacing: 8) {
+          Button {
+            importPromptFiles()
+          } label: {
+            if isImportingPromptFiles {
+              ProgressView()
+                .controlSize(.small)
+                .frame(minWidth: 92)
+            } else {
+              Label(
+                L10n.text(
+                  de: "Anhängen",
+                  en: "Attach",
+                  fr: "Joindre"
+                ),
+                systemImage: "paperclip"
+              )
+            }
+          }
+          .disabled(isImportingPromptFiles || appState.isGenerating)
+          .help(
+            L10n.text(
+              de: "Dateien oder Bilder an den aktuellen Prompt anhängen.",
+              en: "Attach files or images to the current prompt.",
+              fr: "Joindre des fichiers ou des images à l’invite actuelle."
+            )
+          )
+
           if appState.isGenerating {
             Button(role: .destructive) {
               appState.stopGeneration()
@@ -322,6 +352,26 @@ struct ChatView: View {
       }
     }
     .padding(14)
+    .background(
+      isDropTargeted ? Color.accentColor.opacity(0.08) : Color.clear
+    )
+    .overlay {
+      if isDropTargeted {
+        RoundedRectangle(cornerRadius: 12)
+          .stroke(
+            Color.accentColor,
+            style: StrokeStyle(lineWidth: 2, dash: [7, 5])
+          )
+          .padding(6)
+          .allowsHitTesting(false)
+      }
+    }
+    .dropDestination(for: URL.self) { urls, _ in
+      importDroppedFiles(urls)
+      return true
+    } isTargeted: { targeted in
+      isDropTargeted = targeted
+    }
   }
 
   private var canSend: Bool {
@@ -331,12 +381,59 @@ struct ChatView: View {
 
   private func sendCurrentPrompt() {
     guard canSend else { return }
-    appState.inputText = PromptAttachmentService.providerContent(
-      prompt: appState.inputText,
-      attachments: attachmentStore.attachments
-    )
-    attachmentStore.removeAll()
-    appState.sendMessage()
+    if appState.configuration.providerKind == .appleOnDevice,
+      attachmentStore.attachments.contains(where: { $0.kind == .image })
+    {
+      appState.errorMessage = PromptAttachmentError.imageProviderUnsupported
+        .localizedDescription
+      return
+    }
+
+    do {
+      appState.inputText = try PromptAttachmentService.prepareProviderContent(
+        prompt: appState.inputText,
+        attachments: attachmentStore.attachments
+      )
+      attachmentStore.removeAll()
+      appState.sendMessage()
+    } catch {
+      appState.errorMessage = error.localizedDescription
+    }
+  }
+
+  private func importPromptFiles() {
+    guard !isImportingPromptFiles else { return }
+    isImportingPromptFiles = true
+    defer { isImportingPromptFiles = false }
+
+    do {
+      guard let imported = try PromptAttachmentService.selectPromptFiles(
+        existingCount: attachmentStore.attachments.count,
+        existingCharacterCount: attachmentStore.extractedCharacterCount,
+        existingImageCount: attachmentStore.imageCount,
+        existingImageBytes: attachmentStore.imageByteCount
+      ) else {
+        return
+      }
+      attachmentStore.add(imported)
+    } catch {
+      appState.errorMessage = error.localizedDescription
+    }
+  }
+
+  private func importDroppedFiles(_ urls: [URL]) {
+    do {
+      let imported = try PromptAttachmentService.importPromptFiles(
+        urls,
+        existingCount: attachmentStore.attachments.count,
+        existingCharacterCount: attachmentStore.extractedCharacterCount,
+        existingImageCount: attachmentStore.imageCount,
+        existingImageBytes: attachmentStore.imageByteCount
+      )
+      attachmentStore.add(imported)
+    } catch {
+      appState.errorMessage = error.localizedDescription
+    }
   }
 
   private func providerTitle(_ provider: ProviderKind) -> String {
@@ -379,21 +476,51 @@ private struct AttachmentDraftChip: View {
   let removeAction: () -> Void
 
   var body: some View {
-    HStack(spacing: 7) {
-      Image(systemName: attachment.mediaType == "application/pdf" ? "doc.richtext" : "doc.text")
+    HStack(spacing: 8) {
+      if attachment.kind == .image,
+        let data = attachment.imageData,
+        let image = NSImage(data: data)
+      {
+        Image(nsImage: image)
+          .resizable()
+          .scaledToFill()
+          .frame(width: 44, height: 44)
+          .clipShape(RoundedRectangle(cornerRadius: 7))
+      } else {
+        Image(
+          systemName: attachment.mediaType == "application/pdf"
+            ? "doc.richtext"
+            : "doc.text"
+        )
+        .frame(width: 28)
+      }
+
       VStack(alignment: .leading, spacing: 1) {
         Text(attachment.name)
           .font(.caption)
           .lineLimit(1)
-        Text(attachment.sizeDescription)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
+        HStack(spacing: 5) {
+          Text(attachment.sizeDescription)
+          if let dimensions = attachment.dimensionsDescription {
+            Text("·")
+            Text(dimensions)
+          }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
       }
+
       Button(action: removeAction) {
         Image(systemName: "xmark.circle.fill")
       }
       .buttonStyle(.plain)
-      .help(L10n.text(de: "Anhang entfernen", en: "Remove Attachment", fr: "Retirer la pièce jointe"))
+      .help(
+        L10n.text(
+          de: "Anhang entfernen",
+          en: "Remove Attachment",
+          fr: "Retirer la pièce jointe"
+        )
+      )
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 7)
@@ -475,7 +602,12 @@ private struct MessageBubble: View {
 
   private var bubble: some View {
     let visibleContent = PromptAttachmentService.visiblePrompt(from: message.content)
-    let attachmentNames = PromptAttachmentService.attachmentNames(from: message.content)
+    let textAttachmentNames = PromptAttachmentService.textAttachmentNames(
+      from: message.content
+    )
+    let imageReferences = PromptAttachmentService.imageReferences(
+      from: message.content
+    )
 
     return VStack(alignment: .leading, spacing: 10) {
       Text(
@@ -486,15 +618,27 @@ private struct MessageBubble: View {
       .font(.caption)
       .foregroundStyle(.secondary)
 
-      if !attachmentNames.isEmpty {
+      if !textAttachmentNames.isEmpty {
         FlowLayout(spacing: 6) {
-          ForEach(attachmentNames, id: \.self) { name in
+          ForEach(textAttachmentNames, id: \.self) { name in
             Label(name, systemImage: "paperclip")
               .font(.caption2)
               .lineLimit(1)
               .padding(.horizontal, 8)
               .padding(.vertical, 4)
               .background(.quaternary, in: Capsule())
+          }
+        }
+      }
+
+      if !imageReferences.isEmpty {
+        LazyVGrid(
+          columns: [GridItem(.adaptive(minimum: 180), spacing: 8)],
+          alignment: .leading,
+          spacing: 8
+        ) {
+          ForEach(imageReferences, id: \.id) { reference in
+            ChatImageAttachmentPreview(reference: reference)
           }
         }
       }
@@ -533,6 +677,51 @@ private struct MessageBubble: View {
       in: RoundedRectangle(cornerRadius: 12)
     )
     .frame(maxWidth: 820, alignment: .leading)
+  }
+}
+
+private struct ChatImageAttachmentPreview: View {
+  let reference: PromptImageReference
+  @State private var image: NSImage?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Group {
+        if let image {
+          Image(nsImage: image)
+            .resizable()
+            .scaledToFit()
+        } else {
+          ZStack {
+            Rectangle()
+              .fill(.quaternary)
+            Image(systemName: "photo.badge.exclamationmark")
+              .font(.title2)
+              .foregroundStyle(.secondary)
+          }
+        }
+      }
+      .frame(maxWidth: 300, minHeight: 110, maxHeight: 230)
+      .clipShape(RoundedRectangle(cornerRadius: 9))
+
+      HStack(spacing: 6) {
+        Text(reference.name)
+          .font(.caption)
+          .lineLimit(1)
+        Spacer(minLength: 4)
+        Text("\(reference.pixelWidth) × \(reference.pixelHeight)")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .padding(8)
+    .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+    .task(id: reference.id) {
+      guard let url = PromptImageAttachmentStorage.imageURL(for: reference) else {
+        return
+      }
+      image = NSImage(contentsOf: url)
+    }
   }
 }
 

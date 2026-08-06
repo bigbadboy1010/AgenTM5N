@@ -46,9 +46,9 @@ struct RootView: View {
               } else {
                 Label(
                   L10n.text(
-                    de: "Dateien zum Prompt hinzufügen",
-                    en: "Add Files to Prompt",
-                    fr: "Ajouter des fichiers à l’invite"
+                    de: "Dateien oder Bilder zum Prompt hinzufügen",
+                    en: "Add Files or Images to Prompt",
+                    fr: "Ajouter des fichiers ou des images à l’invite"
                   ),
                   systemImage: "paperclip"
                 )
@@ -57,9 +57,9 @@ struct RootView: View {
             .disabled(isImportingPromptFiles || appState.isGenerating)
             .help(
               L10n.text(
-                de: "Text-, Code-, Konfigurations-, Log- oder PDF-Dateien an den aktuellen Prompt anhängen.",
-                en: "Attach text, code, configuration, log, or PDF files to the current prompt.",
-                fr: "Joindre des fichiers texte, code, configuration, journal ou PDF à l’invite actuelle."
+                de: "Text-, Code-, Konfigurations-, Log-, PDF- oder Bilddateien an den aktuellen Prompt anhängen.",
+                en: "Attach text, code, configuration, log, PDF, or image files to the current prompt.",
+                fr: "Joindre des fichiers texte, code, configuration, journal, PDF ou image à l’invite actuelle."
               )
             )
           }
@@ -100,7 +100,9 @@ struct RootView: View {
     do {
       guard let imported = try PromptAttachmentService.selectPromptFiles(
         existingCount: attachmentStore.attachments.count,
-        existingCharacterCount: attachmentStore.extractedCharacterCount
+        existingCharacterCount: attachmentStore.extractedCharacterCount,
+        existingImageCount: attachmentStore.imageCount,
+        existingImageBytes: attachmentStore.imageByteCount
       ) else {
         return
       }

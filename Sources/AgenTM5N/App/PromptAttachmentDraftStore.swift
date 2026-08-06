@@ -10,7 +10,19 @@ public final class PromptAttachmentDraftStore: ObservableObject {
   private init() {}
 
   public var extractedCharacterCount: Int {
-    attachments.reduce(0) { $0 + $1.extractedText.count }
+    attachments.reduce(0) { partial, attachment in
+      partial + (attachment.kind == .text ? attachment.extractedText.count : 0)
+    }
+  }
+
+  public var imageByteCount: Int {
+    attachments.reduce(0) { partial, attachment in
+      partial + (attachment.kind == .image ? attachment.byteCount : 0)
+    }
+  }
+
+  public var imageCount: Int {
+    attachments.filter { $0.kind == .image }.count
   }
 
   public func add(_ newAttachments: [PromptAttachment]) {
