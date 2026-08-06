@@ -6,6 +6,7 @@ public enum WorkspaceIndexError: LocalizedError {
   case noIndexableContent
   case indexNotFound(String)
   case indexWorkspaceMismatch
+  case modelRequired(String)
   case modelMismatch(indexed: String, requested: String)
   case embeddingCountMismatch(expected: Int, actual: Int)
   case embeddingDimensionMismatch(expected: Int, actual: Int)
@@ -27,21 +28,27 @@ public enum WorkspaceIndexError: LocalizedError {
       )
     case .noIndexableContent:
       return L10n.text(
-        de: "Im Workspace wurden keine unterstützten UTF-8-Dateien für den semantischen Index gefunden.",
-        en: "No supported UTF-8 files were found for the semantic workspace index.",
-        fr: "Aucun fichier UTF-8 pris en charge n’a été trouvé pour l’index sémantique."
+        de: "Im Workspace wurden keine unterstützten UTF-8-Dateien für den Index gefunden.",
+        en: "No supported UTF-8 files were found for the workspace index.",
+        fr: "Aucun fichier UTF-8 pris en charge n’a été trouvé pour l’index."
       )
     case .indexNotFound(let path):
       return L10n.text(
-        de: "Für diesen Workspace existiert noch kein semantischer Index: \(path)",
-        en: "No semantic index exists for this workspace yet: \(path)",
-        fr: "Aucun index sémantique n’existe encore pour cet espace de travail : \(path)"
+        de: "Für diesen Workspace existiert noch kein Index: \(path)",
+        en: "No index exists for this workspace yet: \(path)",
+        fr: "Aucun index n’existe encore pour cet espace de travail : \(path)"
       )
     case .indexWorkspaceMismatch:
       return L10n.text(
         de: "Die Indexdatei gehört nicht zum aktuell ausgewählten Workspace.",
         en: "The index file does not belong to the currently selected workspace.",
         fr: "Le fichier d’index n’appartient pas à l’espace de travail actuellement sélectionné."
+      )
+    case .modelRequired(let name):
+      return L10n.text(
+        de: "Der Index wurde mit dem Core-ML-Modell „\(name)“ erstellt, aber dieses Modell ist nicht mehr registriert.",
+        en: "The index was built with Core ML model “\(name)”, but that model is no longer registered.",
+        fr: "L’index a été créé avec le modèle Core ML « \(name) », mais ce modèle n’est plus enregistré."
       )
     case .modelMismatch(let indexed, let requested):
       return L10n.text(
@@ -63,9 +70,9 @@ public enum WorkspaceIndexError: LocalizedError {
       )
     case .emptyQuery:
       return L10n.text(
-        de: "Die semantische Suchanfrage darf nicht leer sein.",
-        en: "The semantic search query must not be empty.",
-        fr: "La requête de recherche sémantique ne doit pas être vide."
+        de: "Die Suchanfrage darf nicht leer sein.",
+        en: "The search query must not be empty.",
+        fr: "La requête de recherche ne doit pas être vide."
       )
     }
   }
@@ -79,11 +86,39 @@ public actor WorkspaceIndexService {
   public static let overlapLines = 3
   public static let maximumResults = 20
 
+  public typealias ProgressHandler = @Sendable (WorkspaceIndexBuildProgress) async -> Void
+
   private struct PendingChunk: Sendable {
     let relativePath: String
     let startLine: Int
     let endLine: Int
     let text: String
+  }
+
+  private struct LegacyWorkspaceIndexStatus: Codable {
+    let workspacePath: String
+    let modelID: UUID
+    let modelName: String
+    let createdAt: Date
+    let fileCount: Int
+    let chunkCount: Int
+    let embeddingDimension: Int
+    let indexedCharacterCount: Int
+  }
+
+  private struct LegacyWorkspaceIndexChunk: Codable {
+    let id: UUID
+    let relativePath: String
+    let startLine: Int
+    let endLine: Int
+    let text: String
+    let embedding: [Float]
+  }
+
+  private struct LegacyWorkspaceIndexDocument: Codable {
+    let version: Int
+    let status: LegacyWorkspaceIndexStatus
+    let chunks: [LegacyWorkspaceIndexChunk]
   }
 
   private static let excludedDirectoryNames: Set<String> = [
@@ -111,50 +146,195 @@ public actor WorkspaceIndexService {
 
   public func build(
     workspacePath: String,
-    model: CoreMLRegisteredModel
+    model: CoreMLRegisteredModel?,
+    progress: ProgressHandler? = nil
   ) async throws -> WorkspaceIndexStatus {
+    await progress?(
+      WorkspaceIndexBuildProgress(
+        phase: .preparing,
+        detail: L10n.text(
+          de: "Workspace wird vorbereitet.",
+          en: "Preparing workspace.",
+          fr: "Préparation de l’espace de travail."
+        )
+      )
+    )
+
     let workspaceURL = try Self.validatedWorkspaceURL(workspacePath)
+    await progress?(
+      WorkspaceIndexBuildProgress(
+        phase: .scanning,
+        detail: workspaceURL.path
+      )
+    )
+
     let pending = try Self.collectChunks(in: workspaceURL)
     guard !pending.chunks.isEmpty else {
       throw WorkspaceIndexError.noIndexableContent
     }
 
-    let embeddings = try await CoreMLEmbeddingRunner.embed(
-      texts: pending.chunks.map(\.text),
-      compiledURL: model.compiledURL
-    )
-    guard embeddings.count == pending.chunks.count else {
-      throw WorkspaceIndexError.embeddingCountMismatch(
-        expected: pending.chunks.count,
-        actual: embeddings.count
-      )
-    }
-    guard let dimension = embeddings.first?.count, dimension > 0 else {
-      throw CoreMLEmbeddingError.emptyEmbedding
-    }
-
-    let chunks = zip(pending.chunks, embeddings).map { pendingChunk, embedding in
+    let lexicalChunks = pending.chunks.map { chunk in
       WorkspaceIndexChunk(
-        relativePath: pendingChunk.relativePath,
-        startLine: pendingChunk.startLine,
-        endLine: pendingChunk.endLine,
-        text: pendingChunk.text,
-        embedding: embedding
+        relativePath: chunk.relativePath,
+        startLine: chunk.startLine,
+        endLine: chunk.endLine,
+        text: chunk.text
       )
     }
-    let status = WorkspaceIndexStatus(
+    var lexicalStatus = WorkspaceIndexStatus(
       workspacePath: workspaceURL.path,
-      modelID: model.id,
-      modelName: model.name,
+      mode: .lexical,
       fileCount: pending.fileCount,
-      chunkCount: chunks.count,
-      embeddingDimension: dimension,
+      chunkCount: lexicalChunks.count,
       indexedCharacterCount: pending.indexedCharacterCount
     )
-    let document = WorkspaceIndexDocument(status: status, chunks: chunks)
+    var document = WorkspaceIndexDocument(
+      status: lexicalStatus,
+      chunks: lexicalChunks
+    )
+
+    await progress?(
+      WorkspaceIndexBuildProgress(
+        phase: .savingLexicalIndex,
+        completed: lexicalChunks.count,
+        total: lexicalChunks.count,
+        detail: L10n.text(
+          de: "Der lokale Textindex wird sofort gespeichert.",
+          en: "Saving the local text index immediately.",
+          fr: "Enregistrement immédiat de l’index texte local."
+        )
+      )
+    )
     try Self.save(document, workspacePath: workspaceURL.path)
     cache[workspaceURL.path] = document
-    return status
+
+    guard let model else {
+      await progress?(
+        WorkspaceIndexBuildProgress(
+          phase: .completed,
+          completed: lexicalChunks.count,
+          total: lexicalChunks.count,
+          detail: L10n.text(
+            de: "Lexikalischer Index wurde erstellt.",
+            en: "Lexical index created.",
+            fr: "Index lexical créé."
+          )
+        )
+      )
+      return lexicalStatus
+    }
+
+    do {
+      await progress?(
+        WorkspaceIndexBuildProgress(
+          phase: .embedding,
+          completed: 0,
+          total: pending.chunks.count,
+          detail: model.name
+        )
+      )
+      let embeddings = try await CoreMLEmbeddingRunner.embed(
+        texts: pending.chunks.map(\.text),
+        compiledURL: model.compiledURL,
+        progress: { completed, total in
+          await progress?(
+            WorkspaceIndexBuildProgress(
+              phase: .embedding,
+              completed: completed,
+              total: total,
+              detail: model.name
+            )
+          )
+        }
+      )
+      guard embeddings.count == pending.chunks.count else {
+        throw WorkspaceIndexError.embeddingCountMismatch(
+          expected: pending.chunks.count,
+          actual: embeddings.count
+        )
+      }
+      guard let dimension = embeddings.first?.count, dimension > 0 else {
+        throw CoreMLEmbeddingError.emptyEmbedding
+      }
+
+      let semanticChunks = zip(pending.chunks, embeddings).map { chunk, embedding in
+        WorkspaceIndexChunk(
+          relativePath: chunk.relativePath,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          text: chunk.text,
+          embedding: embedding
+        )
+      }
+      let semanticStatus = WorkspaceIndexStatus(
+        workspacePath: workspaceURL.path,
+        mode: .coreMLEmbedding,
+        modelID: model.id,
+        modelName: model.name,
+        fileCount: pending.fileCount,
+        chunkCount: semanticChunks.count,
+        embeddingDimension: dimension,
+        indexedCharacterCount: pending.indexedCharacterCount
+      )
+      document = WorkspaceIndexDocument(
+        status: semanticStatus,
+        chunks: semanticChunks
+      )
+      await progress?(
+        WorkspaceIndexBuildProgress(
+          phase: .savingSemanticIndex,
+          completed: semanticChunks.count,
+          total: semanticChunks.count,
+          detail: model.name
+        )
+      )
+      try Self.save(document, workspacePath: workspaceURL.path)
+      cache[workspaceURL.path] = document
+      await progress?(
+        WorkspaceIndexBuildProgress(
+          phase: .completed,
+          completed: semanticChunks.count,
+          total: semanticChunks.count,
+          detail: L10n.text(
+            de: "Core-ML-Index wurde erstellt.",
+            en: "Core ML index created.",
+            fr: "Index Core ML créé."
+          )
+        )
+      )
+      return semanticStatus
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      let warning = L10n.text(
+        de: "Der Textindex wurde erstellt. Core ML konnte nicht ergänzt werden: \(error.localizedDescription)",
+        en: "The text index was created. Core ML could not be added: \(error.localizedDescription)",
+        fr: "L’index texte a été créé. Core ML n’a pas pu être ajouté : \(error.localizedDescription)"
+      )
+      lexicalStatus = WorkspaceIndexStatus(
+        workspacePath: workspaceURL.path,
+        mode: .lexical,
+        warning: warning,
+        fileCount: pending.fileCount,
+        chunkCount: lexicalChunks.count,
+        indexedCharacterCount: pending.indexedCharacterCount
+      )
+      document = WorkspaceIndexDocument(
+        status: lexicalStatus,
+        chunks: lexicalChunks
+      )
+      try Self.save(document, workspacePath: workspaceURL.path)
+      cache[workspaceURL.path] = document
+      await progress?(
+        WorkspaceIndexBuildProgress(
+          phase: .completed,
+          completed: lexicalChunks.count,
+          total: lexicalChunks.count,
+          detail: warning
+        )
+      )
+      return lexicalStatus
+    }
   }
 
   public func status(workspacePath: String) throws -> WorkspaceIndexStatus? {
@@ -165,7 +345,7 @@ public actor WorkspaceIndexService {
   public func search(
     query: String,
     workspacePath: String,
-    model: CoreMLRegisteredModel,
+    model: CoreMLRegisteredModel?,
     limit: Int = 8
   ) async throws -> [WorkspaceSemanticMatch] {
     let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -180,36 +360,60 @@ public actor WorkspaceIndexService {
     guard document.status.workspacePath == workspaceURL.path else {
       throw WorkspaceIndexError.indexWorkspaceMismatch
     }
-    guard document.status.modelID == model.id else {
-      throw WorkspaceIndexError.modelMismatch(
-        indexed: document.status.modelName,
-        requested: model.name
-      )
-    }
-
-    let queryEmbeddings = try await CoreMLEmbeddingRunner.embed(
-      texts: [normalizedQuery],
-      compiledURL: model.compiledURL
-    )
-    guard let queryEmbedding = queryEmbeddings.first else {
-      throw CoreMLEmbeddingError.emptyEmbedding
-    }
-    guard queryEmbedding.count == document.status.embeddingDimension else {
-      throw WorkspaceIndexError.embeddingDimensionMismatch(
-        expected: document.status.embeddingDimension,
-        actual: queryEmbedding.count
-      )
-    }
 
     let boundedLimit = max(1, min(limit, Self.maximumResults))
-    return document.chunks
-      .map { chunk in
-        WorkspaceSemanticMatch(
+    switch document.status.mode {
+    case .lexical:
+      return Self.lexicalSearch(
+        query: normalizedQuery,
+        chunks: document.chunks,
+        limit: boundedLimit
+      )
+
+    case .coreMLEmbedding:
+      guard let expectedModelID = document.status.modelID,
+        let expectedModelName = document.status.modelName
+      else {
+        return Self.lexicalSearch(
+          query: normalizedQuery,
+          chunks: document.chunks,
+          limit: boundedLimit
+        )
+      }
+      guard let model else {
+        throw WorkspaceIndexError.modelRequired(expectedModelName)
+      }
+      guard model.id == expectedModelID else {
+        throw WorkspaceIndexError.modelMismatch(
+          indexed: expectedModelName,
+          requested: model.name
+        )
+      }
+
+      let queryEmbeddings = try await CoreMLEmbeddingRunner.embed(
+        texts: [normalizedQuery],
+        compiledURL: model.compiledURL
+      )
+      guard let queryEmbedding = queryEmbeddings.first else {
+        throw CoreMLEmbeddingError.emptyEmbedding
+      }
+      guard let expectedDimension = document.status.embeddingDimension,
+        queryEmbedding.count == expectedDimension
+      else {
+        throw WorkspaceIndexError.embeddingDimensionMismatch(
+          expected: document.status.embeddingDimension ?? 0,
+          actual: queryEmbedding.count
+        )
+      }
+
+      return document.chunks.compactMap { chunk in
+        guard let embedding = chunk.embedding else { return nil }
+        return WorkspaceSemanticMatch(
           id: chunk.id,
           relativePath: chunk.relativePath,
           startLine: chunk.startLine,
           endLine: chunk.endLine,
-          score: Self.cosineSimilarity(queryEmbedding, chunk.embedding),
+          score: Self.cosineSimilarity(queryEmbedding, embedding),
           excerpt: Self.excerpt(chunk.text)
         )
       }
@@ -224,6 +428,7 @@ public actor WorkspaceIndexService {
       }
       .prefix(boundedLimit)
       .map { $0 }
+    }
   }
 
   public func clear(workspacePath: String) throws {
@@ -246,7 +451,38 @@ public actor WorkspaceIndexService {
     let data = try Data(contentsOf: indexURL)
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    let document = try decoder.decode(WorkspaceIndexDocument.self, from: data)
+
+    let document: WorkspaceIndexDocument
+    do {
+      document = try decoder.decode(WorkspaceIndexDocument.self, from: data)
+    } catch {
+      let legacy = try decoder.decode(LegacyWorkspaceIndexDocument.self, from: data)
+      let migratedStatus = WorkspaceIndexStatus(
+        workspacePath: legacy.status.workspacePath,
+        mode: .coreMLEmbedding,
+        modelID: legacy.status.modelID,
+        modelName: legacy.status.modelName,
+        createdAt: legacy.status.createdAt,
+        fileCount: legacy.status.fileCount,
+        chunkCount: legacy.status.chunkCount,
+        embeddingDimension: legacy.status.embeddingDimension,
+        indexedCharacterCount: legacy.status.indexedCharacterCount
+      )
+      document = WorkspaceIndexDocument(
+        status: migratedStatus,
+        chunks: legacy.chunks.map {
+          WorkspaceIndexChunk(
+            id: $0.id,
+            relativePath: $0.relativePath,
+            startLine: $0.startLine,
+            endLine: $0.endLine,
+            text: $0.text,
+            embedding: $0.embedding
+          )
+        }
+      )
+      try Self.save(document, workspacePath: workspacePath)
+    }
     cache[workspacePath] = document
     return document
   }
@@ -290,7 +526,7 @@ public actor WorkspaceIndexService {
     fileCount: Int,
     indexedCharacterCount: Int
   ) {
-    let keys: [URLResourceKey] = [
+    let keys: Set<URLResourceKey> = [
       .isDirectoryKey,
       .isRegularFileKey,
       .isSymbolicLinkKey,
@@ -299,7 +535,7 @@ public actor WorkspaceIndexService {
     var enumerationError: Error?
     guard let enumerator = FileManager.default.enumerator(
       at: workspaceURL,
-      includingPropertiesForKeys: keys,
+      includingPropertiesForKeys: Array(keys),
       options: [.skipsHiddenFiles, .skipsPackageDescendants],
       errorHandler: { _, error in
         enumerationError = error
@@ -318,7 +554,7 @@ public actor WorkspaceIndexService {
 
     while let fileURL = enumerator.nextObject() as? URL {
       try Task.checkCancellation()
-      let values = try fileURL.resourceValues(forKeys: Set(keys))
+      let values = try fileURL.resourceValues(forKeys: keys)
 
       if values.isDirectory == true {
         if excludedDirectoryNames.contains(fileURL.lastPathComponent.lowercased()) {
@@ -332,10 +568,7 @@ public actor WorkspaceIndexService {
       guard (values.fileSize ?? 0) <= maximumFileBytes else {
         continue
       }
-      guard isSupported(fileURL) else {
-        continue
-      }
-      guard fileURL.path.hasPrefix(rootPrefix) else {
+      guard isSupported(fileURL), fileURL.path.hasPrefix(rootPrefix) else {
         continue
       }
 
@@ -416,8 +649,7 @@ public actor WorkspaceIndexService {
       }
 
       if endIndex >= lines.count { break }
-      let overlappedStart = max(startIndex + 1, endIndex - overlapLines)
-      startIndex = overlappedStart
+      startIndex = max(startIndex + 1, endIndex - overlapLines)
     }
     return result
   }
@@ -428,6 +660,71 @@ public actor WorkspaceIndexService {
       return true
     }
     return supportedExtensions.contains(url.pathExtension.lowercased())
+  }
+
+  private static func lexicalSearch(
+    query: String,
+    chunks: [WorkspaceIndexChunk],
+    limit: Int
+  ) -> [WorkspaceSemanticMatch] {
+    let queryTerms = tokenized(query)
+    guard !queryTerms.isEmpty else { return [] }
+    let normalizedQuery = query.lowercased()
+
+    return chunks.compactMap { chunk -> WorkspaceSemanticMatch? in
+      let text = chunk.text.lowercased()
+      let path = chunk.relativePath.lowercased()
+      let textTerms = tokenized(text)
+      guard !textTerms.isEmpty else { return nil }
+
+      var matchedTerms = 0
+      var totalOccurrences = 0
+      for term in queryTerms {
+        let occurrences = textTerms.reduce(0) { count, candidate in
+          count + (candidate == term ? 1 : 0)
+        }
+        if occurrences > 0 {
+          matchedTerms += 1
+          totalOccurrences += occurrences
+        }
+      }
+
+      let pathMatches = queryTerms.reduce(0) { count, term in
+        count + (path.contains(term) ? 1 : 0)
+      }
+      let phraseBonus = text.contains(normalizedQuery) ? 0.35 : 0
+      let coverage = Double(matchedTerms) / Double(queryTerms.count)
+      let frequency = min(0.35, Double(totalOccurrences) * 0.025)
+      let pathBonus = min(0.25, Double(pathMatches) * 0.08)
+      let score = coverage + frequency + pathBonus + phraseBonus
+      guard score > 0 else { return nil }
+
+      return WorkspaceSemanticMatch(
+        id: chunk.id,
+        relativePath: chunk.relativePath,
+        startLine: chunk.startLine,
+        endLine: chunk.endLine,
+        score: score,
+        excerpt: excerpt(chunk.text)
+      )
+    }
+    .sorted { lhs, rhs in
+      if lhs.score == rhs.score {
+        if lhs.relativePath == rhs.relativePath {
+          return lhs.startLine < rhs.startLine
+        }
+        return lhs.relativePath < rhs.relativePath
+      }
+      return lhs.score > rhs.score
+    }
+    .prefix(limit)
+    .map { $0 }
+  }
+
+  private static func tokenized(_ text: String) -> [String] {
+    text.lowercased()
+      .components(separatedBy: CharacterSet.alphanumerics.inverted)
+      .filter { $0.count >= 2 }
   }
 
   private static func cosineSimilarity(_ lhs: [Float], _ rhs: [Float]) -> Double {
