@@ -22,6 +22,21 @@ public extension PromptAttachmentService {
     return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
+  nonisolated static func providerPrompt(from storedContent: String) -> String {
+    guard let expression = imageAttachmentExpression else {
+      return storedContent
+    }
+    let range = NSRange(
+      storedContent.startIndex..<storedContent.endIndex,
+      in: storedContent
+    )
+    return expression.stringByReplacingMatches(
+      in: storedContent,
+      range: range,
+      withTemplate: #"<agentm5n_image_attachment name="$2" media_type="$3" bytes="$4" width="$6" height="$7" />"#
+    )
+  }
+
   nonisolated static func attachmentNames(from storedContent: String) -> [String] {
     textAttachmentNames(from: storedContent)
       + imageReferences(from: storedContent).map(\.name)
