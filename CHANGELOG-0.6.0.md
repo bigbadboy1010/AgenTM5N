@@ -12,18 +12,16 @@
 
 ## Attachment Inspector
 
-- Jeder Anhangschip besitzt eine Info-Schaltfläche.
 - Der Inspector zeigt Dateityp, Extraktionsmethode, Dateigröße, Seiten, Folien oder Tabellenblätter, Anzahl Abschnitte, OCR-Nutzung, Cache-Treffer und Kürzungsstatus.
 - Strukturierte Dokumentabschnitte werden mit Quellen-Locator und lokaler Inhaltsvorschau angezeigt.
+- Die direkte Verkabelung mit dem Datei-Chip folgt nach den realen Extraktionstests.
 
 ## Agent-Werkzeuge
 
-- `attachment_list` listet Anhänge der aktuellen Unterhaltung mit stabilen IDs und begrenzten Metadaten.
-- `attachment_describe` beschreibt einen Anhang und liefert verfügbare Quellen-Locators.
-- `attachment_search` durchsucht lokal extrahierten Text und OCR-Text in Anhängen der aktuellen Unterhaltung.
-- `attachment_read_section` liest einen begrenzten Dokumentabschnitt anhand eines Quellen-Locators.
-- Alle vier Werkzeuge sind reine Leseoperationen.
+- `attachment_list`, `attachment_describe`, `attachment_search` und `attachment_read_section` sind als sichere Lese-Werkzeuge implementiert.
+- Die Werkzeuge arbeiten ausschließlich auf Anhängen der aktuellen Unterhaltung.
 - Binärdaten, Base64-Bilder, interne Cachepfade und SHA-256-Werte werden nicht an das Sprachmodell ausgegeben.
+- Die App-State-Verkabelung folgt nach den realen Extraktionstests.
 
 ## Cache und Sicherheit
 
@@ -45,9 +43,14 @@
 - maximal 40 PDF-Seiten für OCR
 - maximal 240.000 extrahierte Zeichen pro Dokument
 
+## Bestätigt
+
+- Debug-Build auf MacBook Pro M5 mit Xcode 27.0 und Swift 6.4
+- Release-Build für arm64
+- App-Version 0.6.0 Build 16
+- gültige Bundle-Struktur und Ad-hoc-Codesignatur
+
 ## Version
 
 - App-Version: 0.6.0
 - Build: 16
-
-M5-Build bestätigt. Inspector- und Attachment-Agent-Integration ist als guarded patch vorbereitet.
