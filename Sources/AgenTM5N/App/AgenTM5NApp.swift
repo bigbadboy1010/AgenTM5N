@@ -8,17 +8,18 @@ struct AgenTM5NApp: App {
     WindowGroup("AgenTM5N") {
       RootView()
         .environmentObject(appState)
-        .frame(minWidth: 1_100, minHeight: 720)
+        .frame(minWidth: 760, minHeight: 520)
         .task {
           await appState.bootstrap()
         }
     }
-    .windowResizability(.contentMinSize)
+    .defaultSize(width: 1_280, height: 820)
 
     Settings {
       SettingsView()
         .environmentObject(appState)
-        .frame(width: 720, height: 560)
+        .frame(minWidth: 620, minHeight: 500)
     }
+    .defaultSize(width: 760, height: 620)
   }
 }
