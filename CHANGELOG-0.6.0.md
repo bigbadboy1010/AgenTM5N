@@ -50,4 +50,4 @@
 - App-Version: 0.6.0
 - Build: 16
 
-M5-Build bestätigt; gestapelte Integration von Inspector und Attachment-Agent-Werkzeugen wird geprüft.
+M5-Build bestätigt. Inspector- und Attachment-Agent-Integration ist als guarded patch vorbereitet.
