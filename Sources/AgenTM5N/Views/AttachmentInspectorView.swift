@@ -211,26 +211,26 @@ struct AttachmentInspectorView: View {
 
   private var extractionMethodTitle: String {
     switch attachment.metadata?.extractionMethod {
-    case .directText:
+    case .some(.directText):
       return L10n.text(de: "Direkter Text", en: "Direct Text", fr: "Texte direct")
-    case .pdfText:
+    case .some(.pdfText):
       return L10n.text(de: "PDF-Textebene", en: "PDF Text Layer", fr: "Couche texte PDF")
-    case .officeOpenXML:
+    case .some(.officeOpenXML):
       return "Office Open XML"
-    case .visionOCR:
+    case .some(.visionOCR):
       return "Apple Vision OCR"
-    case nil:
+    case .none:
       return L10n.text(de: "Keine", en: "None", fr: "Aucune")
     }
   }
 
   private var documentIcon: String {
     switch attachment.metadata?.documentKind {
-    case .pdf: "doc.richtext"
-    case .docx: "doc.text"
-    case .xlsx: "tablecells"
-    case .pptx: "rectangle.on.rectangle.angled"
-    case .plainText, nil: "doc.plaintext"
+    case .some(.pdf): "doc.richtext"
+    case .some(.docx): "doc.text"
+    case .some(.xlsx): "tablecells"
+    case .some(.pptx): "rectangle.on.rectangle.angled"
+    case .some(.plainText), .none: "doc.plaintext"
     }
   }
 }
