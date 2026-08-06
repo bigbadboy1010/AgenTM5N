@@ -2,10 +2,10 @@
 
 AgenTM5N is a native personal AI agent for Apple Silicon. It combines Ollama
 Cloud, local Ollama models, Apple Foundation Models, Core ML acceleration, an
-encrypted credential vault, an embedded terminal, SSH access and a controlled
-tool-calling runtime.
+encrypted credential vault, an embedded terminal, structured SSH access and a
+controlled tool-calling runtime.
 
-> Status: 0.2.0 development candidate for macOS 26 and Apple Silicon.
+> Status: 0.2.2 development candidate for macOS 26 and Apple Silicon.
 
 ## Current capabilities
 
@@ -15,15 +15,21 @@ tool-calling runtime.
 - NDJSON streaming for `/api/chat`
 - Multi-turn Ollama tool calling with streamed `tool_calls`
 - Permission modes: Confirm, Workspace Trusted and Full Access
-- Directory listing, file reading/writing, shell commands, Git status and diff
+- Directory listing, recursive globs and native UTF-8 repository search
+- File reading, complete-file writing and exact single-occurrence patch editing
+- Local shell commands with timeout, bounded output and exit status
+- Git status, diff, branch inventory, safe checkout/create and path-scoped local
+  commits without push
+- Visible local terminal opening
+- Saved SSH host inventory, structured remote execution and interactive SSH
+  terminal opening without exposing Vault secrets to the model
+- Equivalent local tool-call repetition guard
 - Per-tool approval and persisted execution audit cards
-- Command timeout, workspace boundaries and bounded tool output
 - Apple on-device Foundation Models provider
 - AES-256-GCM encrypted vault for API keys, tokens, passwords, SSH private
   keys, passphrases and connection strings
 - PBKDF2-HMAC-SHA256 with 600,000 iterations and a random 256-bit salt
 - Embedded Zsh PTY using SwiftTerm 1.11.0 with CoreText rendering
-- SSH profiles for remote Macs and servers
 - Core ML model loading with `MLComputeUnits.cpuAndNeuralEngine`
 
 ## Requirements
@@ -51,21 +57,25 @@ bash scripts/build-app.sh
 open dist/AgenTM5N.app
 ```
 
-## Test Milestone 2
+## Test 0.2.2 workspace engineering tools
 
 ```bash
 cd ~/Downloads/AgenTM5N
 git fetch --prune origin
-git checkout agent/milestone-2-runtime
-git pull --ff-only origin agent/milestone-2-runtime
+git checkout agent/workspace-engineering-tools
+git pull --ff-only origin agent/workspace-engineering-tools
 
 export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
-rm -rf .build .swiftpm Package.resolved dist
+export DEVELOPER_DIR="$AGENTM5N_XCODE_PATH"
+
 bash scripts/bootstrap-xcode.sh
 bash scripts/verify.sh
 bash scripts/build-app.sh
+codesign --verify --deep --strict --verbose=4 dist/AgenTM5N.app
 open dist/AgenTM5N.app
 ```
+
+Expected bundle version: `0.2.2` build `7`.
 
 The build scripts automatically search these locations:
 
@@ -85,34 +95,36 @@ The build scripts automatically search these locations:
 3. Enable `Tool Calling`.
 4. Choose a workspace directory.
 5. Start with permission mode `Confirm`.
-6. Save the configuration.
+6. Save the configuration and create a new chat session.
 
-Recommended first prompt:
-
-```text
-Inspect the current workspace. Show the Git status, list the top-level files,
-read the README and summarize what this project does. Do not modify files.
-```
-
-Then test explicit write approval:
+Recommended read-only prompt:
 
 ```text
-Create a file named agentm5n-tool-test.txt containing a one-line timestamped
-message, then read it back and report the result.
+Use glob_files to find Swift sources, search_text to locate AgentRuntime, read
+the relevant files and summarize the implementation. Do not modify files.
 ```
 
-In Confirm mode, the write operation must display a one-time approval banner.
+Recommended targeted-edit prompt:
+
+```text
+Read README.md, change one exact sentence with apply_patch, show git_diff and do
+not commit until I approve the result.
+```
+
+`apply_patch` fails when the old text is absent or appears more than once. This
+prevents broad or ambiguous replacements.
 
 ## Permission modes
 
-- **Confirm:** reads run within the workspace; writes and commands require
-  approval.
-- **Workspace Trusted:** tools run automatically but filesystem access remains
-  inside the workspace.
-- **Full Access:** filesystem paths outside the workspace and unrestricted shell
-  commands are allowed; tool calls remain audited.
+- **Confirm:** reads run within the workspace; writes, patches, Git mutations,
+  local commands and terminal opens require approval.
+- **Workspace Trusted:** local workspace tools run automatically; remote SSH
+  execution and SSH terminal opening still require approval.
+- **Full Access:** filesystem paths outside the workspace and local or remote
+  execution are allowed; tool calls remain audited.
 
-See [Agent Runtime](docs/AGENT_RUNTIME.md) for the complete execution and
+See [Agent Runtime](docs/AGENT_RUNTIME.md), [Workspace Engineering Tools](docs/WORKSPACE_ENGINEERING_TOOLS.md)
+and [SSH Agent Tools](docs/SSH_AGENT_TOOLS.md) for the complete execution and
 security model.
 
 ## Ollama Cloud configuration
@@ -129,10 +141,11 @@ security model.
 
 On the target Mac enable `System Settings > General > Sharing > Remote Login`.
 Then create a host profile under `SSH`. Passwords, private keys and passphrases
-can be read from the encrypted AgenTM5N vault.
+are resolved internally from the encrypted AgenTM5N vault.
 
 Runtime credential material is created with restrictive POSIX permissions and
-removed when the terminal session closes or AgenTM5N starts again.
+removed when structured execution ends, the terminal session closes or
+AgenTM5N starts again.
 
 ## Apple Neural Engine
 
@@ -162,6 +175,8 @@ the Neural Engine.
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Agent Runtime](docs/AGENT_RUNTIME.md)
+- [Workspace Engineering Tools](docs/WORKSPACE_ENGINEERING_TOOLS.md)
+- [SSH Agent Tools](docs/SSH_AGENT_TOOLS.md)
 - [Security model](docs/SECURITY.md)
 - [Build troubleshooting](docs/TROUBLESHOOTING.md)
 - [Roadmap](docs/ROADMAP.md)
