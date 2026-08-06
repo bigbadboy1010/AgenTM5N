@@ -36,6 +36,16 @@ public enum AppPaths {
     applicationSupportDirectory.appendingPathComponent("PromptAttachments", isDirectory: true)
   }
 
+  public static var workspaceMemoryDirectory: URL {
+    applicationSupportDirectory.appendingPathComponent("WorkspaceMemory", isDirectory: true)
+  }
+
+  public static func workspaceIndexFile(for workspacePath: String) -> URL {
+    workspaceMemoryDirectory.appendingPathComponent(
+      "workspace-\(stablePathIdentifier(workspacePath)).json"
+    )
+  }
+
   public static var configurationFile: URL {
     applicationSupportDirectory.appendingPathComponent("configuration.json")
   }
@@ -63,6 +73,7 @@ public enum AppPaths {
       coreMLSourcesDirectory,
       coreMLCompiledDirectory,
       promptAttachmentsDirectory,
+      workspaceMemoryDirectory,
     ] {
       try manager.createDirectory(
         at: directory,
@@ -102,6 +113,15 @@ public enum AppPaths {
         "Library/Application Support",
         isDirectory: true
       )
+  }
+
+  private static func stablePathIdentifier(_ value: String) -> String {
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in value.utf8 {
+      hash ^= UInt64(byte)
+      hash = hash &* 1_099_511_628_211
+    }
+    return String(format: "%016llx", hash)
   }
 
   private static func migrateLegacyApplicationDirectoryIfNeeded() throws {
