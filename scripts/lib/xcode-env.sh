@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # Shared Xcode resolver for AgenTM5N build scripts.
-# The standalone Command Line Tools package is rejected because SwiftTerm
-# contains Metal shaders and requires full Xcode plus the Metal Toolchain.
+# AgenTM5N requires a full Xcode installation for AppKit, Core ML and
+# Foundation Models. The terminal currently uses SwiftTerm's CoreText renderer,
+# so the optional command-line Metal Toolchain is not required for the build.
 
 agentm5n_resolve_xcode() {
   local selected=""
@@ -92,30 +93,6 @@ ERROR
   printf 'Xcode Version:   %s\n' "$xcode_version"
 }
 
-agentm5n_require_metal() {
-  local metal_path=""
-
-  if metal_path="$(/usr/bin/xcrun --find metal 2>/dev/null)"; then
-    printf 'Metal Compiler:  %s\n' "$metal_path"
-    return 0
-  fi
-
-  cat >&2 <<ERROR
-Der optionale Metal Toolchain ist für dieses Xcode noch nicht installiert.
-SwiftTerm enthält Shaders.metal und kann ohne den Compiler nicht gebaut werden.
-
-Installiere die Komponente einmalig:
-
-  DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild -downloadComponent metalToolchain
-
-Oder verwende den vollständigen Bootstrap:
-
-  ./scripts/bootstrap-xcode.sh
-ERROR
-  return 1
-}
-
 agentm5n_configure_xcode() {
   agentm5n_resolve_xcode
-  agentm5n_require_metal
 }
