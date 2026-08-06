@@ -39,6 +39,64 @@ struct SettingsView: View {
         }
       }
 
+      Section("Agent Runtime") {
+        Toggle(
+          "Tool Calling aktivieren",
+          isOn: $appState.configuration.agentEnabled
+        )
+        .disabled(appState.configuration.providerKind == .appleOnDevice)
+
+        Picker(
+          "Berechtigungsmodus",
+          selection: $appState.configuration.permissionMode
+        ) {
+          ForEach(AgentPermissionMode.allCases) { mode in
+            Text(mode.displayName).tag(mode)
+          }
+        }
+        .disabled(!appState.configuration.agentEnabled)
+
+        Text(appState.configuration.permissionMode.explanation)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+        HStack {
+          TextField(
+            "Workspace",
+            text: $appState.configuration.workspacePath
+          )
+          .textFieldStyle(.roundedBorder)
+
+          Button("Auswählen") {
+            appState.selectWorkspace()
+          }
+        }
+        .disabled(!appState.configuration.agentEnabled)
+
+        Stepper(
+          "Maximale Tool-Runden: \(appState.configuration.maxToolIterations)",
+          value: $appState.configuration.maxToolIterations,
+          in: 1...24
+        )
+        .disabled(!appState.configuration.agentEnabled)
+
+        if appState.configuration.permissionMode == .fullAccess {
+          Label(
+            "Full Access erlaubt Dateioperationen außerhalb des Workspace und uneingeschränkte Shell-Kommandos.",
+            systemImage: "exclamationmark.triangle.fill"
+          )
+          .foregroundStyle(.orange)
+        }
+
+        if appState.configuration.providerKind == .appleOnDevice {
+          Text(
+            "Der erste Agent-Loop verwendet Ollamas Tool-Calling-API. Apple On-Device bleibt in diesem Milestone ein reiner Chat-Provider."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+      }
+
       Section("System Prompt") {
         TextEditor(text: $appState.configuration.systemPrompt)
           .font(.system(.body, design: .monospaced))
@@ -49,7 +107,7 @@ struct SettingsView: View {
         LabeledContent("Application Support", value: AppPaths.applicationSupportDirectory.path)
         LabeledContent("Vault", value: AppPaths.vaultFile.path)
         Text(
-          "Konfiguration, Chat-History und SSH-Profile werden lokal gespeichert. Secret-Werte liegen ausschließlich im verschlüsselten Vault."
+          "Konfiguration, Chat-History, Tool-Audit und SSH-Profile werden lokal gespeichert. Secret-Werte liegen ausschließlich im verschlüsselten Vault."
         )
         .foregroundStyle(.secondary)
       }
