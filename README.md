@@ -28,13 +28,15 @@ an encrypted credential vault, an embedded terminal and SSH access.
 - Apple Silicon Mac
 - macOS 26 or newer
 - full Xcode 26 or newer
-- optional Metal Toolchain component for Xcode
 - Apple Intelligence enabled for Apple Foundation Models
 - Ollama Local or an Ollama Cloud API key
 
-The standalone Command Line Tools package is not sufficient. SwiftTerm contains
-Metal shaders. Xcode 26 additionally distributes the Metal Toolchain as an
-optional component.
+The standalone Command Line Tools package is not sufficient because AgenTM5N
+links AppKit, Core ML and Foundation Models from the full macOS SDK.
+
+The embedded terminal intentionally uses SwiftTerm 1.11.0 with its CoreText
+renderer. The optional command-line Metal Toolchain is therefore not required
+for building AgenTM5N. This does not affect Core ML or Apple Neural Engine use.
 
 ## Build
 
@@ -45,6 +47,7 @@ cd AgenTM5N
 
 export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
 bash scripts/bootstrap-xcode.sh
+rm -rf .build .swiftpm Package.resolved
 bash scripts/verify.sh
 bash scripts/build-app.sh
 open dist/AgenTM5N.app
@@ -67,28 +70,28 @@ A custom location can be supplied without changing the global developer path:
 export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
 ```
 
-## Fix for `unable to spawn process 'metal'`
+## Fix for old SwiftTerm or Metal errors
 
-Your original log shows that SwiftPM used this developer directory:
+Older AgenTM5N revisions contained two independent build defects:
 
-```text
-/Library/Developer/CommandLineTools
-```
+1. An invalid SwiftTerm repository URL using `migueldeic` instead of
+   `migueldeicaza`.
+2. SwiftTerm 1.15.0 compiled an optional Metal shader and therefore required an
+   additional Xcode component.
 
-That package does not provide the complete Xcode/Metal build environment. Run:
+The current branch uses the correct repository and pins SwiftTerm 1.11.0 with
+CoreText rendering. Clean all cached package state after updating:
 
 ```bash
+cd ~/Downloads/AgenTM5N
+git pull --ff-only origin agent/initial-macos-mvp
+rm -rf .build .swiftpm Package.resolved
+rm -rf "$HOME/Library/Caches/org.swift.swiftpm/repositories/SwiftTerm-"*
+
 export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
 bash scripts/bootstrap-xcode.sh
-rm -rf .build .swiftpm
 bash scripts/verify.sh
 bash scripts/build-app.sh
-```
-
-The bootstrap initializes Xcode and installs the optional component using:
-
-```bash
-xcodebuild -downloadComponent metalToolchain
 ```
 
 To switch the entire Mac permanently instead:
