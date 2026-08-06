@@ -1,0 +1,48 @@
+name: Apply Core ML async fix
+
+on:
+  push:
+    branches:
+      - agent/ssh-profile-hardening
+    paths:
+      - .github/workflows/apply-coreml-async-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/ssh-profile-hardening
+          fetch-depth: 0
+
+      - name: Apply exact Swift 6.4 fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("Sources/AgenTM5N/Services/CoreMLService.swift")
+          text = path.read_text(encoding="utf-8")
+          old = "    let output = try loadedModel.prediction(from: input)"
+          new = "    let output = try await loadedModel.prediction(from: input)"
+
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected exactly one prediction call, found {count}")
+
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+
+          rm -f .github/workflows/apply-coreml-async-fix.yml
+
+      - name: Commit fix and remove temporary workflow
+        run: |
+          git config user.name "AgenTM5N Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add Sources/AgenTM5N/Services/CoreMLService.swift
+          git add -u .github/workflows/apply-coreml-async-fix.yml
+          git commit -m "fix Core ML async prediction on Xcode 27"
+          git push origin HEAD:agent/ssh-profile-hardening
