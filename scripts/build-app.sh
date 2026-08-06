@@ -7,7 +7,7 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
 VERSION="0.1.1"
-BUILD_NUMBER="2"
+BUILD_NUMBER="3"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
@@ -36,18 +36,21 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 install -m 0755 "$BINARY" "$MACOS_DIR/$APP_NAME"
 
-# SwiftPM resource bundles are required by dependencies such as SwiftTerm.
-# They are copied to the standard resource location and additionally linked
-# from the app root for SwiftPM Bundle.module compatibility.
-shopt -s nullglob
-RESOURCE_BUNDLES=("$BIN_DIR"/*.bundle)
-shopt -u nullglob
-
-for local_bundle in "${RESOURCE_BUNDLES[@]}"; do
+# Copy SwiftPM resource bundles when dependencies provide any. A find loop is
+# used instead of an empty Bash array because macOS Bash 3.2 treats empty arrays
+# as unbound variables when `set -u` is active.
+while IFS= read -r -d '' local_bundle; do
   bundle_name="${local_bundle##*/}"
   ditto "$local_bundle" "$RESOURCES_DIR/$bundle_name"
   ln -s "Contents/Resources/$bundle_name" "$APP_DIR/$bundle_name"
-done
+done < <(
+  find "$BIN_DIR" \
+    -mindepth 1 \
+    -maxdepth 1 \
+    -type d \
+    -name '*.bundle' \
+    -print0
+)
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
