@@ -14,14 +14,32 @@
 - per-action approval UI and persisted audit cards
 - workspace boundary enforcement with Full Access override
 
+### Delivered in 0.2.1
+
+- visible local terminal opening through a structured tool
+- non-secret SSH host inventory
+- bounded non-interactive SSH command execution
+- visible interactive SSH terminal opening
+- internal Vault credential resolution without exposing secrets to the model
+- explicit remote-action approvals in Confirm and Workspace Trusted modes
+- adaptive macOS window and terminal resizing
+
+### Delivered in 0.2.2
+
+- recursive workspace glob tool
+- native UTF-8 repository text search with path, line and column output
+- exact single-occurrence patch editing
+- local Git branch inventory
+- safe branch create and checkout with clean-worktree enforcement
+- path-scoped local Git commits without push
+- equivalent local tool-call repetition guard
+
 ### Remaining for 0.2.x
 
-- patch-based file editing instead of complete-file replacement
-- repository text search and glob tools
-- Git branch, commit and checkout tools
-- repetition detection across equivalent tool calls
 - reusable tool presets per workspace
 - dedicated audit-log export
+- structured file-delete and move tools with confirmation
+- agent-session diagnostics and tool compatibility report
 
 ## Milestone 3: local intelligence
 
@@ -34,8 +52,16 @@
 
 ## Milestone 4: DevOps workspace
 
-- Docker and Compose tools
-- SSH command execution with structured output
-- remote macOS node information
+### Partially delivered
+
+- structured SSH command execution
+- saved remote host profiles
+- interactive remote terminal opening
+
+### Planned
+
+- Docker and Compose inventory and lifecycle tools
+- remote macOS and Linux node information
 - reusable skills and workflows
 - deployment checkpoints and audit history
+- service health checks and rollback plans
