@@ -28,6 +28,14 @@ public enum AppPaths {
     coreMLModelsDirectory.appendingPathComponent("Compiled", isDirectory: true)
   }
 
+  public static var coreMLRegistryFile: URL {
+    coreMLModelsDirectory.appendingPathComponent("registry.json")
+  }
+
+  public static var promptAttachmentsDirectory: URL {
+    applicationSupportDirectory.appendingPathComponent("PromptAttachments", isDirectory: true)
+  }
+
   public static var configurationFile: URL {
     applicationSupportDirectory.appendingPathComponent("configuration.json")
   }
@@ -54,6 +62,7 @@ public enum AppPaths {
       coreMLModelsDirectory,
       coreMLSourcesDirectory,
       coreMLCompiledDirectory,
+      promptAttachmentsDirectory,
     ] {
       try manager.createDirectory(
         at: directory,
