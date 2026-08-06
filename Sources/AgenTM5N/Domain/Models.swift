@@ -6,6 +6,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
   case ssh = "SSH"
   case vault = "Vault"
   case neuralEngine = "Neural Engine"
+  case memory = "Workspace Memory"
   case settings = "Settings"
 
   public var id: String { rawValue }
@@ -17,6 +18,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
     case .ssh: "network"
     case .vault: "lock.shield"
     case .neuralEngine: "brain.head.profile"
+    case .memory: "books.vertical"
     case .settings: "gearshape"
     }
   }

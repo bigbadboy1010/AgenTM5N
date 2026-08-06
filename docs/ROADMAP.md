@@ -43,9 +43,18 @@
 
 ## Milestone 3: local intelligence
 
-- Core ML embeddings
-- semantic workspace index
-- context ranking and deduplication
+### In development for 0.4.0
+
+- isolated Core ML text embedding batches
+- persistent semantic workspace index
+- safe UTF-8 workspace scanning and bounded chunking
+- semantic search with relative paths and line ranges
+- agent tools for index status, build, search and clear
+- dedicated Workspace Memory user interface
+
+### Planned next
+
+- automatic context ranking and deduplication
 - prompt compression
 - semantic response cache
 - local secret and command-risk classification
