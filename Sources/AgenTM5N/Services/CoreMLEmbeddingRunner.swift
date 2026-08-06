@@ -12,9 +12,9 @@ public enum CoreMLEmbeddingError: LocalizedError {
     switch self {
     case .incompatibleInput(let inputs):
       return L10n.text(
-        de: "Das ausgewählte Core-ML-Modell ist kein kompatibles Text-Embedding-Modell. Erwartet wird genau eine Text-Eingabe. Gefunden: \(inputs.joined(separator: ", "))",
-        en: "The selected Core ML model is not a compatible text embedding model. Exactly one text input is required. Found: \(inputs.joined(separator: ", "))",
-        fr: "Le modèle Core ML sélectionné n’est pas un modèle d’embedding de texte compatible. Une seule entrée texte est requise. Trouvé : \(inputs.joined(separator: ", "))"
+        de: "Das ausgewählte Core-ML-Modell kann Text nicht direkt einbetten. Erwartet wird genau eine String-Eingabe. Gefunden: \(inputs.joined(separator: ", ")). Transformer-Modelle mit input_ids und attention_mask benötigen einen Tokenizer-Adapter.",
+        en: "The selected Core ML model cannot embed text directly. Exactly one String input is required. Found: \(inputs.joined(separator: ", ")). Transformer models with input_ids and attention_mask require a tokenizer adapter.",
+        fr: "Le modèle Core ML sélectionné ne peut pas vectoriser directement du texte. Une seule entrée String est requise. Trouvé : \(inputs.joined(separator: ", ")). Les modèles Transformer avec input_ids et attention_mask nécessitent un adaptateur de tokenisation."
       )
     case .incompatibleOutput(let outputs):
       return L10n.text(
@@ -44,15 +44,11 @@ public enum CoreMLEmbeddingError: LocalizedError {
   }
 }
 
-/// Runs a complete embedding batch in one isolated execution region.
-///
-/// Xcode 27 exposes Core ML prediction as an `@concurrent` operation. The model,
-/// feature provider and output arrays therefore remain inside this detached task.
-/// Only URLs, strings and normalized `[Float]` vectors cross isolation boundaries.
 public enum CoreMLEmbeddingRunner {
   public static func embed(
     texts: [String],
-    compiledURL: URL
+    compiledURL: URL,
+    progress: (@Sendable (Int, Int) async -> Void)? = nil
   ) async throws -> [[Float]] {
     guard !texts.isEmpty else { return [] }
 
@@ -94,7 +90,7 @@ public enum CoreMLEmbeddingRunner {
       result.reserveCapacity(texts.count)
       var expectedDimension: Int?
 
-      for text in texts {
+      for (offset, text) in texts.enumerated() {
         try Task.checkCancellation()
         let input = TextEmbeddingFeatureProvider(
           name: inputName,
@@ -120,6 +116,7 @@ public enum CoreMLEmbeddingRunner {
         }
         expectedDimension = vector.count
         result.append(vector)
+        await progress?(offset + 1, texts.count)
       }
 
       return result
