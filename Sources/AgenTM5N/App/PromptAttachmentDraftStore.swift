@@ -22,7 +22,7 @@ public final class PromptAttachmentDraftStore: ObservableObject {
   }
 
   public var imageCount: Int {
-    attachments.count { $0.kind == .image }
+    attachments.filter { $0.kind == .image }.count
   }
 
   public func add(_ newAttachments: [PromptAttachment]) {
