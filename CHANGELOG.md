@@ -28,10 +28,16 @@ All notable changes to AgenTM5N are documented in this file.
   agent answer.
 - The conversation reset action is labeled as a new session to avoid carrying
   unrelated persisted context into agent tests.
+- Main and Settings windows now use flexible minimum and default sizes instead
+  of fixed content sizing.
+- The chat toolbar switches between wide and compact layouts when the window is
+  narrowed.
+- The embedded SwiftTerm view now expands and contracts with the available
+  terminal workspace.
 
 ### Changed
 
-- App version increased to 0.2.0 build 4.
+- App version is 0.2.0 build 5.
 - Default system prompt identifies the agent as AgenTM5N and instructs it to
   verify tool results before continuing.
 - Apple Foundation Models remains a chat-only provider in this milestone.
