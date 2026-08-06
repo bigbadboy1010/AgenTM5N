@@ -16,6 +16,26 @@ public enum AppPaths {
     applicationSupportDirectory.appendingPathComponent("Runtime", isDirectory: true)
   }
 
+  public static var coreMLModelsDirectory: URL {
+    applicationSupportDirectory.appendingPathComponent("CoreML", isDirectory: true)
+  }
+
+  public static var coreMLSourcesDirectory: URL {
+    coreMLModelsDirectory.appendingPathComponent("Sources", isDirectory: true)
+  }
+
+  public static var coreMLCompiledDirectory: URL {
+    coreMLModelsDirectory.appendingPathComponent("Compiled", isDirectory: true)
+  }
+
+  public static var coreMLRegistryFile: URL {
+    coreMLModelsDirectory.appendingPathComponent("registry.json")
+  }
+
+  public static var promptAttachmentsDirectory: URL {
+    applicationSupportDirectory.appendingPathComponent("PromptAttachments", isDirectory: true)
+  }
+
   public static var configurationFile: URL {
     applicationSupportDirectory.appendingPathComponent("configuration.json")
   }
@@ -36,23 +56,27 @@ public enum AppPaths {
     try migrateLegacyApplicationDirectoryIfNeeded()
 
     let manager = FileManager.default
-    try manager.createDirectory(
-      at: applicationSupportDirectory,
-      withIntermediateDirectories: true,
-      attributes: [.posixPermissions: 0o700]
-    )
-    try manager.createDirectory(
-      at: runtimeDirectory,
-      withIntermediateDirectories: true,
-      attributes: [.posixPermissions: 0o700]
-    )
-    try manager.setAttributes(
-      [.posixPermissions: 0o700],
-      ofItemAtPath: applicationSupportDirectory.path
-    )
-    try manager.setAttributes(
-      [.posixPermissions: 0o700],
-      ofItemAtPath: runtimeDirectory.path
+    for directory in [
+      applicationSupportDirectory,
+      runtimeDirectory,
+      coreMLModelsDirectory,
+      coreMLSourcesDirectory,
+      coreMLCompiledDirectory,
+      promptAttachmentsDirectory,
+    ] {
+      try manager.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+      )
+      try manager.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: directory.path
+      )
+    }
+
+    try SSHHostStoreMigration.repairDuplicateIdentifiersIfNeeded(
+      at: sshHostsFile
     )
   }
 
