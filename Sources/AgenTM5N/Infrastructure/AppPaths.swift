@@ -36,6 +36,21 @@ public enum AppPaths {
     applicationSupportDirectory.appendingPathComponent("PromptAttachments", isDirectory: true)
   }
 
+  public static var documentExtractionCacheDirectory: URL {
+    promptAttachmentsDirectory.appendingPathComponent(
+      "DocumentCache",
+      isDirectory: true
+    )
+  }
+
+  public static func documentExtractionCacheFile(
+    sha256: String
+  ) -> URL {
+    documentExtractionCacheDirectory.appendingPathComponent(
+      "\(sha256.lowercased()).json"
+    )
+  }
+
   public static var workspaceMemoryDirectory: URL {
     applicationSupportDirectory.appendingPathComponent("WorkspaceMemory", isDirectory: true)
   }
@@ -73,6 +88,7 @@ public enum AppPaths {
       coreMLSourcesDirectory,
       coreMLCompiledDirectory,
       promptAttachmentsDirectory,
+      documentExtractionCacheDirectory,
       workspaceMemoryDirectory,
     ] {
       try manager.createDirectory(
