@@ -3,6 +3,14 @@ import SwiftUI
 struct WorkspaceMemoryView: View {
   @EnvironmentObject private var appState: AppState
 
+  private var compatibleEmbeddingModels: [CoreMLRegisteredModel] {
+    appState.coreMLModels.filter { $0.supportsDirectTextEmbedding }
+  }
+
+  private var incompatibleModels: [CoreMLRegisteredModel] {
+    appState.coreMLModels.filter { !$0.supportsDirectTextEmbedding }
+  }
+
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
@@ -22,6 +30,7 @@ struct WorkspaceMemoryView: View {
     )
     .task {
       await appState.refreshWorkspaceIndexStatus()
+      normalizeSelectedEmbeddingModel()
     }
   }
 
@@ -45,9 +54,9 @@ struct WorkspaceMemoryView: View {
 
         Text(
           L10n.text(
-            de: "Der lexikalische Modus funktioniert ohne spezielles Modell. Für Core ML wird genau eine String-Eingabe und eine MultiArray-Ausgabe benötigt. Modelle mit input_ids oder attention_mask benötigen später einen Tokenizer-Adapter.",
-            en: "Lexical mode works without a special model. Core ML requires exactly one String input and one MultiArray output. Models with input_ids or attention_mask require a tokenizer adapter in a later milestone.",
-            fr: "Le mode lexical fonctionne sans modèle spécial. Core ML nécessite exactement une entrée String et une sortie MultiArray. Les modèles avec input_ids ou attention_mask nécessitent un adaptateur de tokenisation ultérieur."
+            de: "Der lexikalische Modus funktioniert ohne spezielles Modell. Für direkte Core-ML-Embeddings wird genau eine String-Eingabe und eine MultiArray-Ausgabe benötigt. Tokenisierte Sprachmodelle bleiben im Neural-Engine-Bereich nutzbar, sind aber keine direkten Embedding-Modelle.",
+            en: "Lexical mode works without a special model. Direct Core ML embeddings require exactly one String input and one MultiArray output. Tokenized language models remain usable in Neural Engine, but they are not direct embedding models.",
+            fr: "Le mode lexical fonctionne sans modèle spécial. Les embeddings Core ML directs nécessitent exactement une entrée String et une sortie MultiArray. Les modèles linguistiques tokenisés restent utilisables dans Neural Engine, mais ne sont pas des modèles d’embedding directs."
           )
         )
         .foregroundStyle(.secondary)
@@ -88,8 +97,52 @@ struct WorkspaceMemoryView: View {
           )
           .tag(UUID?.none)
 
-          ForEach(appState.coreMLModels) { model in
+          ForEach(compatibleEmbeddingModels) { model in
             Text("Core ML – \(model.name)").tag(Optional(model.id))
+          }
+        }
+
+        if compatibleEmbeddingModels.isEmpty {
+          Label(
+            L10n.text(
+              de: "Kein direkt kompatibles Text-Embedding-Modell registriert. Der lexikalische Index steht vollständig zur Verfügung.",
+              en: "No directly compatible text embedding model is registered. The lexical index remains fully available.",
+              fr: "Aucun modèle d’embedding de texte directement compatible n’est enregistré. L’index lexical reste entièrement disponible."
+            ),
+            systemImage: "info.circle"
+          )
+          .foregroundStyle(.secondary)
+        }
+
+        if !incompatibleModels.isEmpty {
+          DisclosureGroup(
+            L10n.text(
+              de: "Andere Core-ML-Modelle (\(incompatibleModels.count))",
+              en: "Other Core ML Models (\(incompatibleModels.count))",
+              fr: "Autres modèles Core ML (\(incompatibleModels.count))"
+            )
+          ) {
+            VStack(alignment: .leading, spacing: 10) {
+              ForEach(incompatibleModels) { model in
+                VStack(alignment: .leading, spacing: 4) {
+                  HStack {
+                    Text(model.name)
+                      .font(.headline)
+                    Spacer()
+                    Text(model.capability.displayName)
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                  Text(model.capability.workspaceMemoryExplanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                }
+                .padding(10)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+              }
+            }
+            .padding(.top, 8)
           }
         }
 
@@ -101,9 +154,9 @@ struct WorkspaceMemoryView: View {
               fr: "Test de base recommandé : l’index est enregistré localement immédiatement et peut être recherché."
             )
             : L10n.text(
-              de: "Der Textindex wird zuerst gespeichert. Danach versucht AgenTM5N, Core-ML-Embeddings zu ergänzen.",
-              en: "The text index is saved first. AgenTM5N then attempts to add Core ML embeddings.",
-              fr: "L’index texte est d’abord enregistré. AgenTM5N tente ensuite d’ajouter des embeddings Core ML."
+              de: "Der Textindex wird zuerst gespeichert. Danach ergänzt das ausgewählte, direkt kompatible Core-ML-Modell semantische Embeddings.",
+              en: "The text index is saved first. The selected directly compatible Core ML model then adds semantic embeddings.",
+              fr: "L’index texte est d’abord enregistré. Le modèle Core ML directement compatible sélectionné ajoute ensuite des embeddings sémantiques."
             )
         )
         .font(.caption)
@@ -342,6 +395,14 @@ struct WorkspaceMemoryView: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(8)
+    }
+  }
+
+  private func normalizeSelectedEmbeddingModel() {
+    guard let selectedID = appState.workspaceEmbeddingModelID else { return }
+    guard compatibleEmbeddingModels.contains(where: { $0.id == selectedID }) else {
+      appState.workspaceEmbeddingModelID = nil
+      return
     }
   }
 }
