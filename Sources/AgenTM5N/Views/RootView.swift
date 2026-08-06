@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
   @EnvironmentObject private var appState: AppState
+  @State private var isImportingPromptFiles = false
 
   var body: some View {
     NavigationSplitView {
@@ -30,6 +31,37 @@ struct RootView: View {
       }
       .environmentObject(appState)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .toolbar {
+        if appState.selectedSection == .chat {
+          ToolbarItem {
+            Button {
+              importPromptFiles()
+            } label: {
+              if isImportingPromptFiles {
+                ProgressView()
+                  .controlSize(.small)
+              } else {
+                Label(
+                  L10n.text(
+                    de: "Dateien zum Prompt hinzufügen",
+                    en: "Add Files to Prompt",
+                    fr: "Ajouter des fichiers à l’invite"
+                  ),
+                  systemImage: "paperclip"
+                )
+              }
+            }
+            .disabled(isImportingPromptFiles || appState.isGenerating)
+            .help(
+              L10n.text(
+                de: "Text-, Code-, Konfigurations-, Log- oder PDF-Dateien in den aktuellen Prompt einfügen.",
+                en: "Insert text, code, configuration, log, or PDF files into the current prompt.",
+                fr: "Insérer des fichiers texte, code, configuration, journal ou PDF dans l’invite actuelle."
+              )
+            )
+          }
+        }
+      }
     }
     .navigationSplitViewStyle(.balanced)
     .alert(
@@ -55,6 +87,23 @@ struct RootView: View {
             fr: "Erreur inconnue"
           )
       )
+    }
+  }
+
+  private func importPromptFiles() {
+    isImportingPromptFiles = true
+    defer { isImportingPromptFiles = false }
+
+    do {
+      guard let imported = try PromptAttachmentService.selectPromptFiles() else {
+        return
+      }
+      if !appState.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        appState.inputText += "\n\n"
+      }
+      appState.inputText += imported
+    } catch {
+      appState.errorMessage = error.localizedDescription
     }
   }
 
