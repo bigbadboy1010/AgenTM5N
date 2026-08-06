@@ -28,26 +28,26 @@ struct WorkspaceMemoryView: View {
   private var overviewCard: some View {
     GroupBox(
       L10n.text(
-        de: "Lokaler semantischer Index",
-        en: "Local Semantic Index",
-        fr: "Index sémantique local"
+        de: "Lokaler Workspace-Index",
+        en: "Local Workspace Index",
+        fr: "Index local de l’espace de travail"
       )
     ) {
       VStack(alignment: .leading, spacing: 10) {
         Label(
           L10n.text(
-            de: "Dateien werden lokal gelesen, in Textabschnitte geteilt und mit einem registrierten Core-ML-Modell eingebettet.",
-            en: "Files are read locally, split into text chunks, and embedded with a registered Core ML model.",
-            fr: "Les fichiers sont lus localement, divisés en segments de texte et vectorisés avec un modèle Core ML enregistré."
+            de: "AgenTM5N erstellt zuerst einen persistenten Textindex. Ein kompatibles Core-ML-Modell kann anschließend semantische Vektoren ergänzen.",
+            en: "AgenTM5N first creates a persistent text index. A compatible Core ML model can then add semantic vectors.",
+            fr: "AgenTM5N crée d’abord un index texte persistant. Un modèle Core ML compatible peut ensuite ajouter des vecteurs sémantiques."
           ),
           systemImage: "lock.macwindow"
         )
 
         Text(
           L10n.text(
-            de: "Das Modell muss genau eine Text-Eingabe und eine MultiArray-Ausgabe besitzen. Modellpfade und Embedding-Vektoren werden dem Sprachmodell nicht offengelegt.",
-            en: "The model must expose exactly one text input and one MultiArray output. Model paths and embedding vectors are never exposed to the language model.",
-            fr: "Le modèle doit fournir exactement une entrée texte et une sortie MultiArray. Les chemins du modèle et les vecteurs ne sont jamais exposés au modèle linguistique."
+            de: "Der lexikalische Modus funktioniert ohne spezielles Modell. Für Core ML wird genau eine String-Eingabe und eine MultiArray-Ausgabe benötigt. Modelle mit input_ids oder attention_mask benötigen später einen Tokenizer-Adapter.",
+            en: "Lexical mode works without a special model. Core ML requires exactly one String input and one MultiArray output. Models with input_ids or attention_mask require a tokenizer adapter in a later milestone.",
+            fr: "Le mode lexical fonctionne sans modèle spécial. Core ML nécessite exactement une entrée String et une sortie MultiArray. Les modèles avec input_ids ou attention_mask nécessitent un adaptateur de tokenisation ultérieur."
           )
         )
         .foregroundStyle(.secondary)
@@ -73,51 +73,62 @@ struct WorkspaceMemoryView: View {
       VStack(alignment: .leading, spacing: 14) {
         Picker(
           L10n.text(
-            de: "Embedding-Modell",
-            en: "Embedding Model",
-            fr: "Modèle d’embedding"
+            de: "Indexmodus",
+            en: "Index Mode",
+            fr: "Mode d’indexation"
           ),
           selection: $appState.workspaceEmbeddingModelID
         ) {
           Text(
             L10n.text(
-              de: "Aktives Core-ML-Modell",
-              en: "Active Core ML Model",
-              fr: "Modèle Core ML actif"
+              de: "Lexikalischer Index – ohne Core ML",
+              en: "Lexical Index – without Core ML",
+              fr: "Index lexical – sans Core ML"
             )
           )
           .tag(UUID?.none)
 
           ForEach(appState.coreMLModels) { model in
-            Text(model.name).tag(Optional(model.id))
+            Text("Core ML – \(model.name)").tag(Optional(model.id))
           }
         }
+
+        Text(
+          appState.workspaceEmbeddingModelID == nil
+            ? L10n.text(
+              de: "Empfohlener Basistest: Der Index wird sofort lokal gespeichert und kann durchsucht werden.",
+              en: "Recommended baseline test: the index is saved locally immediately and can be searched.",
+              fr: "Test de base recommandé : l’index est enregistré localement immédiatement et peut être recherché."
+            )
+            : L10n.text(
+              de: "Der Textindex wird zuerst gespeichert. Danach versucht AgenTM5N, Core-ML-Embeddings zu ergänzen.",
+              en: "The text index is saved first. AgenTM5N then attempts to add Core ML embeddings.",
+              fr: "L’index texte est d’abord enregistré. AgenTM5N tente ensuite d’ajouter des embeddings Core ML."
+            )
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
 
         HStack(spacing: 10) {
           Button {
             Task { await appState.buildWorkspaceIndex() }
           } label: {
-            if appState.isBuildingWorkspaceIndex {
-              ProgressView()
-                .controlSize(.small)
-            } else {
-              Label(
-                appState.workspaceIndexStatus == nil
-                  ? L10n.text(
-                    de: "Index erstellen",
-                    en: "Build Index",
-                    fr: "Créer l’index"
-                  )
-                  : L10n.text(
-                    de: "Index neu erstellen",
-                    en: "Rebuild Index",
-                    fr: "Reconstruire l’index"
-                  ),
-                systemImage: "square.stack.3d.up"
-              )
-            }
+            Label(
+              appState.workspaceIndexStatus == nil
+                ? L10n.text(
+                  de: "Index erstellen",
+                  en: "Build Index",
+                  fr: "Créer l’index"
+                )
+                : L10n.text(
+                  de: "Index neu erstellen",
+                  en: "Rebuild Index",
+                  fr: "Reconstruire l’index"
+                ),
+              systemImage: "square.stack.3d.up"
+            )
           }
-          .disabled(appState.isBuildingWorkspaceIndex || appState.coreMLModels.isEmpty)
+          .disabled(appState.isBuildingWorkspaceIndex)
 
           Button {
             Task { await appState.refreshWorkspaceIndexStatus() }
@@ -142,25 +153,59 @@ struct WorkspaceMemoryView: View {
           }
         }
 
-        if appState.coreMLModels.isEmpty {
-          Label(
-            L10n.text(
-              de: "Importiere zuerst ein kompatibles Text-Embedding-Modell unter „Neural Engine“.",
-              en: "Import a compatible text embedding model under Neural Engine first.",
-              fr: "Importez d’abord un modèle d’embedding de texte compatible dans Neural Engine."
-            ),
-            systemImage: "exclamationmark.triangle"
-          )
-          .foregroundStyle(.orange)
+        if appState.isBuildingWorkspaceIndex,
+          let progress = appState.workspaceIndexProgress
+        {
+          VStack(alignment: .leading, spacing: 8) {
+            HStack {
+              ProgressView()
+                .controlSize(.small)
+              Text(progress.phase.displayName)
+                .font(.headline)
+              Spacer()
+              if progress.total > 0 {
+                Text("\(progress.completed) / \(progress.total)")
+                  .font(.system(.caption, design: .monospaced))
+                  .foregroundStyle(.secondary)
+              }
+            }
+
+            if let fraction = progress.fractionCompleted {
+              ProgressView(value: fraction)
+            }
+
+            if !progress.detail.isEmpty {
+              Text(progress.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            }
+          }
+          .padding(12)
+          .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
         }
 
         if let status = appState.workspaceIndexStatus {
           Divider()
           Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
             GridRow {
+              Text(L10n.text(de: "Status", en: "Status", fr: "État"))
+                .foregroundStyle(.secondary)
+              Label(
+                L10n.text(de: "Index vorhanden", en: "Index available", fr: "Index disponible"),
+                systemImage: "checkmark.circle.fill"
+              )
+              .foregroundStyle(.green)
+            }
+            GridRow {
+              Text(L10n.text(de: "Modus", en: "Mode", fr: "Mode"))
+                .foregroundStyle(.secondary)
+              Text(status.mode.displayName)
+            }
+            GridRow {
               Text(L10n.text(de: "Modell", en: "Model", fr: "Modèle"))
                 .foregroundStyle(.secondary)
-              Text(status.modelName)
+              Text(status.modelName ?? "–")
             }
             GridRow {
               Text(L10n.text(de: "Dateien", en: "Files", fr: "Fichiers"))
@@ -173,9 +218,14 @@ struct WorkspaceMemoryView: View {
               Text("\(status.chunkCount)")
             }
             GridRow {
+              Text(L10n.text(de: "Zeichen", en: "Characters", fr: "Caractères"))
+                .foregroundStyle(.secondary)
+              Text(status.indexedCharacterCount.formatted())
+            }
+            GridRow {
               Text(L10n.text(de: "Dimension", en: "Dimension", fr: "Dimension"))
                 .foregroundStyle(.secondary)
-              Text("\(status.embeddingDimension)")
+              Text(status.embeddingDimension.map(String.init) ?? "–")
             }
             GridRow {
               Text(L10n.text(de: "Erstellt", en: "Created", fr: "Créé"))
@@ -183,6 +233,24 @@ struct WorkspaceMemoryView: View {
               Text(status.createdAt.formatted(date: .abbreviated, time: .shortened))
             }
           }
+
+          if let warning = status.warning, !warning.isEmpty {
+            Label(warning, systemImage: "exclamationmark.triangle.fill")
+              .foregroundStyle(.orange)
+              .textSelection(.enabled)
+              .padding(10)
+              .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+          }
+        } else if !appState.isBuildingWorkspaceIndex {
+          Label(
+            L10n.text(
+              de: "Noch kein Index für diesen Workspace vorhanden.",
+              en: "No index exists for this workspace yet.",
+              fr: "Aucun index n’existe encore pour cet espace de travail."
+            ),
+            systemImage: "square.stack.3d.up.slash"
+          )
+          .foregroundStyle(.secondary)
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -192,19 +260,25 @@ struct WorkspaceMemoryView: View {
 
   private var searchCard: some View {
     GroupBox(
-      L10n.text(
-        de: "Semantische Suche",
-        en: "Semantic Search",
-        fr: "Recherche sémantique"
-      )
+      appState.workspaceIndexStatus?.mode == .coreMLEmbedding
+        ? L10n.text(
+          de: "Semantische Suche",
+          en: "Semantic Search",
+          fr: "Recherche sémantique"
+        )
+        : L10n.text(
+          de: "Indexsuche",
+          en: "Index Search",
+          fr: "Recherche dans l’index"
+        )
     ) {
       VStack(alignment: .leading, spacing: 12) {
         HStack(spacing: 10) {
           TextField(
             L10n.text(
-              de: "Zum Beispiel: Wo wird der SSH-Host gespeichert?",
-              en: "For example: Where is the SSH host stored?",
-              fr: "Par exemple : Où l’hôte SSH est-il enregistré ?"
+              de: "Zum Beispiel: Wo werden SSH-Profile gespeichert?",
+              en: "For example: Where are SSH profiles stored?",
+              fr: "Par exemple : Où les profils SSH sont-ils enregistrés ?"
             ),
             text: $appState.workspaceSemanticQuery
           )
