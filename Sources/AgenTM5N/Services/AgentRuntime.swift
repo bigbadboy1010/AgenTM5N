@@ -657,11 +657,11 @@ public actor AgentRuntime {
         print -u2 -- 'Die angegebenen Pfade enthalten keine commitfähigen Änderungen.'
         exit 22
       fi
-      if ! git commit -m \(quotedMessage); then
+      git commit -m \(quotedMessage) || {
         status=$?
         git restore --staged -- \(quotedPaths) >/dev/null 2>&1 || true
         exit $status
-      fi
+      }
       git log -1 --oneline --decorate
       """
     return try await runCommand(command, workspace: workspace)
