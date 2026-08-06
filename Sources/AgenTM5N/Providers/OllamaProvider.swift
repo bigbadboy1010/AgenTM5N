@@ -58,7 +58,7 @@ public final class OllamaProvider: @unchecked Sendable {
 
     init(_ message: ProviderMessage) throws {
       role = message.role
-      content = message.content
+      content = PromptAttachmentService.providerPrompt(from: message.content)
       thinking = message.thinking
       toolCalls = message.toolCalls
       toolName = message.toolName

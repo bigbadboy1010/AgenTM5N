@@ -546,6 +546,7 @@ public final class AppState: ObservableObject {
         messages[index].content = "Fehler: \(error.localizedDescription)"
       }
       present(error)
+      try? await conversationStore.save(messages)
     }
 
     resolvePendingApproval(allowed: false)

@@ -353,6 +353,14 @@ struct ChatView: View {
 
   private func sendCurrentPrompt() {
     guard canSend else { return }
+    if appState.configuration.providerKind == .appleOnDevice,
+      attachmentStore.attachments.contains(where: { $0.kind == .image })
+    {
+      appState.errorMessage = PromptAttachmentError.imageProviderUnsupported
+        .localizedDescription
+      return
+    }
+
     do {
       appState.inputText = try PromptAttachmentService.prepareProviderContent(
         prompt: appState.inputText,

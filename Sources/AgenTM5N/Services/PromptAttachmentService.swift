@@ -334,7 +334,7 @@ public enum PromptAttachmentService {
       pixelsHigh: targetHeight,
       bitsPerSample: 8,
       samplesPerPixel: 4,
-      hasAlpha: false,
+      hasAlpha: true,
       isPlanar: false,
       colorSpaceName: .deviceRGB,
       bytesPerRow: 0,
