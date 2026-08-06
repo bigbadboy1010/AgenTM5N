@@ -10,7 +10,8 @@ struct TerminalWorkspaceView: View {
       HStack {
         Label(appState.terminalLaunch.title, systemImage: "terminal")
           .font(.headline)
-        Spacer()
+          .lineLimit(1)
+        Spacer(minLength: 12)
         Button {
           appState.openLocalTerminal()
         } label: {
@@ -23,8 +24,11 @@ struct TerminalWorkspaceView: View {
 
       EmbeddedTerminalView(launch: appState.terminalLaunch)
         .id(appState.terminalLaunch.id)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .layoutPriority(1)
         .background(Color.black)
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .navigationTitle("Terminal")
   }
 }
@@ -39,6 +43,7 @@ private struct EmbeddedTerminalView: NSViewRepresentable {
   func makeNSView(context: Context) -> LocalProcessTerminalView {
     let terminal = LocalProcessTerminalView(frame: .zero)
     terminal.wantsLayer = true
+    terminal.autoresizingMask = [.width, .height]
     terminal.processDelegate = context.coordinator
     terminal.nativeForegroundColor = .white
     terminal.nativeBackgroundColor = NSColor(
@@ -73,7 +78,9 @@ private struct EmbeddedTerminalView: NSViewRepresentable {
     return terminal
   }
 
-  func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {}
+  func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
+    nsView.needsLayout = true
+  }
 
   static func dismantleNSView(_ nsView: LocalProcessTerminalView, coordinator: Coordinator) {
     coordinator.cleanup()
