@@ -67,14 +67,14 @@ struct ChatView: View {
 
   private var providerPicker: some View {
     Picker(
-      "Provider",
+      L10n.text(de: "Anbieter", en: "Provider", fr: "Fournisseur"),
       selection: Binding(
         get: { appState.configuration.providerKind },
         set: { appState.providerChanged(to: $0) }
       )
     ) {
       ForEach(ProviderKind.allCases) { provider in
-        Text(provider.displayName).tag(provider)
+        Text(providerTitle(provider)).tag(provider)
       }
     }
     .labelsHidden()
@@ -84,9 +84,12 @@ struct ChatView: View {
   @ViewBuilder
   private var modelField: some View {
     if appState.configuration.providerKind != .appleOnDevice {
-      TextField("Modell", text: $appState.configuration.model)
-        .textFieldStyle(.roundedBorder)
-        .frame(minWidth: 150, idealWidth: 220, maxWidth: 280)
+      TextField(
+        L10n.text(de: "Modell", en: "Model", fr: "Modèle"),
+        text: $appState.configuration.model
+      )
+      .textFieldStyle(.roundedBorder)
+      .frame(minWidth: 150, idealWidth: 220, maxWidth: 280)
     }
   }
 
@@ -100,7 +103,10 @@ struct ChatView: View {
           ProgressView()
             .controlSize(.small)
         } else {
-          Label("Modelle", systemImage: "arrow.clockwise")
+          Label(
+            L10n.text(de: "Modelle", en: "Models", fr: "Modèles"),
+            systemImage: "arrow.clockwise"
+          )
         }
       }
       .disabled(appState.isLoadingModels)
@@ -112,7 +118,10 @@ struct ChatView: View {
     if appState.configuration.providerKind != .appleOnDevice,
       !appState.availableModels.isEmpty
     {
-      Picker("Verfügbar", selection: $appState.configuration.model) {
+      Picker(
+        L10n.text(de: "Verfügbar", en: "Available", fr: "Disponible"),
+        selection: $appState.configuration.model
+      ) {
         ForEach(appState.availableModels, id: \.self) { model in
           Text(model).tag(model)
         }
@@ -134,7 +143,10 @@ struct ChatView: View {
           }
         }
       } label: {
-        Label("Modell wählen", systemImage: "list.bullet")
+        Label(
+          L10n.text(de: "Modell wählen", en: "Choose Model", fr: "Choisir le modèle"),
+          systemImage: "list.bullet"
+        )
       }
     }
   }
@@ -150,14 +162,17 @@ struct ChatView: View {
     Button {
       Task { await appState.resetConversation() }
     } label: {
-      Label("Neue Sitzung", systemImage: "plus.bubble")
+      Label(
+        L10n.text(de: "Neue Sitzung", en: "New Session", fr: "Nouvelle session"),
+        systemImage: "plus.bubble"
+      )
     }
   }
 
   private var runtimeStatus: some View {
     HStack(spacing: 10) {
       Label(
-        appState.configuration.providerKind.displayName,
+        providerTitle(appState.configuration.providerKind),
         systemImage: "cpu"
       )
 
@@ -183,11 +198,23 @@ struct ChatView: View {
       if appState.configuration.agentEnabled,
         appState.configuration.providerKind != .appleOnDevice
       {
-        Text("Lokale Werkzeuge aktiv")
-          .foregroundStyle(.secondary)
+        Text(
+          L10n.text(
+            de: "Lokale Werkzeuge aktiv",
+            en: "Local tools active",
+            fr: "Outils locaux actifs"
+          )
+        )
+        .foregroundStyle(.secondary)
       } else {
-        Text("Keine Tool-Ausführung")
-          .foregroundStyle(.orange)
+        Text(
+          L10n.text(
+            de: "Keine Werkzeugausführung",
+            en: "No tool execution",
+            fr: "Aucune exécution d’outil"
+          )
+        )
+        .foregroundStyle(.orange)
       }
     }
     .font(.caption)
@@ -199,7 +226,7 @@ struct ChatView: View {
       appState.configuration.providerKind != .appleOnDevice
     {
       Label(
-        "Agent · \(appState.configuration.permissionMode.displayName)",
+        "Agent · \(permissionTitle(appState.configuration.permissionMode))",
         systemImage: "wrench.and.screwdriver"
       )
       .font(.caption)
@@ -207,15 +234,30 @@ struct ChatView: View {
       .padding(.horizontal, 9)
       .padding(.vertical, 5)
       .background(.green.opacity(0.16), in: Capsule())
-      .help("Tool Calling ist aktiv.")
+      .help(
+        L10n.text(
+          de: "Werkzeugaufrufe sind aktiv.",
+          en: "Tool calling is active.",
+          fr: "Les appels d’outils sont actifs."
+        )
+      )
     } else {
-      Label("Chat-only", systemImage: "bubble.left")
-        .font(.caption)
-        .lineLimit(1)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(.orange.opacity(0.16), in: Capsule())
-        .help("Dieser Provider oder diese Konfiguration führt keine Werkzeuge aus.")
+      Label(
+        L10n.text(de: "Nur Chat", en: "Chat Only", fr: "Chat uniquement"),
+        systemImage: "bubble.left"
+      )
+      .font(.caption)
+      .lineLimit(1)
+      .padding(.horizontal, 9)
+      .padding(.vertical, 5)
+      .background(.orange.opacity(0.16), in: Capsule())
+      .help(
+        L10n.text(
+          de: "Dieser Anbieter oder diese Konfiguration führt keine Werkzeuge aus.",
+          en: "This provider or configuration does not execute tools.",
+          fr: "Ce fournisseur ou cette configuration n’exécute aucun outil."
+        )
+      )
     }
   }
 
@@ -225,10 +267,14 @@ struct ChatView: View {
         LazyVStack(alignment: .leading, spacing: 14) {
           if appState.messages.isEmpty {
             ContentUnavailableView(
-              "Neue Sitzung",
+              L10n.text(de: "Neue Sitzung", en: "New Session", fr: "Nouvelle session"),
               systemImage: "brain.head.profile",
               description: Text(
-                "Für lokale Werkzeuge einen Ollama-Provider wählen, Agent aktivieren und den grünen Agent-Badge prüfen."
+                L10n.text(
+                  de: "Für lokale Werkzeuge einen Ollama-Anbieter wählen, den Agent aktivieren und den grünen Agent-Status prüfen.",
+                  en: "For local tools, select an Ollama provider, enable the agent, and verify the green agent status.",
+                  fr: "Pour les outils locaux, sélectionnez un fournisseur Ollama, activez l’agent et vérifiez l’état vert de l’agent."
+                )
               )
             )
             .frame(maxWidth: .infinity, minHeight: 320)
@@ -257,7 +303,10 @@ struct ChatView: View {
         .font(.body)
         .frame(minHeight: 56, idealHeight: 76, maxHeight: 160)
         .padding(6)
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(
+          Color(nsColor: .textBackgroundColor),
+          in: RoundedRectangle(cornerRadius: 10)
+        )
         .overlay {
           RoundedRectangle(cornerRadius: 10)
             .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
@@ -268,27 +317,74 @@ struct ChatView: View {
           Button(role: .destructive) {
             appState.stopGeneration()
           } label: {
-            Label("Stop", systemImage: "stop.fill")
+            Label(
+              L10n.text(de: "Stopp", en: "Stop", fr: "Arrêter"),
+              systemImage: "stop.fill"
+            )
           }
           .keyboardShortcut(.cancelAction)
         } else {
           Button {
             appState.sendMessage()
           } label: {
-            Label("Senden", systemImage: "paperplane.fill")
+            Label(
+              L10n.text(de: "Senden", en: "Send", fr: "Envoyer"),
+              systemImage: "paperplane.fill"
+            )
           }
           .keyboardShortcut(.return, modifiers: [.command])
-          .disabled(appState.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          .disabled(
+            appState.inputText.trimmingCharacters(
+              in: .whitespacesAndNewlines
+            ).isEmpty
+          )
         }
 
         Button {
           Task { await appState.saveConfiguration() }
         } label: {
-          Label("Speichern", systemImage: "square.and.arrow.down")
+          Label(
+            L10n.text(de: "Speichern", en: "Save", fr: "Enregistrer"),
+            systemImage: "square.and.arrow.down"
+          )
         }
       }
     }
     .padding(14)
+  }
+
+  private func providerTitle(_ provider: ProviderKind) -> String {
+    switch provider {
+    case .ollamaLocal:
+      return "Ollama Local"
+    case .ollamaCloud:
+      return "Ollama Cloud"
+    case .appleOnDevice:
+      return L10n.text(
+        de: "Apple lokal",
+        en: "Apple On-Device",
+        fr: "Apple local"
+      )
+    }
+  }
+
+  private func permissionTitle(_ mode: AgentPermissionMode) -> String {
+    switch mode {
+    case .confirm:
+      return L10n.text(de: "Bestätigen", en: "Confirm", fr: "Confirmer")
+    case .workspaceTrusted:
+      return L10n.text(
+        de: "Arbeitsbereich vertraut",
+        en: "Workspace Trusted",
+        fr: "Espace approuvé"
+      )
+    case .fullAccess:
+      return L10n.text(
+        de: "Vollzugriff",
+        en: "Full Access",
+        fr: "Accès complet"
+      )
+    }
   }
 }
 
@@ -300,12 +396,16 @@ private struct ToolApprovalBanner: View {
     VStack(alignment: .leading, spacing: 10) {
       HStack {
         Label(
-          "Tool-Freigabe erforderlich",
+          L10n.text(
+            de: "Werkzeugfreigabe erforderlich",
+            en: "Tool Approval Required",
+            fr: "Autorisation d’outil requise"
+          ),
           systemImage: "lock.open.trianglebadge.exclamationmark"
         )
         .font(.headline)
         Spacer()
-        Text(approval.risk.displayName)
+        Text(localizedRisk)
           .font(.caption)
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
@@ -318,10 +418,19 @@ private struct ToolApprovalBanner: View {
 
       HStack {
         Spacer()
-        Button("Ablehnen", role: .destructive) {
+        Button(
+          L10n.text(de: "Ablehnen", en: "Deny", fr: "Refuser"),
+          role: .destructive
+        ) {
           appState.denyPendingTool()
         }
-        Button("Einmal erlauben") {
+        Button(
+          L10n.text(
+            de: "Einmal erlauben",
+            en: "Allow Once",
+            fr: "Autoriser une fois"
+          )
+        ) {
           appState.approvePendingTool()
         }
         .keyboardShortcut(.defaultAction)
@@ -329,6 +438,17 @@ private struct ToolApprovalBanner: View {
     }
     .padding(12)
     .background(.orange.opacity(0.12))
+  }
+
+  private var localizedRisk: String {
+    switch approval.risk {
+    case .read:
+      return L10n.text(de: "Lesen", en: "Read", fr: "Lecture")
+    case .write:
+      return L10n.text(de: "Schreiben", en: "Write", fr: "Écriture")
+    case .execute:
+      return L10n.text(de: "Ausführen", en: "Execute", fr: "Exécution")
+    }
   }
 }
 
@@ -349,12 +469,22 @@ private struct MessageBubble: View {
 
   private var bubble: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Text(message.role == .assistant ? "Agent" : "Du")
-        .font(.caption)
-        .foregroundStyle(.secondary)
+      Text(
+        message.role == .assistant
+          ? "Agent"
+          : L10n.text(de: "Du", en: "You", fr: "Vous")
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
 
       if !message.thinking.isEmpty {
-        DisclosureGroup("Thinking") {
+        DisclosureGroup(
+          L10n.text(
+            de: "Denkprozess",
+            en: "Thinking",
+            fr: "Raisonnement"
+          )
+        ) {
           Text(message.thinking)
             .font(.system(.caption, design: .monospaced))
             .textSelection(.enabled)
@@ -378,7 +508,8 @@ private struct MessageBubble: View {
     .padding(12)
     .background(
       message.role == .assistant
-        ? Color(nsColor: .controlBackgroundColor) : Color.accentColor.opacity(0.16),
+        ? Color(nsColor: .controlBackgroundColor)
+        : Color.accentColor.opacity(0.16),
       in: RoundedRectangle(cornerRadius: 12)
     )
     .frame(maxWidth: 820, alignment: .leading)
@@ -412,13 +543,26 @@ private struct ToolExecutionCard: View {
         Text(execution.toolName)
           .font(.system(.caption, design: .monospaced))
         Spacer()
-        Text(execution.status.rawValue)
+        Text(localizedStatus)
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
     }
     .padding(9)
     .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+  }
+
+  private var localizedStatus: String {
+    switch execution.status {
+    case .running:
+      return L10n.text(de: "Läuft", en: "Running", fr: "En cours")
+    case .succeeded:
+      return L10n.text(de: "Erfolgreich", en: "Succeeded", fr: "Réussi")
+    case .failed:
+      return L10n.text(de: "Fehlgeschlagen", en: "Failed", fr: "Échec")
+    case .denied:
+      return L10n.text(de: "Abgelehnt", en: "Denied", fr: "Refusé")
+    }
   }
 
   private var statusIcon: String {
