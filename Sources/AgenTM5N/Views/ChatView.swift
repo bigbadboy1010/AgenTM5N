@@ -6,6 +6,7 @@ struct ChatView: View {
   var body: some View {
     VStack(spacing: 0) {
       header
+      runtimeStatus
       Divider()
       messages
       if let approval = appState.pendingToolApproval {
@@ -61,18 +62,7 @@ struct ChatView: View {
         }
       }
 
-      if appState.configuration.agentEnabled,
-        appState.configuration.providerKind != .appleOnDevice
-      {
-        Label(
-          appState.configuration.permissionMode.displayName,
-          systemImage: "wrench.and.screwdriver"
-        )
-        .font(.caption)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(.quaternary, in: Capsule())
-      }
+      agentModeBadge
 
       Spacer()
 
@@ -83,10 +73,76 @@ struct ChatView: View {
       Button(role: .destructive) {
         Task { await appState.resetConversation() }
       } label: {
-        Label("Leeren", systemImage: "trash")
+        Label("Neue Sitzung", systemImage: "plus.bubble")
       }
     }
-    .padding(12)
+    .padding(.horizontal, 12)
+    .padding(.top, 12)
+    .padding(.bottom, 7)
+  }
+
+  private var runtimeStatus: some View {
+    HStack(spacing: 12) {
+      Label(
+        appState.configuration.providerKind.displayName,
+        systemImage: "cpu"
+      )
+
+      if appState.configuration.providerKind != .appleOnDevice {
+        Text(appState.configuration.model)
+          .font(.system(.caption, design: .monospaced))
+      }
+
+      Divider()
+        .frame(height: 14)
+
+      Label(
+        appState.configuration.workspacePath,
+        systemImage: "folder"
+      )
+      .lineLimit(1)
+      .truncationMode(.middle)
+      .help(appState.configuration.workspacePath)
+
+      Spacer()
+
+      if appState.configuration.agentEnabled,
+        appState.configuration.providerKind != .appleOnDevice
+      {
+        Text("Lokale Werkzeuge werden dem Modell bereitgestellt.")
+          .foregroundStyle(.secondary)
+      } else {
+        Text("Keine Tool-Ausführung in diesem Modus.")
+          .foregroundStyle(.orange)
+      }
+    }
+    .font(.caption)
+    .padding(.horizontal, 12)
+    .padding(.bottom, 9)
+  }
+
+  @ViewBuilder
+  private var agentModeBadge: some View {
+    if appState.configuration.agentEnabled,
+      appState.configuration.providerKind != .appleOnDevice
+    {
+      Label(
+        "Agent · \(appState.configuration.permissionMode.displayName)",
+        systemImage: "wrench.and.screwdriver"
+      )
+      .font(.caption)
+      .padding(.horizontal, 9)
+      .padding(.vertical, 5)
+      .background(.green.opacity(0.16), in: Capsule())
+      .help("Tool Calling ist aktiv.")
+    } else {
+      Label("Chat-only", systemImage: "bubble.left")
+        .font(.caption)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(.orange.opacity(0.16), in: Capsule())
+        .help("Dieser Provider oder diese Konfiguration führt keine Werkzeuge aus.")
+    }
   }
 
   private var messages: some View {
@@ -98,7 +154,7 @@ struct ChatView: View {
               "Neue Sitzung",
               systemImage: "brain.head.profile",
               description: Text(
-                "Ollama Local, Ollama Cloud oder Apple On-Device auswählen und eine Aufgabe eingeben."
+                "Für lokale Werkzeuge einen Ollama-Provider wählen, Agent aktivieren und den grünen Agent-Badge prüfen."
               )
             )
             .frame(maxWidth: .infinity, minHeight: 420)
