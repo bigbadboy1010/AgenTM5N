@@ -147,9 +147,19 @@ replace_once(
 )
 replace_once(
     app,
-    '''      workspaceIndexStatus = nil
+    '''  public func clearWorkspaceIndex() async {
+    do {
+      try await workspaceIndexService.clear(
+        workspacePath: configuration.workspacePath
+      )
+      workspaceIndexStatus = nil
       workspaceSemanticResults = []''',
-    '''      workspaceIndexStatus = nil
+    '''  public func clearWorkspaceIndex() async {
+    do {
+      try await workspaceIndexService.clear(
+        workspacePath: configuration.workspacePath
+      )
+      workspaceIndexStatus = nil
       workspaceIndexProgress = nil
       workspaceSemanticResults = []''',
 )
