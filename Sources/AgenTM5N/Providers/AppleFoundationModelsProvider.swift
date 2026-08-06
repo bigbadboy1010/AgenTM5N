@@ -7,7 +7,11 @@ public enum AppleFoundationModelsProviderError: LocalizedError {
   public var errorDescription: String? {
     switch self {
     case .unavailable(let reason):
-      "Apple Foundation Models ist nicht verfügbar: \(reason)"
+      return L10n.text(
+        de: "Apple Foundation Models ist nicht verfügbar: \(reason)",
+        en: "Apple Foundation Models is unavailable: \(reason)",
+        fr: "Apple Foundation Models n’est pas disponible : \(reason)"
+      )
     }
   }
 }
@@ -20,9 +24,17 @@ public actor AppleFoundationModelsProvider {
   public func availabilityDescription() -> String {
     switch model.availability {
     case .available:
-      return "Verfügbar"
+      return L10n.text(
+        de: "Verfügbar",
+        en: "Available",
+        fr: "Disponible"
+      )
     case .unavailable(let reason):
-      return "Nicht verfügbar: \(String(describing: reason))"
+      return L10n.text(
+        de: "Nicht verfügbar: \(String(describing: reason))",
+        en: "Unavailable: \(String(describing: reason))",
+        fr: "Indisponible : \(String(describing: reason))"
+      )
     }
   }
 
@@ -38,6 +50,8 @@ public actor AppleFoundationModelsProvider {
     }
 
     let instructions = configuration.systemPrompt
+      + "\n\n"
+      + SystemLanguage.current.agentInstruction
     let session = LanguageModelSession(model: model) {
       instructions
     }
