@@ -50,8 +50,10 @@ private struct CoreMLToolPredictionDescriptor: Encodable {
 
 private struct WorkspaceIndexToolStatusDescriptor: Encodable {
   let indexed: Bool
+  let mode: String?
   let modelID: String?
   let modelName: String?
+  let warning: String?
   let createdAt: Date?
   let fileCount: Int?
   let chunkCount: Int?
@@ -107,6 +109,7 @@ public final class AppState: ObservableObject {
   @Published public var workspaceSemanticQuery = ""
   @Published public var workspaceSemanticResults: [WorkspaceSemanticMatch] = []
   @Published public var isBuildingWorkspaceIndex = false
+  @Published public var workspaceIndexProgress: WorkspaceIndexBuildProgress?
 
   private let configurationStore: JSONDocumentStore<AppConfiguration>
   private let conversationStore: JSONDocumentStore<[ChatMessage]>
@@ -179,7 +182,6 @@ public final class AppState: ObservableObject {
         workspacePath: configuration.workspacePath
       )
       workspaceEmbeddingModelID = workspaceIndexStatus?.modelID
-        ?? snapshot.activeModelID
 
       let appleStatus = await appleProvider.availabilityDescription()
       hardwareProfile = HardwareService.makeProfile(
@@ -407,9 +409,6 @@ public final class AppState: ObservableObject {
       activeCoreMLModelID = record.id
       coreMLDescriptor = record.descriptor
       coreMLPredictionResult = nil
-      if workspaceEmbeddingModelID == nil {
-        workspaceEmbeddingModelID = record.id
-      }
     } catch {
       present(error)
     }
@@ -445,17 +444,24 @@ public final class AppState: ObservableObject {
   public func buildWorkspaceIndex() async {
     guard !isBuildingWorkspaceIndex else { return }
     isBuildingWorkspaceIndex = true
+    workspaceIndexProgress = WorkspaceIndexBuildProgress(
+      phase: .preparing
+    )
     defer { isBuildingWorkspaceIndex = false }
 
     do {
       let model = try await selectedWorkspaceEmbeddingModel()
       workspaceIndexStatus = try await workspaceIndexService.build(
         workspacePath: configuration.workspacePath,
-        model: model
+        model: model,
+        progress: { [weak self] progress in
+          self?.workspaceIndexProgress = progress
+        }
       )
-      workspaceEmbeddingModelID = model.id
+      workspaceEmbeddingModelID = workspaceIndexStatus?.modelID
       workspaceSemanticResults = []
     } catch {
+      workspaceIndexProgress = nil
       present(error)
     }
   }
@@ -465,9 +471,14 @@ public final class AppState: ObservableObject {
       guard let status = workspaceIndexStatus else {
         throw WorkspaceIndexError.indexNotFound(configuration.workspacePath)
       }
-      let model = try await coreMLService.registeredModel(
-        query: status.modelID.uuidString
-      )
+      let model: CoreMLRegisteredModel?
+      if let modelID = status.modelID {
+        model = try await coreMLService.registeredModel(
+          query: modelID.uuidString
+        )
+      } else {
+        model = nil
+      }
       workspaceSemanticResults = try await workspaceIndexService.search(
         query: workspaceSemanticQuery,
         workspacePath: configuration.workspacePath,
@@ -484,6 +495,7 @@ public final class AppState: ObservableObject {
         workspacePath: configuration.workspacePath
       )
       workspaceIndexStatus = nil
+      workspaceIndexProgress = nil
       workspaceSemanticResults = []
     } catch {
       present(error)
@@ -866,13 +878,21 @@ public final class AppState: ObservableObject {
   ) async -> ToolExecutionResult {
     do {
       let modelQuery = optionalToolString("model", in: call)
-      let model = try await coreMLService.registeredModel(query: modelQuery)
+      let model: CoreMLRegisteredModel?
+      if let modelQuery {
+        model = try await coreMLService.registeredModel(query: modelQuery)
+      } else {
+        model = nil
+      }
       let status = try await workspaceIndexService.build(
         workspacePath: configuration.workspacePath,
-        model: model
+        model: model,
+        progress: { [weak self] progress in
+          self?.workspaceIndexProgress = progress
+        }
       )
       workspaceIndexStatus = status
-      workspaceEmbeddingModelID = model.id
+      workspaceEmbeddingModelID = status.modelID
       workspaceSemanticResults = []
       return encodedToolResult(workspaceStatusDescriptor(status))
     } catch {
@@ -891,9 +911,14 @@ public final class AppState: ObservableObject {
       ) else {
         throw WorkspaceIndexError.indexNotFound(configuration.workspacePath)
       }
-      let model = try await coreMLService.registeredModel(
-        query: status.modelID.uuidString
-      )
+      let model: CoreMLRegisteredModel?
+      if let modelID = status.modelID {
+        model = try await coreMLService.registeredModel(
+          query: modelID.uuidString
+        )
+      } else {
+        model = nil
+      }
       let matches = try await workspaceIndexService.search(
         query: query,
         workspacePath: configuration.workspacePath,
@@ -944,8 +969,10 @@ public final class AppState: ObservableObject {
   ) -> WorkspaceIndexToolStatusDescriptor {
     WorkspaceIndexToolStatusDescriptor(
       indexed: status != nil,
-      modelID: status?.modelID.uuidString,
+      mode: status?.mode.rawValue,
+      modelID: status?.modelID?.uuidString,
       modelName: status?.modelName,
+      warning: status?.warning,
       createdAt: status?.createdAt,
       fileCount: status?.fileCount,
       chunkCount: status?.chunkCount,
@@ -954,13 +981,13 @@ public final class AppState: ObservableObject {
     )
   }
 
-  private func selectedWorkspaceEmbeddingModel() async throws -> CoreMLRegisteredModel {
-    if let modelID = workspaceEmbeddingModelID {
-      return try await coreMLService.registeredModel(
-        query: modelID.uuidString
-      )
+  private func selectedWorkspaceEmbeddingModel() async throws -> CoreMLRegisteredModel? {
+    guard let modelID = workspaceEmbeddingModelID else {
+      return nil
     }
-    return try await coreMLService.registeredModel(query: nil)
+    return try await coreMLService.registeredModel(
+      query: modelID.uuidString
+    )
   }
 
   private func encodedToolResult<T: Encodable>(_ value: T) -> ToolExecutionResult {

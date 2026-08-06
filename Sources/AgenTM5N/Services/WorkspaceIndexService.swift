@@ -86,7 +86,7 @@ public actor WorkspaceIndexService {
   public static let overlapLines = 3
   public static let maximumResults = 20
 
-  public typealias ProgressHandler = @Sendable (WorkspaceIndexBuildProgress) async -> Void
+  public typealias ProgressHandler = @MainActor @Sendable (WorkspaceIndexBuildProgress) async -> Void
 
   private struct PendingChunk: Sendable {
     let relativePath: String
