@@ -1,8 +1,7 @@
 import Foundation
 
-@MainActor
 public extension PromptAttachmentService {
-  static func visiblePrompt(from storedContent: String) -> String {
+  nonisolated static func visiblePrompt(from storedContent: String) -> String {
     var stripped = storedContent
     if let expression = textAttachmentExpression {
       let range = NSRange(stripped.startIndex..<stripped.endIndex, in: stripped)
@@ -23,12 +22,12 @@ public extension PromptAttachmentService {
     return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  static func attachmentNames(from storedContent: String) -> [String] {
+  nonisolated static func attachmentNames(from storedContent: String) -> [String] {
     textAttachmentNames(from: storedContent)
       + imageReferences(from: storedContent).map(\.name)
   }
 
-  static func textAttachmentNames(from storedContent: String) -> [String] {
+  nonisolated static func textAttachmentNames(from storedContent: String) -> [String] {
     guard let expression = textAttachmentExpression else { return [] }
     let range = NSRange(storedContent.startIndex..<storedContent.endIndex, in: storedContent)
     return expression.matches(in: storedContent, range: range).compactMap { match in
@@ -41,7 +40,7 @@ public extension PromptAttachmentService {
     }
   }
 
-  static func imageReferences(
+  nonisolated static func imageReferences(
     from storedContent: String
   ) -> [PromptImageReference] {
     guard let expression = imageAttachmentExpression else { return [] }
@@ -75,27 +74,27 @@ public extension PromptAttachmentService {
     }
   }
 
-  static func hasImageAttachments(in storedContent: String) -> Bool {
+  nonisolated static func hasImageAttachments(in storedContent: String) -> Bool {
     guard let expression = imageAttachmentExpression else { return false }
     let range = NSRange(storedContent.startIndex..<storedContent.endIndex, in: storedContent)
     return expression.firstMatch(in: storedContent, range: range) != nil
   }
 
-  private static var textAttachmentExpression: NSRegularExpression? {
+  nonisolated private static var textAttachmentExpression: NSRegularExpression? {
     try? NSRegularExpression(
       pattern: #"<agentm5n_attachment\b[^>]*name="([^"]*)"[^>]*>[\s\S]*?</agentm5n_attachment>"#,
       options: []
     )
   }
 
-  private static var imageAttachmentExpression: NSRegularExpression? {
+  nonisolated private static var imageAttachmentExpression: NSRegularExpression? {
     try? NSRegularExpression(
       pattern: #"<agentm5n_image_attachment\s+id="([^"]+)"\s+name="([^"]*)"\s+media_type="([^"]+)"\s+bytes="([0-9]+)"\s+path="([^"]+)"\s+width="([0-9]+)"\s+height="([0-9]+)"\s*/>"#,
       options: []
     )
   }
 
-  private static func unescapedAttribute(_ value: String) -> String {
+  nonisolated private static func unescapedAttribute(_ value: String) -> String {
     value
       .replacingOccurrences(of: "&quot;", with: "\"")
       .replacingOccurrences(of: "&lt;", with: "<")
