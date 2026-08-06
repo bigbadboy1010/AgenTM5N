@@ -7,6 +7,7 @@
 - Ein neues SSH-Profil kann dadurch kein vorhandenes Profil mehr unbeabsichtigt überschreiben.
 - Abbrechen verwirft den aktuellen Entwurf vollständig.
 - Nach erfolgreichem Speichern wird die Editor-Sitzung geschlossen und zurückgesetzt.
+- Core-ML-Vorhersagen verwenden unter Xcode 27 und Swift 6.4 den asynchronen Aufruf `try await MLModel.prediction(from:)`.
 
 ## Verbessert
 
