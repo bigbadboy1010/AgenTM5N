@@ -2,6 +2,41 @@
 
 All notable changes to AgenTM5N are documented in this file.
 
+## [0.2.2] - 2026-08-06
+
+### Added
+
+- `glob_files` recursively finds workspace files with bounded glob patterns.
+- `search_text` searches UTF-8 files and returns relative path, line, column and
+  a bounded preview without requiring external tools such as ripgrep.
+- `apply_patch` replaces exactly one known text block and fails safely when the
+  old block is missing or ambiguous.
+- `git_branches` reports the current branch and local branch inventory.
+- `git_checkout` switches or creates local branches only when the working tree
+  is clean and never forces or discards changes.
+- `git_commit` stages only explicitly named workspace paths, rejects existing
+  staged changes, creates a local commit and never pushes.
+- Equivalent local tool calls are limited to two executions within a 90-second
+  window to stop accidental agent loops.
+
+### Security
+
+- Search and glob operations skip symlinks and common generated or sensitive
+  directories such as `.git`, `.build`, `.swiftpm`, `dist` and `node_modules`.
+- Search output is capped at 200 matches and glob output at 500 paths.
+- Patch and write operations retain the existing workspace and file-size
+  boundaries.
+- Git paths are normalized against the active workspace and `git_commit`
+  rejects the broad `.` path.
+- Git checkout is blocked on dirty worktrees; Git commit is blocked when staged
+  changes already exist.
+
+### Changed
+
+- App version is 0.2.2 build 7.
+- Agents are instructed through tool descriptions to inspect with search/read,
+  apply targeted patches and verify changes with Git diff before committing.
+
 ## [0.2.1] - 2026-08-06
 
 ### Added
