@@ -15,12 +15,26 @@ All notable changes to AgenTM5N are documented in this file.
 - Persisted tool execution audit cards in the chat history.
 - Command timeout, output limits, file-size limits and workspace path checks.
 - Compatibility migration for existing 0.1.x configuration files.
+- Explicit agent-readiness badge, active model and workspace in the chat UI.
+
+### Fixed
+
+- Agent requests now receive a binding runtime context that identifies the
+  actual macOS workspace and real local tools.
+- Models are instructed not to claim missing filesystem, terminal or repository
+  access while AgenTM5N tools are available.
+- Capability-denial responses without tool calls now receive a visible
+  AgenTM5N diagnostic instead of remaining indistinguishable from a valid
+  agent answer.
+- The conversation reset action is labeled as a new session to avoid carrying
+  unrelated persisted context into agent tests.
 
 ### Changed
 
 - App version increased to 0.2.0 build 4.
 - Default system prompt identifies the agent as AgenTM5N and instructs it to
   verify tool results before continuing.
+- Apple Foundation Models remains a chat-only provider in this milestone.
 
 ## [0.1.1] - 2026-08-06
 
