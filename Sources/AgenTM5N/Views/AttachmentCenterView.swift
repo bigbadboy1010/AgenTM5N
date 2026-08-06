@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct AttachmentCenterView: View {
+  @Environment(\.dismiss) private var dismiss
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
   @State private var inspectedAttachment: PromptAttachment?
@@ -61,12 +62,14 @@ struct AttachmentCenterView: View {
 
       Button {
         appState.selectedSection = .chat
+        dismiss()
       } label: {
         Label(
           L10n.text(de: "Zum Chat", en: "Back to Chat", fr: "Retour au chat"),
           systemImage: "bubble.left.and.bubble.right"
         )
       }
+      .keyboardShortcut(.cancelAction)
     }
     .padding(18)
   }
