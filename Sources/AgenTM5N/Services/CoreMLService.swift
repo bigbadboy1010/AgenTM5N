@@ -58,9 +58,9 @@ public enum CoreMLServiceError: LocalizedError {
       )
     case .inputTypeNotSupported(let name, let type):
       return L10n.text(
-        de: "Der Input „\(name)“ vom Typ \(type) kann noch nicht über den generischen JSON-Runner erzeugt werden. Das Modell wurde geladen, benötigt aber einen typgerechten Eingabeadapter.",
-        en: "Input “\(name)” of type \(type) cannot yet be created by the generic JSON runner. The model is loaded, but it requires a type-specific input adapter.",
-        fr: "L’entrée « \(name) » de type \(type) ne peut pas encore être créée par l’exécuteur JSON générique. Le modèle est chargé, mais nécessite un adaptateur d’entrée spécifique."
+        de: "Der Input „\(name)“ vom Typ \(type) kann noch nicht über den generischen Core-ML-Runner erzeugt werden. Das Modell wurde geladen, benötigt aber einen typgerechten Eingabeadapter.",
+        en: "Input “\(name)” of type \(type) cannot yet be created by the generic Core ML runner. The model is loaded, but it requires a type-specific input adapter.",
+        fr: "L’entrée « \(name) » de type \(type) ne peut pas encore être créée par l’exécuteur Core ML générique. Le modèle est chargé, mais nécessite un adaptateur d’entrée spécifique."
       )
     case .registryEncodingFailed:
       return L10n.text(
@@ -199,47 +199,16 @@ public actor CoreMLService {
     guard jsonInput.utf8.count <= Self.maximumJSONInputBytes else {
       throw AgentRuntimeError.inputTooLarge(limit: Self.maximumJSONInputBytes)
     }
+
     let record = try resolveRecord(query: modelQuery)
-    let loadedModel = try await model(for: record.id)
-    guard let data = jsonInput.data(using: .utf8) else {
-      throw CoreMLServiceError.invalidJSON
-    }
-
-    let values: [String: JSONValue]
-    do {
-      values = try JSONDecoder().decode([String: JSONValue].self, from: data)
-    } catch {
-      throw CoreMLServiceError.invalidJSON
-    }
-
-    var featureValues: [String: MLFeatureValue] = [:]
-    for (name, description) in loadedModel.modelDescription.inputDescriptionsByName {
-      guard let value = values[name] else { continue }
-      featureValues[name] = try Self.makeFeatureValue(
-        value,
-        name: name,
-        description: description
-      )
-    }
-
-    let input = DictionaryFeatureProvider(values: featureValues)
-    let clock = ContinuousClock()
-    let startedAt = clock.now
-    let output = try await loadedModel.prediction(from: input)
-    let elapsed = startedAt.duration(to: clock.now)
-
-    var resultValues: [String: String] = [:]
-    for name in output.featureNames.sorted() {
-      guard let value = output.featureValue(for: name) else { continue }
-      resultValues[name] = Self.describe(value)
-    }
+    let result = try await CoreMLPredictionRunner.predict(
+      compiledURL: record.compiledURL,
+      jsonInput: jsonInput
+    )
 
     registry.activeModelID = record.id
     try saveRegistry()
-    return CoreMLPredictionResult(
-      values: resultValues,
-      durationMilliseconds: Self.milliseconds(from: elapsed)
-    )
+    return result
   }
 
   private func model(for id: UUID) async throws -> MLModel {
@@ -346,7 +315,9 @@ public actor CoreMLService {
     preferredExtension: String
   ) throws -> URL {
     let manager = FileManager.default
-    let baseName = Self.sanitizedBaseName(sourceURL.deletingPathExtension().lastPathComponent)
+    let baseName = Self.sanitizedBaseName(
+      sourceURL.deletingPathExtension().lastPathComponent
+    )
     let suffix = String(UUID().uuidString.prefix(8)).lowercased()
     let destination = directory.appendingPathComponent(
       "\(baseName)-\(suffix).\(preferredExtension)",
@@ -365,9 +336,15 @@ public actor CoreMLService {
   }
 
   private static func sanitizedBaseName(_ value: String) -> String {
-    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-    let scalars = value.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "-" }
-    let result = String(scalars).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    let allowed = CharacterSet.alphanumerics.union(
+      CharacterSet(charactersIn: "-_")
+    )
+    let scalars = value.unicodeScalars.map {
+      allowed.contains($0) ? Character(String($0)) : "-"
+    }
+    let result = String(scalars).trimmingCharacters(
+      in: CharacterSet(charactersIn: "-")
+    )
     return result.isEmpty ? "CoreMLModel" : result
   }
 
@@ -396,7 +373,9 @@ public actor CoreMLService {
       details.append("\(constraint.pixelsWide) × \(constraint.pixelsHigh)")
     }
     if description.isOptional {
-      details.append(L10n.text(de: "optional", en: "optional", fr: "facultatif"))
+      details.append(
+        L10n.text(de: "optional", en: "optional", fr: "facultatif")
+      )
     }
     return "\(name) [\(details.joined(separator: ", "))]"
   }
@@ -412,7 +391,11 @@ public actor CoreMLService {
     case .multiArray:
       return "MultiArray"
     case .dictionary:
-      return L10n.text(de: "Wörterbuch", en: "Dictionary", fr: "Dictionnaire")
+      return L10n.text(
+        de: "Wörterbuch",
+        en: "Dictionary",
+        fr: "Dictionnaire"
+      )
     case .image:
       return L10n.text(de: "Bild", en: "Image", fr: "Image")
     case .sequence:
@@ -424,80 +407,5 @@ public actor CoreMLService {
     @unknown default:
       return String(describing: type)
     }
-  }
-
-  private static func makeFeatureValue(
-    _ value: JSONValue,
-    name: String,
-    description: MLFeatureDescription
-  ) throws -> MLFeatureValue {
-    switch (description.type, value) {
-    case (.double, .number(let number)):
-      return MLFeatureValue(double: number)
-    case (.int64, .number(let number)):
-      return MLFeatureValue(int64: Int64(number))
-    case (.string, .string(let text)):
-      return MLFeatureValue(string: text)
-    default:
-      throw CoreMLServiceError.inputTypeNotSupported(
-        name: name,
-        type: localizedFeatureType(description.type)
-      )
-    }
-  }
-
-  private static func describe(_ value: MLFeatureValue) -> String {
-    switch value.type {
-    case .double:
-      return String(value.doubleValue)
-    case .int64:
-      return String(value.int64Value)
-    case .string:
-      return value.stringValue
-    case .multiArray:
-      guard let array = value.multiArrayValue else { return "MultiArray(nil)" }
-      return "MultiArray shape=\(array.shape) dataType=\(array.dataType.rawValue)"
-    case .dictionary:
-      return String(describing: value.dictionaryValue)
-    case .image:
-      guard let image = value.imageBufferValue else { return "Image(nil)" }
-      return "Image \(CVPixelBufferGetWidth(image))×\(CVPixelBufferGetHeight(image))"
-    case .sequence:
-      return String(describing: value.sequenceValue)
-    case .state:
-      return "MLState"
-    case .invalid:
-      return L10n.text(
-        de: "Ungültiger Feature-Wert",
-        en: "Invalid feature value",
-        fr: "Valeur de caractéristique invalide"
-      )
-    @unknown default:
-      return String(describing: value)
-    }
-  }
-
-  private static func milliseconds(from duration: Duration) -> Double {
-    let components = duration.components
-    let seconds = Double(components.seconds)
-    let attoseconds = Double(components.attoseconds)
-    return seconds * 1_000 + attoseconds / 1_000_000_000_000_000
-  }
-}
-
-private final class DictionaryFeatureProvider: NSObject, MLFeatureProvider {
-  private let values: [String: MLFeatureValue]
-
-  init(values: [String: MLFeatureValue]) {
-    self.values = values
-    super.init()
-  }
-
-  var featureNames: Set<String> {
-    Set(values.keys)
-  }
-
-  func featureValue(for featureName: String) -> MLFeatureValue? {
-    values[featureName]
   }
 }
