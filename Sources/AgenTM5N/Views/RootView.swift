@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
   @EnvironmentObject private var appState: AppState
+  @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
   @State private var isImportingPromptFiles = false
 
   var body: some View {
@@ -54,9 +55,9 @@ struct RootView: View {
             .disabled(isImportingPromptFiles || appState.isGenerating)
             .help(
               L10n.text(
-                de: "Text-, Code-, Konfigurations-, Log- oder PDF-Dateien in den aktuellen Prompt einfügen.",
-                en: "Insert text, code, configuration, log, or PDF files into the current prompt.",
-                fr: "Insérer des fichiers texte, code, configuration, journal ou PDF dans l’invite actuelle."
+                de: "Text-, Code-, Konfigurations-, Log- oder PDF-Dateien an den aktuellen Prompt anhängen.",
+                en: "Attach text, code, configuration, log, or PDF files to the current prompt.",
+                fr: "Joindre des fichiers texte, code, configuration, journal ou PDF à l’invite actuelle."
               )
             )
           }
@@ -95,13 +96,13 @@ struct RootView: View {
     defer { isImportingPromptFiles = false }
 
     do {
-      guard let imported = try PromptAttachmentService.selectPromptFiles() else {
+      guard let imported = try PromptAttachmentService.selectPromptFiles(
+        existingCount: attachmentStore.attachments.count,
+        existingCharacterCount: attachmentStore.extractedCharacterCount
+      ) else {
         return
       }
-      if !appState.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        appState.inputText += "\n\n"
-      }
-      appState.inputText += imported
+      attachmentStore.add(imported)
     } catch {
       appState.errorMessage = error.localizedDescription
     }
