@@ -2,6 +2,34 @@ import AppKit
 import Foundation
 import SwiftUI
 
+public enum SSHAgentToolError: LocalizedError {
+  case hostNotFound(String)
+  case ambiguousHost(String, [String])
+  case missingLaunchCommand
+
+  public var errorDescription: String? {
+    switch self {
+    case .hostNotFound(let query):
+      "Kein gespeichertes SSH-Profil passt zu: \(query)"
+    case .ambiguousHost(let query, let matches):
+      "Das SSH-Profil ist nicht eindeutig (\(query)): \(matches.joined(separator: ", "))"
+    case .missingLaunchCommand:
+      "Die SSH-Ausführung konnte keinen lokalen Startbefehl erzeugen."
+    }
+  }
+}
+
+private struct SSHHostToolDescriptor: Encodable {
+  let id: String
+  let name: String
+  let hostname: String
+  let port: Int
+  let username: String
+  let authentication: String
+  let credentialConfigured: Bool
+  let passphraseConfigured: Bool
+}
+
 @MainActor
 public final class AppState: ObservableObject {
   @Published public var selectedSection: AppSection = .chat
@@ -13,6 +41,7 @@ public final class AppState: ObservableObject {
   @Published public var availableModels: [String] = []
   @Published public var latestMetrics: ChatMetrics?
   @Published public var errorMessage: String?
+  @Published public var pendingToolApproval: PendingToolApproval?
 
   @Published public var vaultUnlocked = false
   @Published public var secrets: [VaultSecret] = []
@@ -42,7 +71,9 @@ public final class AppState: ObservableObject {
   private let appleProvider: AppleFoundationModelsProvider
   private let coreMLService: CoreMLService
   private let sshLaunchService: SSHLaunchService
+  private let agentRuntime: AgentRuntime
   private var generationTask: Task<Void, Never>?
+  private var approvalContinuation: CheckedContinuation<Bool, Never>?
 
   public init(
     configurationStore: JSONDocumentStore<AppConfiguration> = JSONDocumentStore(
@@ -61,7 +92,8 @@ public final class AppState: ObservableObject {
     ollamaProvider: OllamaProvider = OllamaProvider(),
     appleProvider: AppleFoundationModelsProvider = AppleFoundationModelsProvider(),
     coreMLService: CoreMLService = CoreMLService(),
-    sshLaunchService: SSHLaunchService = SSHLaunchService()
+    sshLaunchService: SSHLaunchService = SSHLaunchService(),
+    agentRuntime: AgentRuntime = AgentRuntime()
   ) {
     self.configurationStore = configurationStore
     self.conversationStore = conversationStore
@@ -71,6 +103,7 @@ public final class AppState: ObservableObject {
     self.appleProvider = appleProvider
     self.coreMLService = coreMLService
     self.sshLaunchService = sshLaunchService
+    self.agentRuntime = agentRuntime
   }
 
   public func bootstrap() async {
@@ -117,11 +150,31 @@ public final class AppState: ObservableObject {
   }
 
   public func saveConfiguration() async {
+    configuration.maxToolIterations = max(
+      1,
+      min(configuration.maxToolIterations, 24)
+    )
     do {
       try await configurationStore.save(configuration)
     } catch {
       present(error)
     }
+  }
+
+  public func selectWorkspace() {
+    let panel = NSOpenPanel()
+    panel.title = "AgenTM5N Workspace auswählen"
+    panel.prompt = "Auswählen"
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = true
+    panel.directoryURL = URL(
+      fileURLWithPath: NSString(string: configuration.workspacePath).expandingTildeInPath
+    )
+
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    configuration.workspacePath = url.path
   }
 
   public func unlockVault(password: String) async -> Bool {
@@ -204,9 +257,18 @@ public final class AppState: ObservableObject {
   }
 
   public func stopGeneration() {
+    resolvePendingApproval(allowed: false)
     generationTask?.cancel()
     generationTask = nil
     isGenerating = false
+  }
+
+  public func approvePendingTool() {
+    resolvePendingApproval(allowed: true)
+  }
+
+  public func denyPendingTool() {
+    resolvePendingApproval(allowed: false)
   }
 
   public func resetConversation() async {
@@ -252,24 +314,11 @@ public final class AppState: ObservableObject {
 
   public func connect(to host: SSHHost) async {
     do {
-      let authenticationSecret: VaultSecret?
-      if let id = host.authenticationSecretID {
-        authenticationSecret = try await vaultStore.secret(id: id)
-      } else {
-        authenticationSecret = nil
-      }
-
-      let passphraseSecret: VaultSecret?
-      if let id = host.passphraseSecretID {
-        passphraseSecret = try await vaultStore.secret(id: id)
-      } else {
-        passphraseSecret = nil
-      }
-
+      let credentials = try await authenticationSecrets(for: host)
       terminalLaunch = try sshLaunchService.makeLaunch(
         host: host,
-        authenticationSecret: authenticationSecret,
-        passphraseSecret: passphraseSecret
+        authenticationSecret: credentials.authentication,
+        passphraseSecret: credentials.passphrase
       )
       selectedSection = .terminal
     } catch {
@@ -277,10 +326,13 @@ public final class AppState: ObservableObject {
     }
   }
 
-  public func openLocalTerminal() {
+  public func openLocalTerminal(
+    command: String? = nil,
+    title: String = "Lokales Terminal"
+  ) {
     terminalLaunch = TerminalLaunch(
-      title: "Lokales Terminal",
-      initialCommand: nil
+      title: title,
+      initialCommand: command
     )
     selectedSection = .terminal
   }
@@ -320,21 +372,12 @@ public final class AppState: ObservableObject {
     messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
 
     do {
-      let providerMessages = makeProviderMessages(excludingAssistantID: assistantID)
       switch configuration.providerKind {
       case .ollamaLocal, .ollamaCloud:
-        let apiKey = try await configuredAPIKey()
-        let stream = ollamaProvider.streamChat(
-          configuration: configuration,
-          apiKey: apiKey,
-          messages: providerMessages
-        )
-        for try await event in stream {
-          try Task.checkCancellation()
-          apply(event: event, to: assistantID)
-        }
+        try await performOllamaSend(assistantID: assistantID)
 
       case .appleOnDevice:
+        let providerMessages = makeAppleMessages(excludingAssistantID: assistantID)
         let event = try await appleProvider.complete(
           configuration: configuration,
           messages: providerMessages
@@ -358,11 +401,371 @@ public final class AppState: ObservableObject {
       present(error)
     }
 
+    resolvePendingApproval(allowed: false)
     isGenerating = false
     generationTask = nil
   }
 
-  private func makeProviderMessages(excludingAssistantID: UUID) -> [ChatMessage] {
+  private func performOllamaSend(assistantID: UUID) async throws {
+    let apiKey = try await configuredAPIKey()
+    var providerMessages = makeOllamaMessages(excludingAssistantID: assistantID)
+    let tools = configuration.agentEnabled ? AgentRuntime.toolDefinitions : []
+    var completedToolIterations = 0
+
+    while true {
+      try Task.checkCancellation()
+      var turnContent = ""
+      var turnThinking = ""
+      var turnToolCalls: [ProviderToolCall] = []
+
+      let stream = ollamaProvider.streamChat(
+        configuration: configuration,
+        apiKey: apiKey,
+        messages: providerMessages,
+        tools: tools
+      )
+      for try await event in stream {
+        try Task.checkCancellation()
+        turnContent += event.contentDelta
+        turnThinking += event.thinkingDelta
+        mergeToolCalls(event.toolCalls, into: &turnToolCalls)
+        apply(event: event, to: assistantID)
+      }
+
+      providerMessages.append(
+        ProviderMessage(
+          role: .assistant,
+          content: turnContent,
+          thinking: turnThinking.isEmpty ? nil : turnThinking,
+          toolCalls: turnToolCalls.isEmpty ? nil : turnToolCalls
+        )
+      )
+
+      guard configuration.agentEnabled, !turnToolCalls.isEmpty else {
+        break
+      }
+
+      guard completedToolIterations < configuration.maxToolIterations else {
+        appendAssistantText(
+          "\n\nAgent-Limit erreicht: maximal \(configuration.maxToolIterations) Tool-Runden.",
+          to: assistantID
+        )
+        break
+      }
+      completedToolIterations += 1
+
+      for call in turnToolCalls {
+        try Task.checkCancellation()
+        let toolMessage = await executeToolCall(
+          call,
+          assistantID: assistantID
+        )
+        providerMessages.append(toolMessage)
+      }
+    }
+  }
+
+  private func executeToolCall(
+    _ call: ProviderToolCall,
+    assistantID: UUID
+  ) async -> ProviderMessage {
+    let risk = await agentRuntime.risk(for: call)
+    let summary = await agentRuntime.summary(for: call)
+    let allowed = await authorize(call: call, risk: risk, summary: summary)
+    let recordID = UUID()
+    appendToolRecord(
+      ToolExecutionRecord(
+        id: recordID,
+        toolName: call.function.name,
+        argumentsSummary: summary,
+        risk: risk,
+        status: allowed ? .running : .denied,
+        output: allowed ? "" : "Vom Benutzer oder Berechtigungsmodus abgelehnt.",
+        endedAt: allowed ? nil : Date()
+      ),
+      to: assistantID
+    )
+
+    guard allowed else {
+      return ProviderMessage(
+        role: .tool,
+        content: "Tool execution denied by the user or permission policy.",
+        toolName: call.function.name
+      )
+    }
+
+    let result = await executeAuthorizedToolCall(call)
+    finishToolRecord(
+      id: recordID,
+      result: result,
+      assistantID: assistantID
+    )
+    return ProviderMessage(
+      role: .tool,
+      content: result.output,
+      toolName: call.function.name
+    )
+  }
+
+  private func executeAuthorizedToolCall(
+    _ call: ProviderToolCall
+  ) async -> ToolExecutionResult {
+    switch call.function.name {
+    case "terminal_open":
+      return openTerminalTool(call)
+    case "ssh_list_hosts":
+      return listSSHHostsTool()
+    case "ssh_run":
+      return await runSSHTool(call)
+    case "ssh_open_terminal":
+      return await openSSHTerminalTool(call)
+    default:
+      return await agentRuntime.execute(
+        call: call,
+        workspacePath: configuration.workspacePath,
+        permissionMode: configuration.permissionMode
+      )
+    }
+  }
+
+  private func openTerminalTool(
+    _ call: ProviderToolCall
+  ) -> ToolExecutionResult {
+    let command = optionalToolString("command", in: call)
+    let title = optionalToolString("title", in: call) ?? "Agent Terminal"
+    openLocalTerminal(command: command, title: title)
+    return ToolExecutionResult(
+      success: true,
+      output: command == nil
+        ? "Das sichtbare lokale Terminal wurde geöffnet."
+        : "Das sichtbare lokale Terminal wurde mit einem initialen Kommando geöffnet."
+    )
+  }
+
+  private func listSSHHostsTool() -> ToolExecutionResult {
+    let descriptors = sshHosts.map { host in
+      SSHHostToolDescriptor(
+        id: host.id.uuidString,
+        name: host.name,
+        hostname: host.hostname,
+        port: host.port,
+        username: host.username,
+        authentication: host.authenticationKind.rawValue,
+        credentialConfigured: host.authenticationSecretID != nil,
+        passphraseConfigured: host.passphraseSecretID != nil
+      )
+    }
+
+    do {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      let data = try encoder.encode(descriptors)
+      return ToolExecutionResult(
+        success: true,
+        output: String(decoding: data, as: UTF8.self)
+      )
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func runSSHTool(
+    _ call: ProviderToolCall
+  ) async -> ToolExecutionResult {
+    do {
+      let hostQuery = try requiredToolString("host", in: call)
+      let command = try requiredToolString("command", in: call)
+      let host = try resolveSSHHost(hostQuery)
+      let credentials = try await authenticationSecrets(for: host)
+      let launch = try sshLaunchService.makeExecutionLaunch(
+        host: host,
+        authenticationSecret: credentials.authentication,
+        passphraseSecret: credentials.passphrase,
+        command: command
+      )
+      defer { cleanupRuntimePaths(launch.cleanupPaths) }
+
+      guard let localCommand = launch.initialCommand else {
+        throw SSHAgentToolError.missingLaunchCommand
+      }
+
+      return await agentRuntime.executeCommand(
+        localCommand,
+        workspacePath: configuration.workspacePath
+      )
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func openSSHTerminalTool(
+    _ call: ProviderToolCall
+  ) async -> ToolExecutionResult {
+    do {
+      let hostQuery = try requiredToolString("host", in: call)
+      var host = try resolveSSHHost(hostQuery)
+      if let command = optionalToolString("command", in: call) {
+        host.remoteCommand = command
+      }
+      let credentials = try await authenticationSecrets(for: host)
+      terminalLaunch = try sshLaunchService.makeLaunch(
+        host: host,
+        authenticationSecret: credentials.authentication,
+        passphraseSecret: credentials.passphrase
+      )
+      selectedSection = .terminal
+      return ToolExecutionResult(
+        success: true,
+        output: "Interaktive SSH-Sitzung zu \(host.name) wurde im sichtbaren Terminal geöffnet."
+      )
+    } catch {
+      return ToolExecutionResult(success: false, output: error.localizedDescription)
+    }
+  }
+
+  private func authorize(
+    call: ProviderToolCall,
+    risk: ToolRisk,
+    summary: String
+  ) async -> Bool {
+    let remoteExecution = call.function.name == "ssh_run"
+      || call.function.name == "ssh_open_terminal"
+
+    switch configuration.permissionMode {
+    case .fullAccess:
+      return true
+    case .workspaceTrusted:
+      if remoteExecution {
+        return await requestToolApproval(call: call, risk: risk, summary: summary)
+      }
+      return true
+    case .confirm:
+      guard risk != .read else { return true }
+      return await requestToolApproval(call: call, risk: risk, summary: summary)
+    }
+  }
+
+  private func requestToolApproval(
+    call: ProviderToolCall,
+    risk: ToolRisk,
+    summary: String
+  ) async -> Bool {
+    await withCheckedContinuation { continuation in
+      approvalContinuation = continuation
+      pendingToolApproval = PendingToolApproval(
+        call: call,
+        risk: risk,
+        summary: summary
+      )
+    }
+  }
+
+  private func resolvePendingApproval(allowed: Bool) {
+    pendingToolApproval = nil
+    guard let continuation = approvalContinuation else { return }
+    approvalContinuation = nil
+    continuation.resume(returning: allowed)
+  }
+
+  private func authenticationSecrets(
+    for host: SSHHost
+  ) async throws -> (authentication: VaultSecret?, passphrase: VaultSecret?) {
+    let authentication: VaultSecret?
+    if let id = host.authenticationSecretID {
+      authentication = try await vaultStore.secret(id: id)
+    } else {
+      authentication = nil
+    }
+
+    let passphrase: VaultSecret?
+    if let id = host.passphraseSecretID {
+      passphrase = try await vaultStore.secret(id: id)
+    } else {
+      passphrase = nil
+    }
+    return (authentication, passphrase)
+  }
+
+  private func resolveSSHHost(_ query: String) throws -> SSHHost {
+    let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    let matches = sshHosts.filter { host in
+      host.id.uuidString.caseInsensitiveCompare(normalized) == .orderedSame
+        || host.name.caseInsensitiveCompare(normalized) == .orderedSame
+        || host.hostname.caseInsensitiveCompare(normalized) == .orderedSame
+    }
+
+    guard !matches.isEmpty else {
+      throw SSHAgentToolError.hostNotFound(query)
+    }
+    guard matches.count == 1, let host = matches.first else {
+      throw SSHAgentToolError.ambiguousHost(query, matches.map(\.name))
+    }
+    return host
+  }
+
+  private func requiredToolString(
+    _ name: String,
+    in call: ProviderToolCall
+  ) throws -> String {
+    guard let value = optionalToolString(name, in: call) else {
+      throw AgentRuntimeError.missingArgument(
+        tool: call.function.name,
+        name: name
+      )
+    }
+    return value
+  }
+
+  private func optionalToolString(
+    _ name: String,
+    in call: ProviderToolCall
+  ) -> String? {
+    guard let value = call.function.arguments[name]?.stringValue else {
+      return nil
+    }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  private func cleanupRuntimePaths(_ paths: [URL]) {
+    for path in paths {
+      do {
+        try FileManager.default.removeItem(at: path)
+      } catch {
+        AppLogger.security.error(
+          "Runtime secret cleanup failed for \(path.path, privacy: .private): \(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
+  }
+
+  private func makeOllamaMessages(
+    excludingAssistantID: UUID
+  ) -> [ProviderMessage] {
+    var result = [
+      ProviderMessage(
+        role: .system,
+        content: configuration.systemPrompt
+      )
+    ]
+    result.append(
+      contentsOf: messages.compactMap { message -> ProviderMessage? in
+        guard message.id != excludingAssistantID, message.role != .system else {
+          return nil
+        }
+        return ProviderMessage(
+          role: message.role == .user ? .user : .assistant,
+          content: message.content,
+          thinking: message.thinking.isEmpty ? nil : message.thinking
+        )
+      }
+    )
+    return result
+  }
+
+  private func makeAppleMessages(
+    excludingAssistantID: UUID
+  ) -> [ChatMessage] {
     var result = [
       ChatMessage(role: .system, content: configuration.systemPrompt)
     ]
@@ -371,6 +774,22 @@ public final class AppState: ObservableObject {
         $0.id != excludingAssistantID && $0.role != .system
       })
     return result
+  }
+
+  private func mergeToolCalls(
+    _ incoming: [ProviderToolCall],
+    into accumulated: inout [ProviderToolCall]
+  ) {
+    for call in incoming {
+      if let index = call.function.index,
+        let existingIndex = accumulated.firstIndex(
+          where: { $0.function.index == index })
+      {
+        accumulated[existingIndex] = call
+      } else if !accumulated.contains(call) {
+        accumulated.append(call)
+      }
+    }
   }
 
   private func apply(event: ProviderStreamEvent, to assistantID: UUID) {
@@ -382,6 +801,43 @@ public final class AppState: ObservableObject {
     if let metrics = event.metrics {
       latestMetrics = metrics
     }
+  }
+
+  private func appendAssistantText(_ text: String, to assistantID: UUID) {
+    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else {
+      return
+    }
+    messages[index].content += text
+  }
+
+  private func appendToolRecord(
+    _ record: ToolExecutionRecord,
+    to assistantID: UUID
+  ) {
+    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else {
+      return
+    }
+    var records = messages[index].toolExecutions ?? []
+    records.append(record)
+    messages[index].toolExecutions = records
+  }
+
+  private func finishToolRecord(
+    id: UUID,
+    result: ToolExecutionResult,
+    assistantID: UUID
+  ) {
+    guard
+      let messageIndex = messages.firstIndex(where: { $0.id == assistantID }),
+      var records = messages[messageIndex].toolExecutions,
+      let recordIndex = records.firstIndex(where: { $0.id == id })
+    else {
+      return
+    }
+    records[recordIndex].status = result.success ? .succeeded : .failed
+    records[recordIndex].output = result.output
+    records[recordIndex].endedAt = Date()
+    messages[messageIndex].toolExecutions = records
   }
 
   private func configuredAPIKey() async throws -> String? {

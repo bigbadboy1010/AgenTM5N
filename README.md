@@ -1,11 +1,11 @@
 # AgenTM5N
 
 AgenTM5N is a native personal AI agent for Apple Silicon. It combines Ollama
-Cloud, local Ollama models, Apple Foundation Models, Core ML acceleration,
-an encrypted credential vault, an embedded terminal and SSH access.
+Cloud, local Ollama models, Apple Foundation Models, Core ML acceleration, an
+encrypted credential vault, an embedded terminal, SSH access and a controlled
+tool-calling runtime.
 
-> Status: early macOS MVP. The current release is intended for development and
-> controlled personal use.
+> Status: 0.2.0 development candidate for macOS 26 and Apple Silicon.
 
 ## Current capabilities
 
@@ -13,15 +13,18 @@ an encrypted credential vault, an embedded terminal and SSH access.
 - Ollama Local through `http://localhost:11434/api`
 - Ollama Cloud through `https://ollama.com/api`
 - NDJSON streaming for `/api/chat`
-- Model discovery through `/api/tags`
+- Multi-turn Ollama tool calling with streamed `tool_calls`
+- Permission modes: Confirm, Workspace Trusted and Full Access
+- Directory listing, file reading/writing, shell commands, Git status and diff
+- Per-tool approval and persisted execution audit cards
+- Command timeout, workspace boundaries and bounded tool output
 - Apple on-device Foundation Models provider
 - AES-256-GCM encrypted vault for API keys, tokens, passwords, SSH private
   keys, passphrases and connection strings
 - PBKDF2-HMAC-SHA256 with 600,000 iterations and a random 256-bit salt
-- Embedded Zsh PTY using SwiftTerm
+- Embedded Zsh PTY using SwiftTerm 1.11.0 with CoreText rendering
 - SSH profiles for remote Macs and servers
 - Core ML model loading with `MLComputeUnits.cpuAndNeuralEngine`
-- Local provider configuration, conversation history and SSH profiles
 
 ## Requirements
 
@@ -34,26 +37,37 @@ an encrypted credential vault, an embedded terminal and SSH access.
 The standalone Command Line Tools package is not sufficient because AgenTM5N
 links AppKit, Core ML and Foundation Models from the full macOS SDK.
 
-The embedded terminal intentionally uses SwiftTerm 1.11.0 with its CoreText
-renderer. The optional command-line Metal Toolchain is therefore not required
-for building AgenTM5N. This does not affect Core ML or Apple Neural Engine use.
-
-## Build
+## Build the stable main branch
 
 ```bash
-git clone --branch agent/initial-macos-mvp \
-  https://github.com/bigbadboy1010/AgenTM5N.git
+git clone https://github.com/bigbadboy1010/AgenTM5N.git
 cd AgenTM5N
 
 export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
 bash scripts/bootstrap-xcode.sh
-rm -rf .build .swiftpm Package.resolved
+rm -rf .build .swiftpm Package.resolved dist
 bash scripts/verify.sh
 bash scripts/build-app.sh
 open dist/AgenTM5N.app
 ```
 
-The scripts automatically search these locations:
+## Test Milestone 2
+
+```bash
+cd ~/Downloads/AgenTM5N
+git fetch --prune origin
+git checkout agent/milestone-2-runtime
+git pull --ff-only origin agent/milestone-2-runtime
+
+export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
+rm -rf .build .swiftpm Package.resolved dist
+bash scripts/bootstrap-xcode.sh
+bash scripts/verify.sh
+bash scripts/build-app.sh
+open dist/AgenTM5N.app
+```
+
+The build scripts automatically search these locations:
 
 ```text
 /Applications/Xcode.app
@@ -64,51 +78,42 @@ The scripts automatically search these locations:
 ~/Downloads/Xcode-beta.app
 ```
 
-A custom location can be supplied without changing the global developer path:
+## Agent runtime setup
 
-```bash
-export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
+1. Open `Settings`.
+2. Select Ollama Local or Ollama Cloud.
+3. Enable `Tool Calling`.
+4. Choose a workspace directory.
+5. Start with permission mode `Confirm`.
+6. Save the configuration.
+
+Recommended first prompt:
+
+```text
+Inspect the current workspace. Show the Git status, list the top-level files,
+read the README and summarize what this project does. Do not modify files.
 ```
 
-## Fix for old SwiftTerm or Metal errors
+Then test explicit write approval:
 
-Older AgenTM5N revisions contained two independent build defects:
-
-1. An invalid SwiftTerm repository URL using `migueldeic` instead of
-   `migueldeicaza`.
-2. SwiftTerm 1.15.0 compiled an optional Metal shader and therefore required an
-   additional Xcode component.
-
-The current branch uses the correct repository and pins SwiftTerm 1.11.0 with
-CoreText rendering. Clean all cached package state after updating:
-
-```bash
-cd ~/Downloads/AgenTM5N
-git pull --ff-only origin agent/initial-macos-mvp
-rm -rf .build .swiftpm Package.resolved
-rm -rf "$HOME/Library/Caches/org.swift.swiftpm/repositories/SwiftTerm-"*
-
-export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
-bash scripts/bootstrap-xcode.sh
-bash scripts/verify.sh
-bash scripts/build-app.sh
+```text
+Create a file named agentm5n-tool-test.txt containing a one-line timestamped
+message, then read it back and report the result.
 ```
 
-To switch the entire Mac permanently instead:
+In Confirm mode, the write operation must display a one-time approval banner.
 
-```bash
-sudo xcode-select --switch "$HOME/Downloads/Xcode-beta.app/Contents/Developer"
-sudo xcodebuild -license accept
-```
+## Permission modes
 
-The permanent switch is optional; `AGENTM5N_XCODE_PATH` is safer when several
-Xcode versions are installed.
+- **Confirm:** reads run within the workspace; writes and commands require
+  approval.
+- **Workspace Trusted:** tools run automatically but filesystem access remains
+  inside the workspace.
+- **Full Access:** filesystem paths outside the workspace and unrestricted shell
+  commands are allowed; tool calls remain audited.
 
-## Development run
-
-```bash
-bash scripts/run-dev.sh
-```
+See [Agent Runtime](docs/AGENT_RUNTIME.md) for the complete execution and
+security model.
 
 ## Ollama Cloud configuration
 
@@ -139,9 +144,9 @@ let configuration = MLModelConfiguration()
 configuration.computeUnits = .cpuAndNeuralEngine
 ```
 
-Core ML decides the final placement of supported operators. The application
-therefore reports the requested compute policy rather than claiming that every
-operator executed on the Neural Engine.
+Core ML decides the final placement of supported operators. AgenTM5N reports
+the requested compute policy rather than claiming every operator executed on
+the Neural Engine.
 
 ## Data directories
 
@@ -156,6 +161,7 @@ operator executed on the Neural Engine.
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Agent Runtime](docs/AGENT_RUNTIME.md)
 - [Security model](docs/SECURITY.md)
 - [Build troubleshooting](docs/TROUBLESHOOTING.md)
 - [Roadmap](docs/ROADMAP.md)
@@ -163,4 +169,5 @@ operator executed on the Neural Engine.
 
 ## License
 
-GNU General Public License v3.0. Third-party components retain their respective licenses.
+GNU General Public License v3.0. Third-party components retain their respective
+licenses.

@@ -10,7 +10,7 @@ struct RootView: View {
           .tag(section)
       }
       .navigationTitle("AgenTM5N")
-      .navigationSplitViewColumnWidth(min: 190, ideal: 220)
+      .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 260)
     } detail: {
       Group {
         switch appState.selectedSection {
@@ -29,7 +29,9 @@ struct RootView: View {
         }
       }
       .environmentObject(appState)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    .navigationSplitViewStyle(.balanced)
     .alert(
       "Fehler",
       isPresented: Binding(

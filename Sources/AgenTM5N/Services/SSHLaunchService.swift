@@ -3,6 +3,7 @@ import Foundation
 public enum SSHLaunchServiceError: LocalizedError {
   case missingAuthenticationSecret
   case invalidAuthenticationSecret(SecretKind)
+  case emptyRemoteCommand
 
   public var errorDescription: String? {
     switch self {
@@ -10,6 +11,8 @@ public enum SSHLaunchServiceError: LocalizedError {
       "Für diesen SSH-Host ist kein passendes Secret hinterlegt."
     case .invalidAuthenticationSecret(let kind):
       "Der ausgewählte Secret-Typ \(kind.displayName) passt nicht zur SSH-Authentifizierung."
+    case .emptyRemoteCommand:
+      "Für die strukturierte SSH-Ausführung wurde kein Remote-Kommando angegeben."
     }
   }
 }
@@ -22,13 +25,55 @@ public struct SSHLaunchService: Sendable {
     authenticationSecret: VaultSecret?,
     passphraseSecret: VaultSecret?
   ) throws -> TerminalLaunch {
+    try makeLaunch(
+      host: host,
+      authenticationSecret: authenticationSecret,
+      passphraseSecret: passphraseSecret,
+      remoteCommand: host.remoteCommand,
+      interactive: true
+    )
+  }
+
+  public func makeExecutionLaunch(
+    host: SSHHost,
+    authenticationSecret: VaultSecret?,
+    passphraseSecret: VaultSecret?,
+    command: String
+  ) throws -> TerminalLaunch {
+    let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedCommand.isEmpty else {
+      throw SSHLaunchServiceError.emptyRemoteCommand
+    }
+
+    return try makeLaunch(
+      host: host,
+      authenticationSecret: authenticationSecret,
+      passphraseSecret: passphraseSecret,
+      remoteCommand: trimmedCommand,
+      interactive: false
+    )
+  }
+
+  private func makeLaunch(
+    host: SSHHost,
+    authenticationSecret: VaultSecret?,
+    passphraseSecret: VaultSecret?,
+    remoteCommand: String,
+    interactive: Bool
+  ) throws -> TerminalLaunch {
     let target = "\(host.username)@\(host.hostname)"
     var arguments = [
       "-p", String(host.port),
+      "-o", "ConnectTimeout=20",
+      "-o", "ConnectionAttempts=1",
       "-o", "ServerAliveInterval=30",
       "-o", "ServerAliveCountMax=3",
       "-o", "StrictHostKeyChecking=accept-new",
     ]
+
+    if !interactive {
+      arguments.append("-T")
+    }
 
     switch host.authenticationKind {
     case .systemDefault:
@@ -38,7 +83,7 @@ public struct SSHLaunchService: Sendable {
           environment: [:],
           arguments: arguments,
           target: target,
-          remoteCommand: host.remoteCommand
+          remoteCommand: remoteCommand
         )
       )
 
@@ -59,6 +104,7 @@ public struct SSHLaunchService: Sendable {
         host: host,
         target: target,
         arguments: arguments,
+        remoteCommand: remoteCommand,
         secretValue: authenticationSecret.value,
         privateKey: nil
       )
@@ -86,7 +132,7 @@ public struct SSHLaunchService: Sendable {
             environment: [:],
             arguments: arguments,
             target: target,
-            remoteCommand: host.remoteCommand
+            remoteCommand: remoteCommand
           ),
           cleanupPaths: [directory]
         )
@@ -96,6 +142,7 @@ public struct SSHLaunchService: Sendable {
         host: host,
         target: target,
         arguments: arguments,
+        remoteCommand: remoteCommand,
         secretValue: passphrase,
         privateKey: keyFile,
         existingDirectory: directory
@@ -107,6 +154,7 @@ public struct SSHLaunchService: Sendable {
     host: SSHHost,
     target: String,
     arguments: [String],
+    remoteCommand: String,
     secretValue: String,
     privateKey: URL?,
     existingDirectory: URL? = nil
@@ -134,7 +182,7 @@ public struct SSHLaunchService: Sendable {
         environment: environment,
         arguments: arguments,
         target: target,
-        remoteCommand: host.remoteCommand
+        remoteCommand: remoteCommand
       ),
       cleanupPaths: [directory]
     )
