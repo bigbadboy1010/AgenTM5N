@@ -49,3 +49,5 @@
 
 - App-Version: 0.6.0
 - Build: 16
+
+Integrationstest: Inspector und Attachment-Agent-Werkzeuge werden über den gestapelten PR-Workflow verkabelt.
