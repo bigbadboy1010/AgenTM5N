@@ -160,4 +160,4 @@ operator executed on the Neural Engine.
 
 ## License
 
-Apache License 2.0. Third-party components retain their respective licenses.
+GNU General Public License v3.0. Third-party components retain their respective licenses.
