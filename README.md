@@ -28,19 +28,25 @@ an encrypted credential vault, an embedded terminal and SSH access.
 - Apple Silicon Mac
 - macOS 26 or newer
 - full Xcode 26 or newer
+- optional Metal Toolchain component for Xcode
 - Apple Intelligence enabled for Apple Foundation Models
 - Ollama Local or an Ollama Cloud API key
 
 The standalone Command Line Tools package is not sufficient. SwiftTerm contains
-Metal shaders and therefore requires the `metal` compiler from full Xcode.
+Metal shaders. Xcode 26 additionally distributes the Metal Toolchain as an
+optional component.
 
 ## Build
 
 ```bash
-git clone https://github.com/bigbadboy1010/AgenTM5N.git
+git clone --branch agent/initial-macos-mvp \
+  https://github.com/bigbadboy1010/AgenTM5N.git
 cd AgenTM5N
-./scripts/verify.sh
-./scripts/build-app.sh
+
+export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
+bash scripts/bootstrap-xcode.sh
+bash scripts/verify.sh
+bash scripts/build-app.sh
 open dist/AgenTM5N.app
 ```
 
@@ -59,31 +65,37 @@ A custom location can be supplied without changing the global developer path:
 
 ```bash
 export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
-./scripts/verify.sh
-./scripts/build-app.sh
 ```
 
 ## Fix for `unable to spawn process 'metal'`
 
-The error means that `xcode-select` points to Command Line Tools:
+Your original log shows that SwiftPM used this developer directory:
 
 ```text
 /Library/Developer/CommandLineTools
 ```
 
-Check the current state:
+That package does not provide the complete Xcode/Metal build environment. Run:
 
 ```bash
-xcode-select -p
-DEVELOPER_DIR="$HOME/Downloads/Xcode-beta.app/Contents/Developer" xcrun --find metal
+export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
+bash scripts/bootstrap-xcode.sh
+rm -rf .build .swiftpm
+bash scripts/verify.sh
+bash scripts/build-app.sh
 ```
 
-AgenTM5N resolves this automatically. To switch the whole Mac permanently:
+The bootstrap initializes Xcode and installs the optional component using:
+
+```bash
+xcodebuild -downloadComponent metalToolchain
+```
+
+To switch the entire Mac permanently instead:
 
 ```bash
 sudo xcode-select --switch "$HOME/Downloads/Xcode-beta.app/Contents/Developer"
 sudo xcodebuild -license accept
-xcrun --find metal
 ```
 
 The permanent switch is optional; `AGENTM5N_XCODE_PATH` is safer when several
@@ -92,7 +104,7 @@ Xcode versions are installed.
 ## Development run
 
 ```bash
-./scripts/run-dev.sh
+bash scripts/run-dev.sh
 ```
 
 ## Ollama Cloud configuration
@@ -144,6 +156,7 @@ operator executed on the Neural Engine.
 - [Security model](docs/SECURITY.md)
 - [Build troubleshooting](docs/TROUBLESHOOTING.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Validation status](VALIDATION.md)
 
 ## License
 
