@@ -113,9 +113,14 @@ public final class OllamaProvider: @unchecked Sendable {
           request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
           applyAuthorization(apiKey: apiKey, to: &request)
 
+          let requestMessages = enrichedMessages(
+            messages,
+            configuration: configuration,
+            tools: tools
+          )
           let body = ChatRequestBody(
             model: configuration.model,
-            messages: messages,
+            messages: requestMessages,
             tools: tools.isEmpty ? nil : tools,
             stream: true,
             think: configuration.thinkingEnabled
@@ -142,6 +147,9 @@ public final class OllamaProvider: @unchecked Sendable {
           }
 
           let decoder = JSONDecoder()
+          var generatedContent = ""
+          var receivedToolCalls = false
+
           for try await line in bytes.lines {
             try Task.checkCancellation()
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -151,6 +159,11 @@ public final class OllamaProvider: @unchecked Sendable {
             }
 
             let chunk = try decoder.decode(ChatChunk.self, from: data)
+            let contentDelta = chunk.message?.content ?? ""
+            let toolCalls = chunk.message?.toolCalls ?? []
+            generatedContent += contentDelta
+            receivedToolCalls = receivedToolCalls || !toolCalls.isEmpty
+
             let metrics: ChatMetrics? =
               chunk.done
               ? ChatMetrics(
@@ -163,14 +176,32 @@ public final class OllamaProvider: @unchecked Sendable {
 
             continuation.yield(
               ProviderStreamEvent(
-                contentDelta: chunk.message?.content ?? "",
+                contentDelta: contentDelta,
                 thinkingDelta: chunk.message?.thinking ?? "",
-                toolCalls: chunk.message?.toolCalls ?? [],
+                toolCalls: toolCalls,
                 isFinished: chunk.done,
                 metrics: metrics
               )
             )
           }
+
+          if !tools.isEmpty,
+            !receivedToolCalls,
+            looksLikeCapabilityDenial(generatedContent)
+          {
+            continuation.yield(
+              ProviderStreamEvent(
+                contentDelta: """
+
+
+                  ---
+                  **AgenTM5N-Diagnose:** Das Modell `\(configuration.model)` hat die bereitgestellten lokalen Werkzeuge ignoriert und stattdessen fehlenden Zugriff behauptet. Wähle einen Tool-Calling-fähigen Ollama-Provider, prüfe den Agent-Badge und starte eine neue Sitzung. Der konfigurierte Workspace ist `\(configuration.workspacePath)`.
+                  """,
+                isFinished: true
+              )
+            )
+          }
+
           continuation.finish()
         } catch is CancellationError {
           continuation.finish()
@@ -185,6 +216,62 @@ public final class OllamaProvider: @unchecked Sendable {
         task.cancel()
       }
     }
+  }
+
+  private func enrichedMessages(
+    _ messages: [ProviderMessage],
+    configuration: AppConfiguration,
+    tools: [ProviderToolDefinition]
+  ) -> [ProviderMessage] {
+    guard !tools.isEmpty else { return messages }
+
+    let toolNames = tools.map(\.function.name).joined(separator: ", ")
+    let runtimeContext = """
+      You are AgenTM5N running inside a native macOS application on the user's current Mac.
+      The function tools supplied with this request are real, locally executable capabilities, not examples.
+      Active workspace: \(configuration.workspacePath)
+      Available tools: \(toolNames)
+      Permission mode: \(configuration.permissionMode.displayName)
+
+      Mandatory behavior:
+      - When the user requests repository inspection, file access, Git status/diff, command execution, or file modification, call the appropriate tools before answering.
+      - Never claim that you lack physical, virtual, server, filesystem, terminal, or repository access while relevant tools are supplied.
+      - Never invent host names, operating systems, repository contents, project descriptions, or command results.
+      - Use relative paths against the active workspace unless an absolute path is explicitly necessary.
+      - Inspect first, then reason from actual tool output, and report failures accurately.
+      - Do not describe AgenTM5N from generic model knowledge when its repository can be inspected with tools.
+      """
+
+    guard let first = messages.first, first.role == .system else {
+      return [ProviderMessage(role: .system, content: runtimeContext)] + messages
+    }
+
+    var enriched = [
+      ProviderMessage(
+        role: .system,
+        content: first.content + "\n\n" + runtimeContext
+      )
+    ]
+    enriched.append(contentsOf: messages.dropFirst())
+    return enriched
+  }
+
+  private func looksLikeCapabilityDenial(_ content: String) -> Bool {
+    let normalized = content.lowercased()
+    let indicators = [
+      "keinen physischen oder virtuellen zugriff",
+      "keine direkten befehle",
+      "keinen zugriff darauf",
+      "keine dateien auf dem server lesen",
+      "keine berechtigungen",
+      "keine zugriffsrechte",
+      "i cannot execute",
+      "i can't execute",
+      "i do not have access",
+      "i don't have access",
+      "no physical or virtual access",
+    ]
+    return indicators.contains { normalized.contains($0) }
   }
 
   private func endpointURL(baseURL: String, path: String) throws -> URL {
