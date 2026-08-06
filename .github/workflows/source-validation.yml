@@ -1,0 +1,23 @@
+name: Source validation
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-and-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell syntax
+        run: |
+          bash -n scripts/build-app.sh
+          bash -n scripts/run-dev.sh
+          bash -n scripts/verify.sh
+          bash -n scripts/lib/xcode-env.sh
+      - name: Reject incomplete source markers
+        run: |
+          ! grep -RInE 'TODO|FIXME|fatalError\(|try!| as! ' Sources
