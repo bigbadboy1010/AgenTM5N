@@ -51,6 +51,41 @@ public enum AppPaths {
     )
   }
 
+  public static var knowledgeLibraryDirectory: URL {
+    applicationSupportDirectory.appendingPathComponent(
+      "KnowledgeLibrary",
+      isDirectory: true
+    )
+  }
+
+  public static var knowledgeDocumentsDirectory: URL {
+    knowledgeLibraryDirectory.appendingPathComponent("Documents", isDirectory: true)
+  }
+
+  public static var knowledgeSourcesDirectory: URL {
+    knowledgeLibraryDirectory.appendingPathComponent("Sources", isDirectory: true)
+  }
+
+  public static var knowledgeRegistryFile: URL {
+    knowledgeLibraryDirectory.appendingPathComponent("registry.json")
+  }
+
+  public static func knowledgeDocumentFile(id: UUID) -> URL {
+    knowledgeDocumentsDirectory.appendingPathComponent(
+      "\(id.uuidString.lowercased()).json"
+    )
+  }
+
+  public static func knowledgeSourceFile(id: UUID, extensionName: String) -> URL {
+    let normalized = extensionName
+      .lowercased()
+      .filter { $0.isLetter || $0.isNumber }
+    let suffix = normalized.isEmpty ? "bin" : normalized
+    return knowledgeSourcesDirectory.appendingPathComponent(
+      "\(id.uuidString.lowercased()).\(suffix)"
+    )
+  }
+
   public static var workspaceMemoryDirectory: URL {
     applicationSupportDirectory.appendingPathComponent("WorkspaceMemory", isDirectory: true)
   }
@@ -89,6 +124,9 @@ public enum AppPaths {
       coreMLCompiledDirectory,
       promptAttachmentsDirectory,
       documentExtractionCacheDirectory,
+      knowledgeLibraryDirectory,
+      knowledgeDocumentsDirectory,
+      knowledgeSourcesDirectory,
       workspaceMemoryDirectory,
     ] {
       try manager.createDirectory(
