@@ -86,6 +86,17 @@ public enum AppPaths {
     )
   }
 
+  public static var generatedDocumentsDirectory: URL {
+    applicationSupportDirectory.appendingPathComponent(
+      "GeneratedDocuments",
+      isDirectory: true
+    )
+  }
+
+  public static var generatedDocumentsRegistryFile: URL {
+    generatedDocumentsDirectory.appendingPathComponent("registry.json")
+  }
+
   public static var workspaceMemoryDirectory: URL {
     applicationSupportDirectory.appendingPathComponent("WorkspaceMemory", isDirectory: true)
   }
@@ -127,6 +138,7 @@ public enum AppPaths {
       knowledgeLibraryDirectory,
       knowledgeDocumentsDirectory,
       knowledgeSourcesDirectory,
+      generatedDocumentsDirectory,
       workspaceMemoryDirectory,
     ] {
       try manager.createDirectory(
