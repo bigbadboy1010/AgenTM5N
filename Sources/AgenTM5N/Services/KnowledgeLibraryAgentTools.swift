@@ -61,13 +61,16 @@ public enum KnowledgeLibraryAgentTools {
         ]
       )
     )
-  ]
+  ] + UnifiedContextAgentTools.definitions
 
   public static func handles(_ call: ProviderToolCall) -> Bool {
     definitions.contains { $0.function.name == call.function.name }
   }
 
   public static func risk(for call: ProviderToolCall) -> ToolRisk {
+    if UnifiedContextAgentTools.handles(call) {
+      return UnifiedContextAgentTools.risk(for: call)
+    }
     switch call.function.name {
     case "knowledge_import_document": .write
     default: .read
@@ -75,6 +78,9 @@ public enum KnowledgeLibraryAgentTools {
   }
 
   public static func summary(for call: ProviderToolCall) -> String {
+    if UnifiedContextAgentTools.handles(call) {
+      return UnifiedContextAgentTools.summary(for: call)
+    }
     let values = call.function.arguments.keys.sorted().compactMap { key -> String? in
       guard let value = call.function.arguments[key] else { return nil }
       let description = value.compactDescription
@@ -92,6 +98,13 @@ public enum KnowledgeLibraryAgentTools {
     service: KnowledgeLibraryService = .shared,
     workspacePath: String
   ) async -> ToolExecutionResult {
+    if UnifiedContextAgentTools.handles(call) {
+      return UnifiedContextAgentTools.execute(
+        call: call,
+        messages: persistedConversationMessages()
+      )
+    }
+
     do {
       switch call.function.name {
       case "knowledge_list_collections":
@@ -168,6 +181,17 @@ public enum KnowledgeLibraryAgentTools {
     let collectionID: String
     let documentKind: String
     let sourceSectionCount: Int
+  }
+
+  private static func persistedConversationMessages() -> [ChatMessage] {
+    guard FileManager.default.fileExists(atPath: AppPaths.conversationFile.path),
+      let data = try? Data(contentsOf: AppPaths.conversationFile, options: [.mappedIfSafe])
+    else {
+      return []
+    }
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return (try? decoder.decode([ChatMessage].self, from: data)) ?? []
   }
 
   private static func listCollections(
