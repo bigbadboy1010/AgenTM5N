@@ -577,6 +577,7 @@ public final class AppState: ObservableObject {
         + CoreMLAgentTools.definitions
         + WorkspaceMemoryAgentTools.definitions
         + ConversationAttachmentAgentTools.definitions
+        + KnowledgeLibraryAgentTools.definitions
       : []
     var completedToolIterations = 0
 
@@ -648,6 +649,9 @@ public final class AppState: ObservableObject {
     } else if ConversationAttachmentAgentTools.handles(call) {
       risk = ConversationAttachmentAgentTools.risk(for: call)
       summary = ConversationAttachmentAgentTools.summary(for: call)
+    } else if KnowledgeLibraryAgentTools.handles(call) {
+      risk = KnowledgeLibraryAgentTools.risk(for: call)
+      summary = KnowledgeLibraryAgentTools.summary(for: call)
     } else {
       risk = await agentRuntime.risk(for: call)
       summary = await agentRuntime.summary(for: call)
@@ -695,6 +699,13 @@ public final class AppState: ObservableObject {
       return ConversationAttachmentAgentTools.execute(
         call: call,
         messages: messages
+      )
+    }
+
+    if KnowledgeLibraryAgentTools.handles(call) {
+      return await KnowledgeLibraryAgentTools.execute(
+        call: call,
+        workspacePath: configuration.workspacePath
       )
     }
 
