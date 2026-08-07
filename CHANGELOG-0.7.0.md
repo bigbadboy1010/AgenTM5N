@@ -39,6 +39,7 @@
 - Importstatus unterscheidet neue Dokumente, Updates und Dubletten.
 - Dokumentdetails zeigen Typ, Größe, Extraktionsmethode, Abschnitte, Seiten, Tabellenblätter, Folien und OCR-Status.
 - Interne Pfade und Hashwerte werden in der Oberfläche nicht angezeigt.
+- SwiftUI-Async-Closures und bedingte Status-Styles wurden für den nativen Swift-6.4-Typecheck vereinheitlicht.
 
 ## Agent-Werkzeuge
 
