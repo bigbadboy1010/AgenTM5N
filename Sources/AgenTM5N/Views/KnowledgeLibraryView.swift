@@ -216,7 +216,7 @@ final class KnowledgeLibraryViewModel: ObservableObject {
     await selectDocument(result.documentID)
   }
 
-  private func perform(_ operation: @escaping @MainActor () async throws -> Void) async {
+  private func perform(_ operation: @MainActor () async throws -> Void) async {
     guard !isWorking else { return }
     isWorking = true
     defer { isWorking = false }
@@ -742,7 +742,7 @@ struct KnowledgeLibraryView: View {
         }
         Spacer()
         Image(systemName: document.isEnabled ? "checkmark.circle.fill" : "pause.circle")
-          .foregroundStyle(document.isEnabled ? .secondary : .orange)
+          .foregroundStyle(document.isEnabled ? Color.secondary : Color.orange)
       }
       .padding(9)
       .background(
