@@ -6,6 +6,7 @@ struct RootView: View {
   @State private var isImportingPromptFiles = false
   @State private var showingAttachmentCenter = false
   @State private var showingKnowledgeLibrary = false
+  @State private var showingDocumentStudio = false
 
   var body: some View {
     NavigationSplitView {
@@ -111,6 +112,26 @@ struct RootView: View {
                 fr: "Gérer, importer et rechercher des collections persistantes."
               )
             )
+
+            Button {
+              showingDocumentStudio = true
+            } label: {
+              Label(
+                L10n.text(
+                  de: "Document Studio",
+                  en: "Document Studio",
+                  fr: "Document Studio"
+                ),
+                systemImage: "doc.badge.plus"
+              )
+            }
+            .help(
+              L10n.text(
+                de: "DOCX-, PDF-, XLSX- und PPTX-Dokumente lokal erzeugen und exportieren.",
+                en: "Generate and export DOCX, PDF, XLSX, and PPTX documents locally.",
+                fr: "Générer et exporter localement des documents DOCX, PDF, XLSX et PPTX."
+              )
+            )
           }
         }
       }
@@ -123,6 +144,10 @@ struct RootView: View {
     }
     .sheet(isPresented: $showingKnowledgeLibrary) {
       KnowledgeLibraryView()
+        .frame(minWidth: 1_050, minHeight: 700)
+    }
+    .sheet(isPresented: $showingDocumentStudio) {
+      DocumentStudioView()
         .frame(minWidth: 1_050, minHeight: 700)
     }
     .alert(
