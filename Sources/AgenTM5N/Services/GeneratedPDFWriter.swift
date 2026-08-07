@@ -58,7 +58,7 @@ public enum GeneratedPDFWriter {
     title: String,
     content: String
   ) -> NSAttributedString {
-    let result = NSMutableAttributedString()
+    let result = NSMutableAttributedString(string: "")
     append(
       title + "\n\n",
       fontName: "Helvetica-Bold",
