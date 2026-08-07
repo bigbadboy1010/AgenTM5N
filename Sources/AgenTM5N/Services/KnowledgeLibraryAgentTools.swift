@@ -72,8 +72,10 @@ public enum KnowledgeLibraryAgentTools {
       return UnifiedContextAgentTools.risk(for: call)
     }
     switch call.function.name {
-    case "knowledge_import_document": .write
-    default: .read
+    case "knowledge_import_document":
+      return .write
+    default:
+      return .read
     }
   }
 
