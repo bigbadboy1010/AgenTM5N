@@ -576,6 +576,7 @@ public final class AppState: ObservableObject {
       ? AgentRuntime.toolDefinitions
         + CoreMLAgentTools.definitions
         + WorkspaceMemoryAgentTools.definitions
+        + ConversationAttachmentAgentTools.definitions
       : []
     var completedToolIterations = 0
 
@@ -644,6 +645,9 @@ public final class AppState: ObservableObject {
     } else if WorkspaceMemoryAgentTools.handles(call) {
       risk = WorkspaceMemoryAgentTools.risk(for: call)
       summary = WorkspaceMemoryAgentTools.summary(for: call)
+    } else if ConversationAttachmentAgentTools.handles(call) {
+      risk = ConversationAttachmentAgentTools.risk(for: call)
+      summary = ConversationAttachmentAgentTools.summary(for: call)
     } else {
       risk = await agentRuntime.risk(for: call)
       summary = await agentRuntime.summary(for: call)
@@ -687,6 +691,13 @@ public final class AppState: ObservableObject {
   private func executeAuthorizedToolCall(
     _ call: ProviderToolCall
   ) async -> ToolExecutionResult {
+    if ConversationAttachmentAgentTools.handles(call) {
+      return ConversationAttachmentAgentTools.execute(
+        call: call,
+        messages: messages
+      )
+    }
+
     switch call.function.name {
     case "terminal_open":
       return openTerminalTool(call)
@@ -1024,6 +1035,7 @@ public final class AppState: ObservableObject {
       return ToolExecutionResult(success: false, output: error.localizedDescription)
     }
   }
+
   private func authorize(
     call: ProviderToolCall,
     risk: ToolRisk,
