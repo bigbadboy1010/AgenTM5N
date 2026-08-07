@@ -5,6 +5,7 @@ struct RootView: View {
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
   @State private var isImportingPromptFiles = false
   @State private var showingAttachmentCenter = false
+  @State private var showingKnowledgeLibrary = false
 
   var body: some View {
     NavigationSplitView {
@@ -90,6 +91,26 @@ struct RootView: View {
                   fr: "Inspecter les pièces jointes et les sections extraites."
                 )
             )
+
+            Button {
+              showingKnowledgeLibrary = true
+            } label: {
+              Label(
+                L10n.text(
+                  de: "Wissensbibliothek",
+                  en: "Knowledge Library",
+                  fr: "Bibliothèque de connaissances"
+                ),
+                systemImage: "books.vertical.fill"
+              )
+            }
+            .help(
+              L10n.text(
+                de: "Dauerhafte Wissenssammlungen verwalten, importieren und durchsuchen.",
+                en: "Manage, import, and search persistent knowledge collections.",
+                fr: "Gérer, importer et rechercher des collections persistantes."
+              )
+            )
           }
         }
       }
@@ -99,6 +120,10 @@ struct RootView: View {
       AttachmentCenterView()
         .environmentObject(appState)
         .frame(minWidth: 840, minHeight: 640)
+    }
+    .sheet(isPresented: $showingKnowledgeLibrary) {
+      KnowledgeLibraryView()
+        .frame(minWidth: 1_050, minHeight: 700)
     }
     .alert(
       L10n.text(de: "Fehler", en: "Error", fr: "Erreur"),
