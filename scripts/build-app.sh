@@ -83,6 +83,12 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     </array>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>AgenTM5N benötigt Zugriff auf deinen Kalender, damit freigegebene KI-Agenten Termine lesen und später verwalten können.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>AgenTM5N benötigt Zugriff auf deine Kontakte, damit freigegebene KI-Agenten Kontakte suchen und später verwalten können.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>AgenTM5N verwendet Apple Events, um auf deine ausdrückliche Anfrage mit Apple Mail zu interagieren.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>
