@@ -3,6 +3,7 @@ import FoundationModels
 
 public enum AppleFoundationModelsProviderError: LocalizedError {
   case unavailable(String)
+  case generationFailure(String)
 
   public var errorDescription: String? {
     switch self {
@@ -11,6 +12,12 @@ public enum AppleFoundationModelsProviderError: LocalizedError {
         de: "Apple Foundation Models ist nicht verfügbar: \(reason)",
         en: "Apple Foundation Models is unavailable: \(reason)",
         fr: "Apple Foundation Models n’est pas disponible : \(reason)"
+      )
+    case .generationFailure(let details):
+      return L10n.text(
+        de: "Apple Foundation Models Fehler: \(details)",
+        en: "Apple Foundation Models error: \(details)",
+        fr: "Erreur Apple Foundation Models : \(details)"
       )
     }
   }
@@ -52,30 +59,47 @@ public actor AppleFoundationModelsProvider {
 
     let temporalContext = AgentRuntimeContext.currentTemporalContext()
     let selection = Self.toolSelection(for: messages)
-    let instructions = configuration.systemPrompt
-      + "\n\n"
-      + SystemLanguage.current.agentInstruction
-      + "\n\n"
-      + AgentRuntimeContext.providerInstruction()
-      + "\n\n"
-      + temporalContext
-      + "\n\n"
-      + Self.toolInstructions(selection: selection)
+    let focusedSSH = selection.sshMode != nil
 
-    var tools: [any Tool] = [SystemCurrentDateTimeTool()]
-    if configuration.agentEnabled {
-      if selection.macNative {
-        tools.append(contentsOf: AppleRoutedMacNativeTools.makeTools())
+    let instructions: String
+    if focusedSSH {
+      instructions = Self.sshInstructions()
+    } else {
+      instructions = configuration.systemPrompt
+        + "\n\n"
+        + SystemLanguage.current.agentInstruction
+        + "\n\n"
+        + AgentRuntimeContext.providerInstruction()
+        + "\n\n"
+        + temporalContext
+        + "\n\n"
+        + Self.toolInstructions(selection: selection)
+    }
+
+    var tools: [any Tool] = []
+    if focusedSSH {
+      switch selection.sshMode {
+      case .list:
+        tools.append(contentsOf: AppleRoutedSSHTools.makeListHostsTools())
+      case .run:
+        tools.append(contentsOf: AppleRoutedSSHTools.makeRunTools())
+      case .terminal:
+        tools.append(contentsOf: AppleRoutedSSHTools.makeOpenTerminalTools())
+      case nil:
+        break
       }
-      if selection.persistentAgents {
-        tools.append(contentsOf: AppleRoutedPersistentAgentTools.makeTools())
-      }
-      if selection.operational {
-        tools.append(contentsOf: AppleRoutedOperationalTools.makeTools())
-      } else if selection.ssh {
-        // SSH is intentionally a focused three-tool pack. Apple Foundation
-        // Models counts every tool schema against its on-device context window.
-        tools.append(contentsOf: AppleRoutedSSHTools.makeTools())
+    } else {
+      tools.append(SystemCurrentDateTimeTool())
+      if configuration.agentEnabled {
+        if selection.macNative {
+          tools.append(contentsOf: AppleRoutedMacNativeTools.makeTools())
+        }
+        if selection.persistentAgents {
+          tools.append(contentsOf: AppleRoutedPersistentAgentTools.makeTools())
+        }
+        if selection.operational {
+          tools.append(contentsOf: AppleRoutedOperationalTools.makeTools())
+        }
       }
     }
 
@@ -85,28 +109,48 @@ public actor AppleFoundationModelsProvider {
     ) {
       instructions
     }
-    let prompt = Self.makePrompt(messages: messages)
-      + "\n\n"
-      + "AUTHORITATIVE RUNTIME CONTEXT FOR THIS TURN:\n"
-      + temporalContext
+
+    let prompt: String
+    if focusedSSH {
+      prompt = Self.latestUserPrompt(messages: messages)
+    } else {
+      prompt = Self.makePrompt(messages: messages)
+        + "\n\n"
+        + "AUTHORITATIVE RUNTIME CONTEXT FOR THIS TURN:\n"
+        + temporalContext
+    }
+
     let clock = ContinuousClock()
     let startedAt = clock.now
-    let response = try await session.respond(to: prompt)
-    let duration = startedAt.duration(to: clock.now)
-    let durationNanoseconds = Self.nanoseconds(from: duration)
 
-    return ProviderStreamEvent(
-      contentDelta: response.content,
-      thinkingDelta: "",
-      isFinished: true,
-      metrics: ChatMetrics(totalDurationNanoseconds: durationNanoseconds)
-    )
+    do {
+      let response = try await session.respond(to: prompt)
+      let duration = startedAt.duration(to: clock.now)
+      let durationNanoseconds = Self.nanoseconds(from: duration)
+
+      return ProviderStreamEvent(
+        contentDelta: response.content,
+        thinkingDelta: "",
+        isFinished: true,
+        metrics: ChatMetrics(totalDurationNanoseconds: durationNanoseconds)
+      )
+    } catch {
+      throw AppleFoundationModelsProviderError.generationFailure(
+        Self.describeFoundationModelError(error)
+      )
+    }
+  }
+
+  private enum SSHMode {
+    case list
+    case run
+    case terminal
   }
 
   private struct ToolSelection {
     var macNative: Bool
     var persistentAgents: Bool
-    var ssh: Bool
+    var sshMode: SSHMode?
     var operational: Bool
   }
 
@@ -130,25 +174,48 @@ public actor AppleFoundationModelsProvider {
       "calendar", "kalender", "termin", "event", "contact", "kontakt", "address book",
       "adressbuch", "mail", "email", "e-mail", "nachricht", "inbox", "posteingang",
     ]
-    // Do not match the generic substring "agent": the application name
-    // "AgenTM5N" itself contains it and previously loaded the persistent-agent
-    // schema unnecessarily for ordinary SSH requests.
     let agentTerms = [
       "agent erstellen", "agent anlegen", "agent speichern", "agent ändern",
       "agent aktualisieren", "agent löschen", "agent auflisten", "agenten",
       "gespeicherter agent", "gespeicherte agent", "specialist", "spezialist",
     ]
 
-    let ssh = sshTerms.contains { latestUserText.contains($0) }
-    let operational = broadOperationalTerms.contains { latestUserText.contains($0) }
-    let macNative = macTerms.contains { latestUserText.contains($0) }
-    let persistentAgents = agentTerms.contains { latestUserText.contains($0) }
+    let isSSHRequest = sshTerms.contains { latestUserText.contains($0) }
+    let operational = !isSSHRequest && broadOperationalTerms.contains {
+      latestUserText.contains($0)
+    }
+    let macNative = !isSSHRequest && macTerms.contains { latestUserText.contains($0) }
+    let persistentAgents = !isSSHRequest && agentTerms.contains {
+      latestUserText.contains($0)
+    }
 
-    if !ssh && !operational && !macNative && !persistentAgents {
+    let sshMode: SSHMode?
+    if isSSHRequest {
+      let runTerms = [
+        "führe", "ausführen", "ausfuehren", "befehl", "kommando", "command",
+        "docker", "systemctl", "journalctl", "whoami", "hostname", "uname",
+        "df ", "free ", "ps ", "top", "uptime", "kubectl", "oc ",
+      ]
+      let terminalTerms = [
+        "interaktiv", "interactive", "terminal öffnen", "terminal oeffnen",
+        "open terminal", "ssh terminal", "shell öffnen", "shell oeffnen",
+      ]
+      if runTerms.contains(where: { latestUserText.contains($0) }) {
+        sshMode = .run
+      } else if terminalTerms.contains(where: { latestUserText.contains($0) }) {
+        sshMode = .terminal
+      } else {
+        sshMode = .list
+      }
+    } else {
+      sshMode = nil
+    }
+
+    if sshMode == nil && !operational && !macNative && !persistentAgents {
       return ToolSelection(
         macNative: true,
         persistentAgents: true,
-        ssh: false,
+        sshMode: nil,
         operational: false
       )
     }
@@ -156,9 +223,20 @@ public actor AppleFoundationModelsProvider {
     return ToolSelection(
       macNative: macNative,
       persistentAgents: persistentAgents,
-      ssh: ssh,
+      sshMode: sshMode,
       operational: operational
     )
+  }
+
+  private static func sshInstructions() -> String {
+    """
+    You are AgenTM5N running with the Apple on-device language model.
+    Respond in the user's language.
+    Use the single SSH tool provided for this request when it is needed.
+    AgenTM5N resolves passwords, private keys, and passphrases internally from the encrypted Vault.
+    Never ask for, expose, repeat, or infer secret values or secret identifiers.
+    Report success or failure only from the tool result.
+    """
   }
 
   private static func toolInstructions(selection: ToolSelection) -> String {
@@ -193,18 +271,6 @@ public actor AppleFoundationModelsProvider {
       )
     }
 
-    if selection.ssh || selection.operational {
-      sections.append(
-        """
-        SSH RULES:
-        - Use ssh_list_hosts to discover configured SSH profiles instead of asking for credentials.
-        - ssh_run and ssh_open_terminal resolve linked password/private-key/passphrase secrets internally from the AgenTM5N Vault.
-        - Never request, echo, infer, or expose password, private-key, passphrase, or secret-ID values.
-        - Use ssh_run for remote non-interactive commands and ssh_open_terminal for an interactive remote session.
-        """
-      )
-    }
-
     if selection.operational {
       sections.append(
         """
@@ -216,6 +282,14 @@ public actor AppleFoundationModelsProvider {
     }
 
     return sections.joined(separator: "\n\n")
+  }
+
+  private static func latestUserPrompt(messages: [ChatMessage]) -> String {
+    let text = messages
+      .last(where: { $0.role == .user })?
+      .content
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return String(text.prefix(2_500))
   }
 
   private static func makePrompt(messages: [ChatMessage]) -> String {
@@ -237,10 +311,37 @@ public actor AppleFoundationModelsProvider {
       return rendered
     }
 
-    // Preserve the newest part of the conversation, including the current user
-    // request, while keeping room for tool schemas and model output.
     return "[Earlier conversation omitted for Apple on-device context budget]\n\n"
       + String(rendered.suffix(maximumConversationCharacters))
+  }
+
+  private static func describeFoundationModelError(_ error: any Error) -> String {
+    var parts: [String] = []
+
+    if let languageError = error as? LanguageModelError {
+      parts.append("LanguageModelError=\(String(reflecting: languageError))")
+    }
+    if let systemError = error as? SystemLanguageModel.Error {
+      parts.append("SystemLanguageModel.Error=\(String(reflecting: systemError))")
+    }
+    if let sessionError = error as? LanguageModelSession.Error {
+      parts.append("LanguageModelSession.Error=\(String(reflecting: sessionError))")
+    }
+    if let toolError = error as? LanguageModelSession.ToolCallError {
+      parts.append("ToolCallError=\(String(reflecting: toolError))")
+      parts.append("underlying=\(String(reflecting: toolError.underlyingError))")
+    }
+
+    let nsError = error as NSError
+    parts.append("NSError=\(nsError.domain)(\(nsError.code))")
+    if !nsError.localizedDescription.isEmpty {
+      parts.append("description=\(nsError.localizedDescription)")
+    }
+    if parts.isEmpty {
+      parts.append(String(reflecting: error))
+    }
+
+    return parts.joined(separator: " | ")
   }
 
   private static func nanoseconds(from duration: Duration) -> UInt64 {
