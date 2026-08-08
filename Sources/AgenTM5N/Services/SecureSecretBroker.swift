@@ -86,20 +86,40 @@ public enum SecureSecretBroker {
     return secret
   }
 
-  /// Removes known secret values from model-visible output. Longest values are
-  /// replaced first so overlapping tokens cannot leave a useful suffix behind.
+  /// Removes known secret representations from model-visible output. Raw,
+  /// percent-encoded, base64 and Basic-auth payload forms are covered so a
+  /// diagnostic endpoint cannot trivially reflect a Vault value back to a model.
   public static func redact(
     _ text: String,
     secrets: [VaultSecret]
   ) -> String {
-    var result = text
-    let values = secrets
-      .map(\.value)
-      .filter { $0.count >= 4 }
-      .sorted { $0.count > $1.count }
+    var candidates: Set<String> = []
+    for secret in secrets where secret.value.count >= 4 {
+      candidates.insert(secret.value)
+      candidates.insert(Data(secret.value.utf8).base64EncodedString())
+      if let escaped = secret.value.addingPercentEncoding(
+        withAllowedCharacters: .alphanumerics
+      ), !escaped.isEmpty
+      {
+        candidates.insert(escaped)
+      }
+      if !secret.username.isEmpty {
+        let basic = Data("\(secret.username):\(secret.value)".utf8)
+          .base64EncodedString()
+        candidates.insert(basic)
+        candidates.insert("Basic \(basic)")
+      }
+      candidates.insert("Bearer \(secret.value)")
+    }
 
-    for value in values {
-      result = result.replacingOccurrences(of: value, with: "<redacted-secret>")
+    var result = text
+    for candidate in candidates.sorted(by: { $0.count > $1.count })
+      where candidate.count >= 4
+    {
+      result = result.replacingOccurrences(
+        of: candidate,
+        with: "<redacted-secret>"
+      )
     }
     return result
   }
@@ -220,7 +240,16 @@ public struct SecureHTTPClient: Sendable {
     configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
     configuration.httpCookieStorage = nil
     configuration.httpShouldSetCookies = false
-    let session = URLSession(configuration: configuration)
+
+    let redirectDelegate = SecureHTTPRedirectDelegate(
+      originalHost: host,
+      hasSecret: secret != nil
+    )
+    let session = URLSession(
+      configuration: configuration,
+      delegate: redirectDelegate,
+      delegateQueue: nil
+    )
     defer { session.invalidateAndCancel() }
 
     let (data, response) = try await session.data(for: request)
@@ -230,9 +259,10 @@ public struct SecureHTTPClient: Sendable {
 
     let limited = data.prefix(Self.maximumResponseBytes)
     let bodyText = String(decoding: limited, as: UTF8.self)
+    let redactionSecrets = secret.map { [$0] } ?? []
     let safeBody = SecureSecretBroker.redact(
       bodyText,
-      secrets: secret.map { [$0] } ?? []
+      secrets: redactionSecrets
     )
 
     var safeHeaders: [String: String] = [:]
@@ -243,11 +273,10 @@ public struct SecureHTTPClient: Sendable {
     for (key, value) in http.allHeaderFields {
       let name = String(describing: key)
       guard !blockedResponseHeaders.contains(name.lowercased()) else { continue }
-      let rendered = SecureSecretBroker.redact(
+      safeHeaders[name] = SecureSecretBroker.redact(
         String(describing: value),
-        secrets: secret.map { [$0] } ?? []
+        secrets: redactionSecrets
       )
-      safeHeaders[name] = rendered
     }
 
     return SecureHTTPResponseDescriptor(
@@ -259,18 +288,7 @@ public struct SecureHTTPClient: Sendable {
     )
   }
 
-  private static func validateHeaderName(_ name: String) throws {
-    let allowed = CharacterSet(
-      charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
-    )
-    guard !name.isEmpty,
-      name.unicodeScalars.allSatisfy({ allowed.contains($0) })
-    else {
-      throw SecureSecretBrokerError.invalidHeaderName(name)
-    }
-  }
-
-  private static func isLocalHost(_ host: String) -> Bool {
+  fileprivate static func isLocalHost(_ host: String) -> Bool {
     let normalized = host.lowercased()
     if normalized == "localhost" || normalized == "::1" || normalized.hasSuffix(".local") {
       return true
@@ -289,5 +307,57 @@ public struct SecureHTTPClient: Sendable {
       return true
     }
     return false
+  }
+
+  private static func validateHeaderName(_ name: String) throws {
+    let allowed = CharacterSet(
+      charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+    )
+    guard !name.isEmpty,
+      name.unicodeScalars.allSatisfy({ allowed.contains($0) })
+    else {
+      throw SecureSecretBrokerError.invalidHeaderName(name)
+    }
+  }
+}
+
+private final class SecureHTTPRedirectDelegate: NSObject, URLSessionTaskDelegate,
+  @unchecked Sendable
+{
+  private let originalHost: String
+  private let hasSecret: Bool
+
+  init(originalHost: String, hasSecret: Bool) {
+    self.originalHost = originalHost.lowercased()
+    self.hasSecret = hasSecret
+    super.init()
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse,
+    newRequest request: URLRequest,
+    completionHandler: @escaping (URLRequest?) -> Void
+  ) {
+    guard hasSecret else {
+      completionHandler(request)
+      return
+    }
+    guard let url = request.url,
+      let host = url.host?.lowercased(),
+      let scheme = url.scheme?.lowercased()
+    else {
+      completionHandler(nil)
+      return
+    }
+
+    let encryptedOrLocal = scheme == "https"
+      || (scheme == "http" && SecureHTTPClient.isLocalHost(host))
+    guard encryptedOrLocal, host == originalHost else {
+      completionHandler(nil)
+      return
+    }
+    completionHandler(request)
   }
 }
