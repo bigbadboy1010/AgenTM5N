@@ -107,7 +107,7 @@ public enum CoreMLPredictionRunner {
         )
       }
       return try MLFeatureValue(
-        imageAtURL: url,
+        imageAt: url,
         constraint: constraint,
         options: nil
       )
