@@ -30,7 +30,7 @@ private struct AgentListTool: Tool {
 
 private struct AgentGetTool: Tool {
   let name = "agent_get"
-  let description = "Read one persistent reusable AgenTM5N specialist agent by exact name or UUID."
+  let description = "Read one persistent reusable AgenTM5N specialist agent by exact name or UUID, including optional tool-capability scope."
 
   @Generable
   struct Arguments {
@@ -48,7 +48,7 @@ private struct AgentGetTool: Tool {
 
 private struct AgentCreateTool: Tool {
   let name = "agent_create"
-  let description = "Create or replace a persistent reusable specialist agent when the user explicitly asks to create, save, build, remember, or define an agent. The saved agent appears in the Agenten section and remains available after relaunch."
+  let description = "Create or replace a persistent reusable specialist agent when the user explicitly asks to create or save an agent. Optional capabilities restrict the specialist to named AgenTM5N tool packs; use all for the complete centrally authorized catalog. Never put secrets in the agent profile."
 
   @Generable
   struct Arguments {
@@ -66,25 +66,29 @@ private struct AgentCreateTool: Tool {
 
     @Guide(description: "SF Symbols name, or empty string for the default")
     var symbol: String
+
+    @Guide(description: "all, empty, or comma-separated capability names such as ssh,system,memory")
+    var capabilities: String
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await route(
-      name: name,
-      arguments: [
-        "name": .string(arguments.name),
-        "purpose": .string(arguments.purpose),
-        "instructions": .string(arguments.instructions),
-        "provider": .string(arguments.provider),
-        "symbol": .string(arguments.symbol),
-      ]
-    )
+    var values: [String: JSONValue] = [
+      "name": .string(arguments.name),
+      "purpose": .string(arguments.purpose),
+      "instructions": .string(arguments.instructions),
+      "provider": .string(arguments.provider),
+      "symbol": .string(arguments.symbol),
+    ]
+    if !arguments.capabilities.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      values["capabilities"] = .string(arguments.capabilities)
+    }
+    return await route(name: name, arguments: values)
   }
 }
 
 private struct AgentUpdateTool: Tool {
   let name = "agent_update"
-  let description = "Update an existing persistent specialist agent. Empty text fields keep their current values. enabled_mode must be unchanged, true, or false."
+  let description = "Update an existing persistent specialist agent. Empty text fields keep their current values. enabled_mode must be unchanged, true, or false. capabilities must be unchanged, all, or a comma-separated capability set."
 
   @Generable
   struct Arguments {
@@ -108,6 +112,9 @@ private struct AgentUpdateTool: Tool {
 
     @Guide(description: "unchanged, true, or false")
     var enabledMode: String
+
+    @Guide(description: "unchanged, all, or comma-separated capability names")
+    var capabilities: String
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -121,6 +128,7 @@ private struct AgentUpdateTool: Tool {
         "provider": .string(arguments.provider),
         "symbol": .string(arguments.symbol),
         "enabled_mode": .string(arguments.enabledMode),
+        "capabilities": .string(arguments.capabilities),
       ]
     )
   }
