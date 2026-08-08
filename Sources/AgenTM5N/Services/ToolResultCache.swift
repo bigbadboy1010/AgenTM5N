@@ -45,7 +45,7 @@ public actor ToolResultCache {
     entries.removeAll(keepingCapacity: true)
   }
 
-  public func ttl(for toolName: String) -> TimeInterval {
+  public nonisolated func ttl(for toolName: String) -> TimeInterval {
     switch toolName {
     case "system_info": 60,
       "ssh_list_hosts", "git_branches", "coreml_list_models", "workflow_list", "agent_list": 20,
