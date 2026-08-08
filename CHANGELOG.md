@@ -2,6 +2,51 @@
 
 All notable changes to AgenTM5N are documented in this file.
 
+## [1.0.0] - 2026-08-08
+
+### Added
+
+- Native macOS Calendar tools for reading, creating, updating, and deleting events.
+- Native Contacts search, create, and update tools.
+- Apple Mail tools for recent-message listing, message reading, draft creation,
+  sending, and replying through macOS Automation.
+- Shared Apple On-Device / Ollama tool execution bridge so native Mac actions
+  use the same permission and audit pipeline.
+- Authoritative current Mac date, time, and time-zone grounding for model turns.
+- Mac Access Center for Calendar, Contacts, Automation, router, permission, and
+  audit visibility.
+- Persistent reusable specialist-agent library with `agent_list`, `agent_get`,
+  `agent_create`, `agent_update`, and `agent_delete`.
+- Agenten UI for inspecting, enabling, disabling, deleting, and reusing saved
+  specialist agents after application restarts.
+- Dedicated AgenTM5N macOS application icon generated into a complete `.icns`.
+- Hardened Runtime entitlements for Apple Events, Contacts, and Calendar.
+- Developer-ID-aware application build with secure timestamp support.
+- Release validation gate for version, build, bundle ID, icon, Hardened Runtime,
+  entitlements, Developer ID, and Gatekeeper assessment.
+- Notarized DMG release workflow using `notarytool` and `stapler`.
+- Detailed V1.0 release and smoke-test documentation.
+
+### Security
+
+- Personal macOS mutations remain subject to the central AgenTM5N permission
+  policy and audit trail.
+- Workspace Trusted does not silently authorize personal Calendar, Contacts, or
+  Mail mutations.
+- Saved specialist agents cannot bypass AgenTM5N permissions, audit, or macOS
+  TCC/Automation controls.
+- Release notarization refuses ad-hoc signing and requires a valid Developer ID
+  Application identity.
+- Production release checks reject `get-task-allow` and require Hardened Runtime.
+
+### Changed
+
+- App version is 1.0.0 build 22.
+- Calendar creation on Apple On-Device preserves local wall-clock components and
+  performs authoritative conversion in Swift using the Mac time zone.
+- Standard development builds may remain ad-hoc signed; distribution releases
+  use Developer ID Application signing with a secure timestamp.
+
 ## [0.3.0] - 2026-08-06
 
 ### Added
