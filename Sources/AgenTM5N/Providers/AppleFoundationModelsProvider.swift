@@ -185,6 +185,7 @@ public actor AppleFoundationModelsProvider {
     case ssh(SSHMode)
     case http
     case system
+    case clipboardRead
     case macUtilities
     case reminders
     case delegation
@@ -224,6 +225,8 @@ public actor AppleFoundationModelsProvider {
       AppleRoutedPlatformExpansionTools.makeHTTPTools()
     case .system:
       AppleRoutedPlatformExpansionTools.makeSystemTools()
+    case .clipboardRead:
+      AppleRequiredClipboardTools.makeReadTools()
     case .macUtilities:
       AppleRoutedPlatformExpansionTools.makeMacUtilityTools()
     case .reminders:
@@ -368,6 +371,14 @@ public actor AppleFoundationModelsProvider {
       return .init(macNative: false, persistentAgents: false, focused: .system)
     }
 
+    if containsAny(text, ["zwischenablage", "clipboard"]),
+      containsAny(text, [
+        "lies", "lese", "lesen", "inhalt", "zeige", "was ist", "read", "show", "inspect",
+      ])
+    {
+      return .init(macNative: false, persistentAgents: false, focused: .clipboardRead)
+    }
+
     if containsAny(text, [
       "zwischenablage", "clipboard", "benachrichtigung", "notification",
       "kurzbefehl", "shortcut", "shortcuts",
@@ -450,6 +461,7 @@ public actor AppleFoundationModelsProvider {
   private static func requiresToolCall(_ selection: ToolSelection) -> Bool {
     guard let focused = selection.focused else { return false }
     if case .documents = focused { return true }
+    if case .clipboardRead = focused { return true }
     return false
   }
 
@@ -476,6 +488,8 @@ public actor AppleFoundationModelsProvider {
       }
     case .http:
       lines.append("Use secret_list only to discover Vault labels/kinds. Use secret_ref by label with http_request; secret values remain native and model-invisible.")
+    case .clipboardRead:
+      lines.append("The user explicitly asked AgenTM5N to read the current macOS clipboard. AgenTM5N DOES have native clipboard access through clipboard_read. You MUST call clipboard_read and base the answer only on its actual output. Do not invent a privacy restriction or claim that the clipboard interface is unavailable.")
     case .reminders:
       lines.append("The authoritative current Mac date/time is: \(temporalContext)")
       lines.append("Use ISO-8601 for reminder due dates and preserve the user's local wall-clock intent.")
