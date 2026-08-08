@@ -185,7 +185,7 @@ struct AgentsView: View {
             profile.isEnabled ? "Aktiv" : "Deaktiviert",
             systemImage: profile.isEnabled ? "checkmark.circle.fill" : "pause.circle"
           )
-          .foregroundStyle(profile.isEnabled ? .green : .secondary)
+          .foregroundStyle(profile.isEnabled ? Color.green : Color.secondary)
         }
         .font(.caption)
       }
@@ -280,13 +280,17 @@ struct AgentsView: View {
     GroupBox("Persistenz und Sicherheit") {
       VStack(alignment: .leading, spacing: 7) {
         Label("Agenten bleiben nach einem Neustart erhalten.", systemImage: "externaldrive.badge.checkmark")
+          .foregroundStyle(.secondary)
         Label("Tool-Aufrufe laufen über den zentralen Permission- und Audit-Router.", systemImage: "checkmark.shield")
+          .foregroundStyle(.secondary)
         Label("Vault-Secrets werden nicht in Agenten-Anweisungen gespeichert.", systemImage: "key.horizontal")
+          .foregroundStyle(.secondary)
         if let lastUsedAt = profile.lastUsedAt {
           Label(
             "Zuletzt verwendet: \(lastUsedAt.formatted(date: .abbreviated, time: .shortened))",
             systemImage: "clock"
           )
+          .foregroundStyle(.secondary)
         }
 
         HStack {
@@ -296,7 +300,6 @@ struct AgentsView: View {
           }
         }
       }
-      .foregroundStyle(.secondary)
       .padding(.vertical, 6)
     }
   }
