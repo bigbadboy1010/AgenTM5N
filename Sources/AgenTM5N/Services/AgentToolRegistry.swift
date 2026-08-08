@@ -53,6 +53,7 @@ public enum AgentToolRegistry {
       AgentRuntime.toolDefinitions
         + MacNativeAgentTools.definitions
         + MacNativeMutationAgentTools.definitions
+        + RemindersAgentTools.definitions
         + CoreMLAgentTools.definitions
         + WorkspaceMemoryAgentTools.definitions
         + ConversationAttachmentAgentTools.definitions
