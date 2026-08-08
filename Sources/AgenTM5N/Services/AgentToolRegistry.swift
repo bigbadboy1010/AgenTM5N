@@ -148,6 +148,17 @@ public enum AgentToolRegistry {
     .init(name: "context_search", capability: .memory, risk: .read),
     .init(name: "context_read_source", capability: .memory, risk: .read),
 
+    .init(name: "attachment_list", capability: .attachments, risk: .read, cacheable: true),
+    .init(name: "attachment_describe", capability: .attachments, risk: .read),
+    .init(name: "attachment_search", capability: .attachments, risk: .read),
+    .init(name: "attachment_read_section", capability: .attachments, risk: .read),
+
+    .init(name: "knowledge_list_collections", capability: .knowledge, risk: .read, cacheable: true),
+    .init(name: "knowledge_list_documents", capability: .knowledge, risk: .read, cacheable: true),
+    .init(name: "knowledge_search", capability: .knowledge, risk: .read),
+    .init(name: "knowledge_read_source", capability: .knowledge, risk: .read),
+    .init(name: "knowledge_import_document", capability: .knowledge, risk: .write),
+
     .init(name: "agent_list", capability: .agents, risk: .read, cacheable: true),
     .init(name: "agent_get", capability: .agents, risk: .read, cacheable: true),
     .init(name: "agent_create", capability: .agents, risk: .write),
