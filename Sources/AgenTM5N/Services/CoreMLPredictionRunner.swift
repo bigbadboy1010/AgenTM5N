@@ -73,10 +73,67 @@ public enum CoreMLPredictionRunner {
       return MLFeatureValue(int64: Int64(number))
     case (.string, .string(let text)):
       return MLFeatureValue(string: text)
+
+    case (.multiArray, .array):
+      guard let constraint = description.multiArrayConstraint else {
+        throw CoreMLServiceError.inputTypeNotSupported(name: name, type: "MultiArray")
+      }
+      let numbers = try flattenedNumbers(value, inputName: name)
+      let array = try MLMultiArray(
+        shape: constraint.shape,
+        dataType: constraint.dataType
+      )
+      guard numbers.count == array.count else {
+        throw CoreMLServiceError.inputTypeNotSupported(
+          name: name,
+          type: "MultiArray erwartet \(array.count) Werte, erhalten \(numbers.count)"
+        )
+      }
+      for index in 0..<numbers.count {
+        array[index] = NSNumber(value: numbers[index])
+      }
+      return MLFeatureValue(multiArray: array)
+
+    case (.image, .string(let path)):
+      guard let constraint = description.imageConstraint else {
+        throw CoreMLServiceError.inputTypeNotSupported(name: name, type: "Image")
+      }
+      let expanded = NSString(string: path).expandingTildeInPath
+      let url = URL(fileURLWithPath: expanded)
+      guard FileManager.default.fileExists(atPath: url.path) else {
+        throw CoreMLServiceError.inputTypeNotSupported(
+          name: name,
+          type: "Image-Datei nicht gefunden: \(path)"
+        )
+      }
+      return try MLFeatureValue(
+        imageAt: url,
+        constraint: constraint
+      )
+
     default:
       throw CoreMLServiceError.inputTypeNotSupported(
         name: name,
         type: localizedFeatureType(description.type)
+      )
+    }
+  }
+
+  private static func flattenedNumbers(
+    _ value: JSONValue,
+    inputName: String
+  ) throws -> [Double] {
+    switch value {
+    case .number(let number):
+      return [number]
+    case .array(let values):
+      return try values.flatMap {
+        try flattenedNumbers($0, inputName: inputName)
+      }
+    default:
+      throw CoreMLServiceError.inputTypeNotSupported(
+        name: inputName,
+        type: "MultiArray benötigt verschachtelte numerische JSON-Arrays"
       )
     }
   }
@@ -116,7 +173,11 @@ public enum CoreMLPredictionRunner {
       return value.stringValue
     case .multiArray:
       guard let array = value.multiArrayValue else { return "MultiArray(nil)" }
-      return "MultiArray shape=\(array.shape) dataType=\(array.dataType.rawValue)"
+      let previewCount = min(array.count, 16)
+      let preview = (0..<previewCount)
+        .map { String(describing: array[$0]) }
+        .joined(separator: ", ")
+      return "MultiArray shape=\(array.shape) dataType=\(array.dataType.rawValue) values=[\(preview)\(array.count > previewCount ? ", …" : "")]"
     case .dictionary:
       return String(describing: value.dictionaryValue)
     case .image:
