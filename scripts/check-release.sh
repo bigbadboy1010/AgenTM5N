@@ -6,10 +6,11 @@ APP_NAME="AgenTM5N"
 EXPECTED_VERSION="${AGENTM5N_VERSION:-1.0.0}"
 EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-22}"
 REQUIRE_DEVELOPER_ID="${AGENTM5N_REQUIRE_DEVELOPER_ID:-0}"
+REQUIRE_GATEKEEPER="${AGENTM5N_REQUIRE_GATEKEEPER:-0}"
 APP_DIR="${AGENTM5N_APP_PATH:-$ROOT_DIR/dist/$APP_NAME.app}"
 PLIST="$APP_DIR/Contents/Info.plist"
 ICON="$APP_DIR/Contents/Resources/$APP_NAME.icns"
-ENTITLEMENTS_TMP="$(mktemp -t agentm5n-entitlements.XXXXXX)"
+ENTITLEMENTS_TMP="$(mktemp -t agentm5n-entitlements)"
 trap 'rm -f "$ENTITLEMENTS_TMP"' EXIT
 
 fail() {
@@ -62,6 +63,11 @@ fi
 if [ "$REQUIRE_DEVELOPER_ID" = "1" ]; then
   printf '%s\n' "$SIGNATURE_INFO" | grep -q 'Authority=Developer ID Application:' \
     || fail "Keine Developer ID Application Signatur gefunden."
+fi
+
+# Only enable this after notarization. Before Apple issues a ticket, a correctly
+# Developer-ID-signed app can legitimately assess as Unnotarized Developer ID.
+if [ "$REQUIRE_GATEKEEPER" = "1" ]; then
   spctl --assess --type execute --verbose=4 "$APP_DIR"
 fi
 
@@ -74,8 +80,13 @@ printf 'Icon:       vorhanden\n'
 printf 'Runtime:    hardened\n'
 printf 'Entitlements: Calendar + Contacts + Apple Events\n'
 if [ "$REQUIRE_DEVELOPER_ID" = "1" ]; then
-  printf 'Developer ID / Gatekeeper: bestanden\n'
+  printf 'Developer ID: bestanden\n'
 else
-  printf 'Developer ID / Gatekeeper: nicht erzwungen (Development Gate)\n'
+  printf 'Developer ID: nicht erzwungen (Development Gate)\n'
+fi
+if [ "$REQUIRE_GATEKEEPER" = "1" ]; then
+  printf 'Gatekeeper: bestanden\n'
+else
+  printf 'Gatekeeper: nicht erzwungen (vor Notarisierung normal)\n'
 fi
 printf 'Release Check: OK\n'
