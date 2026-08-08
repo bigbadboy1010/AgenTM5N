@@ -6,8 +6,8 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
-VERSION="${AGENTM5N_VERSION:-1.0.1}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-23}"
+VERSION="${AGENTM5N_VERSION:-1.1.0}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-24}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:--}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -53,9 +53,6 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 install -m 0755 "$BINARY" "$MACOS_DIR/$APP_NAME"
 
-# Copy SwiftPM resource bundles when dependencies provide any. A find loop is
-# used instead of an empty Bash array because macOS Bash 3.2 treats empty arrays
-# as unbound variables when `set -u` is active.
 while IFS= read -r -d '' local_bundle; do
   bundle_name="${local_bundle##*/}"
   ditto "$local_bundle" "$RESOURCES_DIR/$bundle_name"
@@ -69,7 +66,6 @@ done < <(
     -print0
 )
 
-# Build the macOS .icns asset from one deterministic 1024x1024 source image.
 rm -rf "$ICON_WORK_DIR"
 mkdir -p "$ICONSET_DIR"
 xcrun swift "$ICON_GENERATOR" "$ICON_SOURCE"
@@ -128,10 +124,12 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <true/>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>AgenTM5N benötigt Zugriff auf deinen Kalender, damit freigegebene KI-Agenten Termine lesen und verwalten können.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>AgenTM5N benötigt Zugriff auf deine Erinnerungen, damit freigegebene KI-Agenten Erinnerungen lesen und verwalten können.</string>
     <key>NSContactsUsageDescription</key>
     <string>AgenTM5N benötigt Zugriff auf deine Kontakte, damit freigegebene KI-Agenten Kontakte suchen und verwalten können.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>AgenTM5N verwendet Apple Events, um auf deine ausdrückliche Anfrage mit Apple Mail zu interagieren.</string>
+    <string>AgenTM5N verwendet Apple Events, um auf deine ausdrückliche Anfrage mit Apple Mail, Kurzbefehlen und anderen freigegebenen macOS-Funktionen zu interagieren.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>
@@ -146,8 +144,6 @@ PLIST
 plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
 plutil -lint "$ENTITLEMENTS_FILE" >/dev/null
 
-# Development builds may remain ad-hoc signed. Release builds pass a real
-# Developer ID Application identity through AGENTM5N_SIGNING_IDENTITY.
 if [ "$SIGNING_IDENTITY" = "-" ]; then
   codesign \
     --force \
