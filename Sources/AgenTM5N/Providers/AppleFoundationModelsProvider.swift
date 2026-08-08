@@ -117,10 +117,21 @@ public actor AppleFoundationModelsProvider {
     let startedAt = clock.now
 
     do {
-      let response = try await session.respond(to: prompt)
+      let responseContent: String
+      if #available(macOS 27.0, *), Self.requiresToolCall(selection) {
+        let response = try await session.respond(
+          to: prompt,
+          options: GenerationOptions(toolCallingMode: .required)
+        )
+        responseContent = response.content
+      } else {
+        let response = try await session.respond(to: prompt)
+        responseContent = response.content
+      }
+
       let duration = startedAt.duration(to: clock.now)
       return ProviderStreamEvent(
-        contentDelta: response.content,
+        contentDelta: responseContent,
         thinkingDelta: "",
         isFinished: true,
         metrics: ChatMetrics(
@@ -128,6 +139,32 @@ public actor AppleFoundationModelsProvider {
         )
       )
     } catch {
+      if Self.requiresToolCall(selection),
+        let toolOutput = AppleRequiredDocumentTools.completionOutput(from: error)
+      {
+        let duration = startedAt.duration(to: clock.now)
+        let succeeded = toolOutput.contains("ready-for-save")
+        let content = succeeded
+          ? L10n.text(
+            de: "Das Dokument wurde erzeugt. AgenTM5N öffnet jetzt den macOS-Speicherdialog. Falls der Dialog nicht im Vordergrund erscheint, verwende unten rechts „Dokument bereit – Speichern…“.",
+            en: "The document was generated. AgenTM5N is opening the macOS save dialog now. If the dialog does not appear in front, use ‘Document Ready – Save…’ at the bottom right.",
+            fr: "Le document a été généré. AgenTM5N ouvre maintenant la boîte de dialogue d’enregistrement macOS. Si elle n’apparaît pas au premier plan, utilisez « Document prêt – Enregistrer… » en bas à droite."
+          )
+          : L10n.text(
+            de: "Die Dokumenterstellung wurde nicht abgeschlossen: \(toolOutput)",
+            en: "Document generation did not complete: \(toolOutput)",
+            fr: "La génération du document n’a pas abouti : \(toolOutput)"
+          )
+        return ProviderStreamEvent(
+          contentDelta: content,
+          thinkingDelta: "",
+          isFinished: true,
+          metrics: ChatMetrics(
+            totalDurationNanoseconds: Self.nanoseconds(from: duration)
+          )
+        )
+      }
+
       throw AppleFoundationModelsProviderError.generationFailure(
         Self.describeFoundationModelError(error)
       )
@@ -215,7 +252,7 @@ public actor AppleFoundationModelsProvider {
     case .attachments:
       AppleRoutedKnowledgeMemoryTools.makeAttachmentTools()
     case .documents:
-      AppleRoutedKnowledgeMemoryTools.makeDocumentTools()
+      AppleRequiredDocumentTools.makeTools()
     case .coreML:
       AppleRoutedKnowledgeMemoryTools.makeCoreMLTools()
     }
@@ -287,6 +324,7 @@ public actor AppleFoundationModelsProvider {
 
     if containsAny(text, [
       "document studio", "dokument erstellen", "dokument generieren", "dokument erzeugen",
+      "datei erstellen", "datei generieren", "datei erzeugen", "zum download", "herunterladen",
       "docx", "xlsx", "pptx", "powerpoint", "word dokument", "word-datei", "word datei",
       "excel dokument", "excel-datei", "excel datei", "als pdf", "pdf erstellen",
       "pdf generieren", "generiertes dokument",
@@ -409,6 +447,12 @@ public actor AppleFoundationModelsProvider {
     return runTerms.contains(where: { text.contains($0) }) ? .run : .list
   }
 
+  private static func requiresToolCall(_ selection: ToolSelection) -> Bool {
+    guard let focused = selection.focused else { return false }
+    if case .documents = focused { return true }
+    return false
+  }
+
   private static func focusedInstructions(
     _ pack: FocusedToolPack,
     temporalContext: String
@@ -452,7 +496,7 @@ public actor AppleFoundationModelsProvider {
     case .attachments:
       lines.append("Use attachment_search or attachment_list before reading a bounded attachment section. Do not invent attachment content.")
     case .documents:
-      lines.append("Use document_generate for DOCX, PDF, XLSX, or PPTX requests. AgenTM5N presents a native macOS Save dialog immediately after generation so the user can choose where to save/download the file. Internal managed paths remain hidden.")
+      lines.append("AgenTM5N DOES have native file-generation capability. The provided document_generate tool creates the actual DOCX, PDF, XLSX, or PPTX file. You MUST use document_generate for this request. Do not answer that you cannot create files, do not merely provide copyable text, and do not recommend Word or LibreOffice instead. Put the complete requested document into the tool arguments. After the native tool finishes, AgenTM5N handles the macOS save UI.")
     case .coreML:
       lines.append("Use coreml_describe_model before coreml_predict when input names or shapes are not known. Core ML runs locally and may use CPU + Apple Neural Engine according to the registered model policy.")
     default:
