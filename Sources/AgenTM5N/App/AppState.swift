@@ -210,12 +210,10 @@ public final class AppState: ObservableObject {
   }
 
   public func saveConfiguration() async {
-    configuration.maxToolIterations = max(
-      1,
-      min(configuration.maxToolIterations, 24)
-    )
+    configuration.maxToolIterations = max(1, min(configuration.maxToolIterations, 24))
     do {
       try await configurationStore.save(configuration)
+      await ToolResultCache.shared.invalidateAll()
     } catch {
       present(error)
     }
@@ -238,6 +236,7 @@ public final class AppState: ObservableObject {
     workspaceIndexStatus = nil
     workspaceSemanticResults = []
     Task { [weak self] in
+      await ToolResultCache.shared.invalidateAll()
       await self?.refreshWorkspaceIndexStatus()
     }
   }
@@ -246,6 +245,7 @@ public final class AppState: ObservableObject {
     do {
       secrets = try await vaultStore.unlock(password: password)
       vaultUnlocked = true
+      await ToolResultCache.shared.invalidateAll()
       return true
     } catch {
       vaultUnlocked = false
@@ -258,11 +258,13 @@ public final class AppState: ObservableObject {
     await vaultStore.lock()
     vaultUnlocked = false
     secrets = []
+    await ToolResultCache.shared.invalidateAll()
   }
 
   public func upsertSecret(_ secret: VaultSecret) async -> Bool {
     do {
       secrets = try await vaultStore.upsert(secret)
+      await ToolResultCache.shared.invalidateAll()
       return true
     } catch {
       present(error)
@@ -277,6 +279,7 @@ public final class AppState: ObservableObject {
         configuration.apiKeySecretID = nil
         try await configurationStore.save(configuration)
       }
+      await ToolResultCache.shared.invalidateAll()
     } catch {
       present(error)
     }
@@ -297,10 +300,8 @@ public final class AppState: ObservableObject {
       availableModels = ["Apple System Language Model"]
       return
     }
-
     isLoadingModels = true
     defer { isLoadingModels = false }
-
     do {
       let apiKey = try await configuredAPIKey()
       availableModels = try await ollamaProvider.listModels(
@@ -362,6 +363,7 @@ public final class AppState: ObservableObject {
 
     do {
       try await sshHostStore.save(sshHosts)
+      await ToolResultCache.shared.invalidateAll()
       return true
     } catch {
       present(error)
@@ -373,6 +375,7 @@ public final class AppState: ObservableObject {
     sshHosts.removeAll { $0.id == id }
     do {
       try await sshHostStore.save(sshHosts)
+      await ToolResultCache.shared.invalidateAll()
     } catch {
       present(error)
     }
@@ -396,10 +399,7 @@ public final class AppState: ObservableObject {
     command: String? = nil,
     title: String = "Lokales Terminal"
   ) {
-    terminalLaunch = TerminalLaunch(
-      title: title,
-      initialCommand: command
-    )
+    terminalLaunch = TerminalLaunch(title: title, initialCommand: command)
     selectedSection = .terminal
   }
 
@@ -410,6 +410,7 @@ public final class AppState: ObservableObject {
       activeCoreMLModelID = record.id
       coreMLDescriptor = record.descriptor
       coreMLPredictionResult = nil
+      await ToolResultCache.shared.invalidateAll()
     } catch {
       present(error)
     }
@@ -418,7 +419,6 @@ public final class AppState: ObservableObject {
   public func runCoreMLPrediction() async {
     isRunningCoreML = true
     defer { isRunningCoreML = false }
-
     do {
       coreMLPredictionResult = try await coreMLService.predict(
         jsonInput: coreMLPredictionInput
@@ -445,9 +445,7 @@ public final class AppState: ObservableObject {
   public func buildWorkspaceIndex() async {
     guard !isBuildingWorkspaceIndex else { return }
     isBuildingWorkspaceIndex = true
-    workspaceIndexProgress = WorkspaceIndexBuildProgress(
-      phase: .preparing
-    )
+    workspaceIndexProgress = WorkspaceIndexBuildProgress(phase: .preparing)
     defer { isBuildingWorkspaceIndex = false }
 
     do {
@@ -461,6 +459,7 @@ public final class AppState: ObservableObject {
       )
       workspaceEmbeddingModelID = workspaceIndexStatus?.modelID
       workspaceSemanticResults = []
+      await ToolResultCache.shared.invalidateAll()
     } catch {
       workspaceIndexProgress = nil
       present(error)
@@ -474,9 +473,7 @@ public final class AppState: ObservableObject {
       }
       let model: CoreMLRegisteredModel?
       if let modelID = status.modelID {
-        model = try await coreMLService.registeredModel(
-          query: modelID.uuidString
-        )
+        model = try await coreMLService.registeredModel(query: modelID.uuidString)
       } else {
         model = nil
       }
@@ -492,12 +489,11 @@ public final class AppState: ObservableObject {
 
   public func clearWorkspaceIndex() async {
     do {
-      try await workspaceIndexService.clear(
-        workspacePath: configuration.workspacePath
-      )
+      try await workspaceIndexService.clear(workspacePath: configuration.workspacePath)
       workspaceIndexStatus = nil
       workspaceIndexProgress = nil
       workspaceSemanticResults = []
+      await ToolResultCache.shared.invalidateAll()
     } catch {
       present(error)
     }
@@ -529,10 +525,7 @@ public final class AppState: ObservableObject {
         await AgentToolExecutionBridge.shared.install(
           sessionID: bridgeSessionID,
           executor: { [self] call in
-            let message = await self.executeToolCall(
-              call,
-              assistantID: assistantID
-            )
+            let message = await self.executeToolCall(call, assistantID: assistantID)
             return message.content
           }
         )
@@ -583,18 +576,12 @@ public final class AppState: ObservableObject {
         apiKey: apiKey
       )
       guard capabilities.contains("vision") else {
-        throw PromptAttachmentError.modelDoesNotSupportVision(
-          configuration.model
-        )
+        throw PromptAttachmentError.modelDoesNotSupportVision(configuration.model)
       }
     }
 
     let tools = configuration.agentEnabled
-      ? AgentRuntime.toolDefinitions
-        + CoreMLAgentTools.definitions
-        + WorkspaceMemoryAgentTools.definitions
-        + ConversationAttachmentAgentTools.definitions
-        + KnowledgeLibraryAgentTools.definitions
+      ? AgentToolRegistry.ollamaDefinitions
       : []
     var completedToolIterations = 0
 
@@ -627,10 +614,7 @@ public final class AppState: ObservableObject {
         )
       )
 
-      guard configuration.agentEnabled, !turnToolCalls.isEmpty else {
-        break
-      }
-
+      guard configuration.agentEnabled, !turnToolCalls.isEmpty else { break }
       guard completedToolIterations < configuration.maxToolIterations else {
         appendAssistantText(
           "\n\nAgent-Limit erreicht: maximal \(configuration.maxToolIterations) Tool-Runden.",
@@ -642,11 +626,9 @@ public final class AppState: ObservableObject {
 
       for call in turnToolCalls {
         try Task.checkCancellation()
-        let toolMessage = await executeToolCall(
-          call,
-          assistantID: assistantID
+        providerMessages.append(
+          await executeToolCall(call, assistantID: assistantID)
         )
-        providerMessages.append(toolMessage)
       }
     }
   }
@@ -655,32 +637,19 @@ public final class AppState: ObservableObject {
     _ call: ProviderToolCall,
     assistantID: UUID
   ) async -> ProviderMessage {
-    let risk: ToolRisk
-    let summary: String
-    if CoreMLAgentTools.handles(call) {
-      risk = CoreMLAgentTools.risk(for: call)
-      summary = CoreMLAgentTools.summary(for: call)
-    } else if WorkspaceMemoryAgentTools.handles(call) {
-      risk = WorkspaceMemoryAgentTools.risk(for: call)
-      summary = WorkspaceMemoryAgentTools.summary(for: call)
-    } else if ConversationAttachmentAgentTools.handles(call) {
-      risk = ConversationAttachmentAgentTools.risk(for: call)
-      summary = ConversationAttachmentAgentTools.summary(for: call)
-    } else if KnowledgeLibraryAgentTools.handles(call) {
-      risk = KnowledgeLibraryAgentTools.risk(for: call)
-      summary = KnowledgeLibraryAgentTools.summary(for: call)
-    } else {
-      risk = await agentRuntime.risk(for: call)
-      summary = await agentRuntime.summary(for: call)
-    }
-    let allowed = await authorize(call: call, risk: risk, summary: summary)
+    let routing = await registryRiskAndSummary(for: call)
+    let allowed = await authorize(
+      call: call,
+      risk: routing.risk,
+      summary: routing.summary
+    )
     let recordID = UUID()
     appendToolRecord(
       ToolExecutionRecord(
         id: recordID,
         toolName: call.function.name,
-        argumentsSummary: summary,
-        risk: risk,
+        argumentsSummary: routing.summary,
+        risk: routing.risk,
         status: allowed ? .running : .denied,
         output: allowed ? "" : "Vom Benutzer oder Berechtigungsmodus abgelehnt.",
         endedAt: allowed ? nil : Date()
@@ -696,12 +665,13 @@ public final class AppState: ObservableObject {
       )
     }
 
-    let result = await executeAuthorizedToolCall(call)
-    finishToolRecord(
-      id: recordID,
-      result: result,
-      assistantID: assistantID
-    )
+    let result = await executeMeasuredTool(
+      call: call,
+      risk: routing.risk
+    ) { [self] in
+      await executeAuthorizedToolCall(call)
+    }
+    finishToolRecord(id: recordID, result: result, assistantID: assistantID)
     return ProviderMessage(
       role: .tool,
       content: result.output,
@@ -712,13 +682,28 @@ public final class AppState: ObservableObject {
   private func executeAuthorizedToolCall(
     _ call: ProviderToolCall
   ) async -> ToolExecutionResult {
-    if ConversationAttachmentAgentTools.handles(call) {
-      return ConversationAttachmentAgentTools.execute(
-        call: call,
-        messages: messages
-      )
+    if isPlatformExpansionCall(call) {
+      return await executePlatformExpansionTool(call)
     }
 
+    if MacNativeAgentTools.handles(call) {
+      return await MacNativeAgentTools.execute(call: call)
+    }
+    if MacNativeMutationAgentTools.handles(call) {
+      return await MacNativeMutationAgentTools.execute(call: call)
+    }
+    if PersistentAgentTools.handles(call) {
+      return PersistentAgentTools.execute(call: call)
+    }
+    if GeneratedDocumentAgentTools.handles(call) {
+      return await GeneratedDocumentAgentTools.execute(call: call)
+    }
+    if UnifiedContextAgentTools.handles(call) {
+      return UnifiedContextAgentTools.execute(call: call, messages: messages)
+    }
+    if ConversationAttachmentAgentTools.handles(call) {
+      return ConversationAttachmentAgentTools.execute(call: call, messages: messages)
+    }
     if KnowledgeLibraryAgentTools.handles(call) {
       return await KnowledgeLibraryAgentTools.execute(
         call: call,
@@ -758,9 +743,7 @@ public final class AppState: ObservableObject {
     }
   }
 
-  private func openTerminalTool(
-    _ call: ProviderToolCall
-  ) -> ToolExecutionResult {
+  private func openTerminalTool(_ call: ProviderToolCall) -> ToolExecutionResult {
     let command = optionalToolString("command", in: call)
     let title = optionalToolString("title", in: call) ?? "Agent Terminal"
     openLocalTerminal(command: command, title: title)
@@ -785,13 +768,10 @@ public final class AppState: ObservableObject {
         passphraseConfigured: host.passphraseSecretID != nil
       )
     }
-
     return encodedToolResult(descriptors)
   }
 
-  private func runSSHTool(
-    _ call: ProviderToolCall
-  ) async -> ToolExecutionResult {
+  private func runSSHTool(_ call: ProviderToolCall) async -> ToolExecutionResult {
     do {
       let hostQuery = try requiredToolString("host", in: call)
       let command = try requiredToolString("command", in: call)
@@ -804,11 +784,9 @@ public final class AppState: ObservableObject {
         command: command
       )
       defer { cleanupRuntimePaths(launch.cleanupPaths) }
-
       guard let localCommand = launch.initialCommand else {
         throw SSHAgentToolError.missingLaunchCommand
       }
-
       return await agentRuntime.executeCommand(
         localCommand,
         workspacePath: configuration.workspacePath
@@ -818,9 +796,7 @@ public final class AppState: ObservableObject {
     }
   }
 
-  private func openSSHTerminalTool(
-    _ call: ProviderToolCall
-  ) async -> ToolExecutionResult {
+  private func openSSHTerminalTool(_ call: ProviderToolCall) async -> ToolExecutionResult {
     do {
       let hostQuery = try requiredToolString("host", in: call)
       var host = try resolveSSHHost(hostQuery)
@@ -859,9 +835,7 @@ public final class AppState: ObservableObject {
     return encodedToolResult(descriptors)
   }
 
-  private func describeCoreMLModelTool(
-    _ call: ProviderToolCall
-  ) async -> ToolExecutionResult {
+  private func describeCoreMLModelTool(_ call: ProviderToolCall) async -> ToolExecutionResult {
     do {
       let query = optionalToolString("model", in: call)
       let model = try await coreMLService.registeredModel(query: query)
@@ -882,15 +856,10 @@ public final class AppState: ObservableObject {
     }
   }
 
-  private func predictCoreMLTool(
-    _ call: ProviderToolCall
-  ) async -> ToolExecutionResult {
+  private func predictCoreMLTool(_ call: ProviderToolCall) async -> ToolExecutionResult {
     do {
       guard let input = call.function.arguments["input"]?.objectValue else {
-        throw AgentRuntimeError.missingArgument(
-          tool: call.function.name,
-          name: "input"
-        )
+        throw AgentRuntimeError.missingArgument(tool: call.function.name, name: "input")
       }
       let modelQuery = optionalToolString("model", in: call)
       let encoder = JSONEncoder()
@@ -932,9 +901,7 @@ public final class AppState: ObservableObject {
     }
   }
 
-  private func buildWorkspaceIndexTool(
-    _ call: ProviderToolCall
-  ) async -> ToolExecutionResult {
+  private func buildWorkspaceIndexTool(_ call: ProviderToolCall) async -> ToolExecutionResult {
     do {
       let modelQuery = optionalToolString("model", in: call)
       let model: CoreMLRegisteredModel?
@@ -959,9 +926,7 @@ public final class AppState: ObservableObject {
     }
   }
 
-  private func searchWorkspaceIndexTool(
-    _ call: ProviderToolCall
-  ) async -> ToolExecutionResult {
+  private func searchWorkspaceIndexTool(_ call: ProviderToolCall) async -> ToolExecutionResult {
     do {
       let query = try requiredToolString("query", in: call)
       let limit = optionalToolInt("limit", in: call) ?? 8
@@ -972,9 +937,7 @@ public final class AppState: ObservableObject {
       }
       let model: CoreMLRegisteredModel?
       if let modelID = status.modelID {
-        model = try await coreMLService.registeredModel(
-          query: modelID.uuidString
-        )
+        model = try await coreMLService.registeredModel(query: modelID.uuidString)
       } else {
         model = nil
       }
@@ -1005,9 +968,7 @@ public final class AppState: ObservableObject {
 
   private func clearWorkspaceIndexTool() async -> ToolExecutionResult {
     do {
-      try await workspaceIndexService.clear(
-        workspacePath: configuration.workspacePath
-      )
+      try await workspaceIndexService.clear(workspacePath: configuration.workspacePath)
       workspaceIndexStatus = nil
       workspaceSemanticResults = []
       return ToolExecutionResult(
@@ -1041,12 +1002,8 @@ public final class AppState: ObservableObject {
   }
 
   private func selectedWorkspaceEmbeddingModel() async throws -> CoreMLRegisteredModel? {
-    guard let modelID = workspaceEmbeddingModelID else {
-      return nil
-    }
-    return try await coreMLService.registeredModel(
-      query: modelID.uuidString
-    )
+    guard let modelID = workspaceEmbeddingModelID else { return nil }
+    return try await coreMLService.registeredModel(query: modelID.uuidString)
   }
 
   private func encodedToolResult<T: Encodable>(_ value: T) -> ToolExecutionResult {
@@ -1069,15 +1026,11 @@ public final class AppState: ObservableObject {
     risk: ToolRisk,
     summary: String
   ) async -> Bool {
-    let remoteExecution = call.function.name == "ssh_run"
-      || call.function.name == "ssh_open_terminal"
-    let personalMacMutation = MacNativeMutationAgentTools.handles(call)
-
     switch configuration.permissionMode {
     case .fullAccess:
       return true
     case .workspaceTrusted:
-      if remoteExecution || personalMacMutation {
+      if requiresWorkspaceTrustedApproval(call: call, risk: risk) {
         return await requestToolApproval(call: call, risk: risk, summary: summary)
       }
       return true
@@ -1135,44 +1088,27 @@ public final class AppState: ObservableObject {
         || host.name.caseInsensitiveCompare(normalized) == .orderedSame
         || host.hostname.caseInsensitiveCompare(normalized) == .orderedSame
     }
-
-    guard !matches.isEmpty else {
-      throw SSHAgentToolError.hostNotFound(query)
-    }
+    guard !matches.isEmpty else { throw SSHAgentToolError.hostNotFound(query) }
     guard matches.count == 1, let host = matches.first else {
       throw SSHAgentToolError.ambiguousHost(query, matches.map(\.name))
     }
     return host
   }
 
-  private func requiredToolString(
-    _ name: String,
-    in call: ProviderToolCall
-  ) throws -> String {
+  private func requiredToolString(_ name: String, in call: ProviderToolCall) throws -> String {
     guard let value = optionalToolString(name, in: call) else {
-      throw AgentRuntimeError.missingArgument(
-        tool: call.function.name,
-        name: name
-      )
+      throw AgentRuntimeError.missingArgument(tool: call.function.name, name: name)
     }
     return value
   }
 
-  private func optionalToolString(
-    _ name: String,
-    in call: ProviderToolCall
-  ) -> String? {
-    guard let value = call.function.arguments[name]?.stringValue else {
-      return nil
-    }
+  private func optionalToolString(_ name: String, in call: ProviderToolCall) -> String? {
+    guard let value = call.function.arguments[name]?.stringValue else { return nil }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
   }
 
-  private func optionalToolInt(
-    _ name: String,
-    in call: ProviderToolCall
-  ) -> Int? {
+  private func optionalToolInt(_ name: String, in call: ProviderToolCall) -> Int? {
     guard let value = call.function.arguments[name] else { return nil }
     guard case .number(let number) = value, number.isFinite else { return nil }
     return Int(number)
@@ -1199,13 +1135,17 @@ public final class AppState: ObservableObject {
       + AgentRuntimeContext.providerInstruction()
       + "\n\n"
       + runtimeContext
+      + "\n\n"
+      + """
+      AGENTM5N TOOL SECURITY:
+      - Use the provider-neutral AgenTM5N tools when they are relevant.
+      - Never request or expose password, private-key, passphrase, API-key, token, or other Vault secret values.
+      - secret_list returns metadata labels only. Tools that accept secret_ref resolve that label internally inside AgenTM5N.
+      - Prefer workspace_semantic_search for meaning-based Workspace Memory retrieval when a semantic index is available.
+      - Prefer ssh_run_batch for multi-command remote diagnostics and workflows for repeatable multi-step procedures.
+      """
 
-    var result = [
-      ProviderMessage(
-        role: .system,
-        content: systemContent
-      )
-    ]
+    var result = [ProviderMessage(role: .system, content: systemContent)]
     result.append(
       contentsOf: messages.compactMap { message -> ProviderMessage? in
         guard message.id != excludingAssistantID, message.role != .system else {
@@ -1224,9 +1164,7 @@ public final class AppState: ObservableObject {
   private func makeAppleMessages(
     excludingAssistantID: UUID
   ) -> [ChatMessage] {
-    var result = [
-      ChatMessage(role: .system, content: configuration.systemPrompt)
-    ]
+    var result = [ChatMessage(role: .system, content: configuration.systemPrompt)]
     result.append(
       contentsOf: messages.filter {
         $0.id != excludingAssistantID && $0.role != .system
@@ -1240,8 +1178,7 @@ public final class AppState: ObservableObject {
   ) {
     for call in incoming {
       if let index = call.function.index,
-        let existingIndex = accumulated.firstIndex(
-          where: { $0.function.index == index })
+        let existingIndex = accumulated.firstIndex(where: { $0.function.index == index })
       {
         accumulated[existingIndex] = call
       } else if !accumulated.contains(call) {
@@ -1251,30 +1188,19 @@ public final class AppState: ObservableObject {
   }
 
   private func apply(event: ProviderStreamEvent, to assistantID: UUID) {
-    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else {
-      return
-    }
+    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
     messages[index].content += event.contentDelta
     messages[index].thinking += event.thinkingDelta
-    if let metrics = event.metrics {
-      latestMetrics = metrics
-    }
+    if let metrics = event.metrics { latestMetrics = metrics }
   }
 
   private func appendAssistantText(_ text: String, to assistantID: UUID) {
-    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else {
-      return
-    }
+    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
     messages[index].content += text
   }
 
-  private func appendToolRecord(
-    _ record: ToolExecutionRecord,
-    to assistantID: UUID
-  ) {
-    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else {
-      return
-    }
+  private func appendToolRecord(_ record: ToolExecutionRecord, to assistantID: UUID) {
+    guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
     var records = messages[index].toolExecutions ?? []
     records.append(record)
     messages[index].toolExecutions = records
@@ -1289,9 +1215,7 @@ public final class AppState: ObservableObject {
       let messageIndex = messages.firstIndex(where: { $0.id == assistantID }),
       var records = messages[messageIndex].toolExecutions,
       let recordIndex = records.firstIndex(where: { $0.id == id })
-    else {
-      return
-    }
+    else { return }
     records[recordIndex].status = result.success ? .succeeded : .failed
     records[recordIndex].output = result.output
     records[recordIndex].endedAt = Date()
@@ -1299,17 +1223,15 @@ public final class AppState: ObservableObject {
   }
 
   private func configuredAPIKey() async throws -> String? {
-    guard configuration.providerKind == .ollamaCloud else {
-      return nil
-    }
-    guard let id = configuration.apiKeySecretID else {
-      return nil
-    }
+    guard configuration.providerKind == .ollamaCloud else { return nil }
+    guard let id = configuration.apiKeySecretID else { return nil }
     return try await vaultStore.secret(id: id).value
   }
 
   private func present(_ error: Error) {
     errorMessage = error.localizedDescription
-    AppLogger.app.error("Application error: \(error.localizedDescription, privacy: .public)")
+    AppLogger.app.error(
+      "Application error: \(error.localizedDescription, privacy: .public)"
+    )
   }
 }
