@@ -15,8 +15,6 @@ let canvasSize = NSSize(width: 1024, height: 1024)
 let image = NSImage(size: canvasSize)
 
 image.lockFocus()
-defer { image.unlockFocus() }
-
 NSGraphicsContext.current?.imageInterpolation = .high
 
 let fullRect = NSRect(origin: .zero, size: canvasSize)
@@ -126,6 +124,8 @@ accent.lineWidth = 15
 accent.lineCapStyle = .round
 NSColor.white.withAlphaComponent(0.34).setStroke()
 accent.stroke()
+
+image.unlockFocus()
 
 guard let tiff = image.tiffRepresentation,
   let bitmap = NSBitmapImageRep(data: tiff),
