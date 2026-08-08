@@ -13,9 +13,15 @@ APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+ENTITLEMENTS_FILE="$ROOT_DIR/Resources/AgenTM5N.entitlements"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "Dieses Build-Skript muss auf macOS ausgeführt werden." >&2
+  exit 1
+fi
+
+if [ ! -f "$ENTITLEMENTS_FILE" ]; then
+  echo "Entitlements-Datei fehlt: $ENTITLEMENTS_FILE" >&2
   exit 1
 fi
 
@@ -84,9 +90,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSCalendarsFullAccessUsageDescription</key>
-    <string>AgenTM5N benötigt Zugriff auf deinen Kalender, damit freigegebene KI-Agenten Termine lesen und später verwalten können.</string>
+    <string>AgenTM5N benötigt Zugriff auf deinen Kalender, damit freigegebene KI-Agenten Termine lesen und verwalten können.</string>
     <key>NSContactsUsageDescription</key>
-    <string>AgenTM5N benötigt Zugriff auf deine Kontakte, damit freigegebene KI-Agenten Kontakte suchen und später verwalten können.</string>
+    <string>AgenTM5N benötigt Zugriff auf deine Kontakte, damit freigegebene KI-Agenten Kontakte suchen und verwalten können.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>AgenTM5N verwendet Apple Events, um auf deine ausdrückliche Anfrage mit Apple Mail zu interagieren.</string>
     <key>NSAppTransportSecurity</key>
@@ -101,8 +107,21 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
-codesign --force --deep --sign - "$APP_DIR"
+plutil -lint "$ENTITLEMENTS_FILE" >/dev/null
+
+# Hardened Runtime is required for notarization. The entitlements are limited
+# to the native resources AgenTM5N actually uses in the V1 macOS action layer.
+codesign \
+  --force \
+  --sign - \
+  --options runtime \
+  --entitlements "$ENTITLEMENTS_FILE" \
+  "$APP_DIR"
+
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+codesign -d --entitlements :- "$APP_DIR" >/dev/null
 
 printf '\nApp erstellt: %s\n' "$APP_DIR"
+printf 'Hardened Runtime: aktiv\n'
+printf 'Entitlements: %s\n' "$ENTITLEMENTS_FILE"
 printf 'Starten mit: open %q\n' "$APP_DIR"
