@@ -286,9 +286,10 @@ public actor AppleFoundationModelsProvider {
     }
 
     if containsAny(text, [
-      "document studio", "dokument erstellen", "dokument generieren", "docx erstellen",
-      "pdf erstellen", "xlsx erstellen", "pptx erstellen", "powerpoint erstellen",
-      "word dokument", "excel dokument", "generiertes dokument",
+      "document studio", "dokument erstellen", "dokument generieren", "dokument erzeugen",
+      "docx", "xlsx", "pptx", "powerpoint", "word dokument", "word-datei", "word datei",
+      "excel dokument", "excel-datei", "excel datei", "als pdf", "pdf erstellen",
+      "pdf generieren", "generiertes dokument",
     ]) {
       return .init(macNative: false, persistentAgents: false, focused: .documents)
     }
@@ -451,7 +452,7 @@ public actor AppleFoundationModelsProvider {
     case .attachments:
       lines.append("Use attachment_search or attachment_list before reading a bounded attachment section. Do not invent attachment content.")
     case .documents:
-      lines.append("Generate managed documents only from the user's requested content. Report the generated metadata returned by Document Studio.")
+      lines.append("Use document_generate for DOCX, PDF, XLSX, or PPTX requests. AgenTM5N presents a native macOS Save dialog immediately after generation so the user can choose where to save/download the file. Internal managed paths remain hidden.")
     case .coreML:
       lines.append("Use coreml_describe_model before coreml_predict when input names or shapes are not known. Core ML runs locally and may use CPU + Apple Neural Engine according to the registered model policy.")
     default:
