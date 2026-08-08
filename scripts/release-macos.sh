@@ -134,6 +134,8 @@ xcrun stapler validate "$DMG_PATH"
 
 printf '\n=== Finale Artefaktprüfung ===\n'
 codesign --verify --verbose=2 "$DMG_PATH"
+AGENTM5N_DMG_PATH="$DMG_PATH" \
+  bash "$ROOT_DIR/scripts/verify-release-dmg.sh"
 
 printf '\nRELEASE READY\n'
 printf 'App:            %s\n' "$APP_DIR"
