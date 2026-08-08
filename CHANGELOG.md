@@ -2,6 +2,39 @@
 
 All notable changes to AgenTM5N are documented in this file.
 
+## [1.0.1] - 2026-08-08
+
+### Added
+
+- Apple On-Device routed operational tool pack for workspace files, local shell,
+  visible terminal, SSH and Git operations.
+- Apple adapters for `list_directory`, `glob_files`, `search_text`, `read_file`,
+  `apply_patch`, `write_file`, `run_command`, `terminal_open`, `ssh_list_hosts`,
+  `ssh_run`, `ssh_open_terminal`, `git_status`, `git_diff`, `git_branches`,
+  `git_checkout` and `git_commit`.
+- Task-scoped Apple tool selection so operational schemas are loaded only for
+  operational prompts while Calendar/Contacts/Mail and persistent-agent packs
+  remain independently selectable.
+
+### Security
+
+- Apple On-Device SSH uses the existing AgenTM5N SSH profiles and resolves
+  password, private-key and passphrase references internally from the unlocked
+  encrypted Vault.
+- SSH secret values and secret identifiers are never returned to the model.
+- `ssh_run` and `ssh_open_terminal` continue to use the central AgenTM5N
+  permission and audit path and remain explicitly confirmable in Workspace
+  Trusted mode.
+- Generic arbitrary Vault-secret injection into shell/API commands is not
+  enabled in this release; it remains blocked until a redaction-aware audit
+  path is implemented.
+
+### Changed
+
+- App version is 1.0.1 build 23.
+- Apple tool schemas are selected from recent user intent to reduce context
+  pressure on the on-device model.
+
 ## [1.0.0] - 2026-08-08
 
 ### Added
