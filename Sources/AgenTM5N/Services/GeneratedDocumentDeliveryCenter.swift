@@ -61,9 +61,6 @@ public final class GeneratedDocumentDeliveryCenter: ObservableObject {
 
     let response = await modalResponse(for: panel)
     guard response == .OK, let destination = panel.url else {
-      if pendingDocument?.id == document.id {
-        pendingDocument = nil
-      }
       return
     }
 
