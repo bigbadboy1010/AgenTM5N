@@ -119,7 +119,7 @@ codesign \
   "$APP_DIR"
 
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
-codesign -d --entitlements :- "$APP_DIR" >/dev/null
+codesign -d --entitlements - --xml "$APP_DIR" >/dev/null
 
 printf '\nApp erstellt: %s\n' "$APP_DIR"
 printf 'Hardened Runtime: aktiv\n'
