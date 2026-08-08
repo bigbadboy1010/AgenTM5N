@@ -66,8 +66,8 @@ Notary-Keychain-Profil '$NOTARY_PROFILE' ist nicht verfügbar oder ungültig.
 Lege es einmalig an mit:
   xcrun notarytool store-credentials "$NOTARY_PROFILE" \
     --apple-id "DEINE_APPLE_ID" \
-    --team-id "DEINE_TEAM_ID" \
-    --password "DEIN_APP_SPEZIFISCHES_PASSWORT"
+    --team-id "DEINE_TEAM_ID"
+notarytool fragt das app-spezifische Passwort anschließend interaktiv ab und speichert es im Keychain.
 Alternativ kannst du ein bestehendes Profil verwenden:
   export AGENTM5N_NOTARY_PROFILE="PROFILNAME"
 EOF
