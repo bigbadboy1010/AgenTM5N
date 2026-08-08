@@ -128,6 +128,7 @@ public enum GeneratedDocumentAgentTools {
       content: try requiredString("content", in: call)
     )
     let summary = try await service.generate(request: request)
+    await GeneratedDocumentDeliveryCenter.shared.queue(summary)
     return encoded(
       GenerateDescriptor(
         document: descriptor(summary),
