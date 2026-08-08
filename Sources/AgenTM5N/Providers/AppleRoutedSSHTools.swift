@@ -11,12 +11,30 @@ public enum AppleRoutedSSHTools {
       RoutedSSHOpenTerminalTool(bridge: bridge),
     ]
   }
+
+  public static func makeListHostsTools(
+    bridge: AgentToolExecutionBridge = .shared
+  ) -> [any Tool] {
+    [RoutedSSHListHostsTool(bridge: bridge)]
+  }
+
+  public static func makeRunTools(
+    bridge: AgentToolExecutionBridge = .shared
+  ) -> [any Tool] {
+    [RoutedSSHRunTool(bridge: bridge)]
+  }
+
+  public static func makeOpenTerminalTools(
+    bridge: AgentToolExecutionBridge = .shared
+  ) -> [any Tool] {
+    [RoutedSSHOpenTerminalTool(bridge: bridge)]
+  }
 }
 
 private struct RoutedSSHListHostsTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "ssh_list_hosts"
-  let description = "List configured AgenTM5N SSH profiles. Returns only non-secret host metadata and whether credentials are configured."
+  let description = "List saved AgenTM5N SSH profiles without secret values."
 
   @Generable
   struct Arguments {
@@ -36,11 +54,11 @@ private struct RoutedSSHListHostsTool: Tool {
 private struct RoutedSSHRunTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "ssh_run"
-  let description = "Run a non-interactive command on a configured SSH profile. AgenTM5N resolves linked Vault credentials internally. Never ask for or expose passwords, keys, passphrases, or secret IDs."
+  let description = "Run one remote command through a saved SSH profile. AgenTM5N resolves Vault credentials internally."
 
   @Generable
   struct Arguments {
-    @Guide(description: "SSH profile name, hostname, or UUID")
+    @Guide(description: "Saved SSH profile name, hostname, or UUID")
     var host: String
 
     @Guide(description: "Remote shell command")
@@ -62,14 +80,14 @@ private struct RoutedSSHRunTool: Tool {
 private struct RoutedSSHOpenTerminalTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "ssh_open_terminal"
-  let description = "Open a configured SSH profile in the visible AgenTM5N terminal. Linked Vault credentials are resolved internally."
+  let description = "Open one saved SSH profile in the visible AgenTM5N terminal. Vault credentials stay internal."
 
   @Generable
   struct Arguments {
-    @Guide(description: "SSH profile name, hostname, or UUID")
+    @Guide(description: "Saved SSH profile name, hostname, or UUID")
     var host: String
 
-    @Guide(description: "Optional initial remote command; use an empty string for an interactive shell")
+    @Guide(description: "Initial remote command, or empty for an interactive shell")
     var command: String
   }
 
