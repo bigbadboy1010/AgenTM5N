@@ -93,6 +93,19 @@ struct WorkflowsView: View {
         )
       }
     }
+    .toolbar {
+      ToolbarItem {
+        Button {
+          dismiss()
+        } label: {
+          Label(
+            L10n.text(de: "Schließen", en: "Close", fr: "Fermer"),
+            systemImage: "xmark"
+          )
+        }
+        .keyboardShortcut(.cancelAction)
+      }
+    }
     .frame(minWidth: 1_000, minHeight: 650)
     .onAppear {
       if selectedID == nil { selectedID = library.workflows.first?.id }
