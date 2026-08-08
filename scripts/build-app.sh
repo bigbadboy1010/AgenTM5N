@@ -14,6 +14,11 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ENTITLEMENTS_FILE="$ROOT_DIR/Resources/AgenTM5N.entitlements"
+ICON_GENERATOR="$ROOT_DIR/scripts/generate-app-icon.swift"
+ICON_WORK_DIR="$ROOT_DIR/.build-artifacts/app-icon"
+ICONSET_DIR="$ICON_WORK_DIR/$APP_NAME.iconset"
+ICON_SOURCE="$ICON_WORK_DIR/${APP_NAME}-1024.png"
+ICON_FILE="$RESOURCES_DIR/$APP_NAME.icns"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "Dieses Build-Skript muss auf macOS ausgeführt werden." >&2
@@ -22,6 +27,11 @@ fi
 
 if [ ! -f "$ENTITLEMENTS_FILE" ]; then
   echo "Entitlements-Datei fehlt: $ENTITLEMENTS_FILE" >&2
+  exit 1
+fi
+
+if [ ! -f "$ICON_GENERATOR" ]; then
+  echo "App-Icon-Generator fehlt: $ICON_GENERATOR" >&2
   exit 1
 fi
 
@@ -58,6 +68,30 @@ done < <(
     -print0
 )
 
+# Build the macOS .icns asset from one deterministic 1024x1024 source image.
+rm -rf "$ICON_WORK_DIR"
+mkdir -p "$ICONSET_DIR"
+xcrun swift "$ICON_GENERATOR" "$ICON_SOURCE"
+
+make_icon_size() {
+  local pixels="$1"
+  local output_name="$2"
+  sips -z "$pixels" "$pixels" "$ICON_SOURCE" \
+    --out "$ICONSET_DIR/$output_name" >/dev/null
+}
+
+make_icon_size 16   "icon_16x16.png"
+make_icon_size 32   "icon_16x16@2x.png"
+make_icon_size 32   "icon_32x32.png"
+make_icon_size 64   "icon_32x32@2x.png"
+make_icon_size 128  "icon_128x128.png"
+make_icon_size 256  "icon_128x128@2x.png"
+make_icon_size 256  "icon_256x256.png"
+make_icon_size 512  "icon_256x256@2x.png"
+make_icon_size 512  "icon_512x512.png"
+make_icon_size 1024 "icon_512x512@2x.png"
+iconutil -c icns "$ICONSET_DIR" -o "$ICON_FILE"
+
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -77,6 +111,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>$APP_NAME</string>
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>CFBundleVersion</key>
@@ -122,6 +158,7 @@ codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 codesign -d --entitlements - --xml "$APP_DIR" >/dev/null
 
 printf '\nApp erstellt: %s\n' "$APP_DIR"
+printf 'App-Icon: %s\n' "$ICON_FILE"
 printf 'Hardened Runtime: aktiv\n'
 printf 'Entitlements: %s\n' "$ENTITLEMENTS_FILE"
 printf 'Starten mit: open %q\n' "$APP_DIR"
