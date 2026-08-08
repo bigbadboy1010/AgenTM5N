@@ -33,10 +33,12 @@ let package = Package(
       path: "Sources/AgenTM5N",
       linkerSettings: [
         .linkedFramework("AppKit"),
+        .linkedFramework("Contacts"),
         .linkedFramework("CoreGraphics"),
         .linkedFramework("CoreML"),
         .linkedFramework("CoreText"),
         .linkedFramework("CryptoKit"),
+        .linkedFramework("EventKit"),
         .linkedFramework("FoundationModels"),
         .linkedFramework("OSLog"),
         .linkedFramework("Security"),
