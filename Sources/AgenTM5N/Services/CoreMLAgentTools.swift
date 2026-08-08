@@ -18,14 +18,14 @@ public enum CoreMLAgentTools {
     ),
     ProviderToolDefinition(
       name: "coreml_predict",
-      description: "Run a local Core ML prediction with the requested CPU + Apple Neural Engine compute policy. Use coreml_describe_model first and supply an input object whose keys exactly match the model inputs.",
+      description: "Run a local Core ML prediction with the requested CPU + Apple Neural Engine compute policy. Use coreml_describe_model first. Scalar Double, Int64 and String features are supported; MultiArray inputs use nested numeric JSON arrays; image inputs use a local image-file path string matching the model's image constraint.",
       parameters: objectSchema(
         required: ["input"],
         properties: [
           "model": stringSchema("Optional registered model name or UUID. Defaults to the active model."),
           "input": .object([
             "type": .string("object"),
-            "description": .string("Prediction input object. Scalar Double, Int64 and String values are supported in this milestone."),
+            "description": .string("Prediction input object. Use numbers/strings for scalar features, nested numeric arrays for MLMultiArray features, and a local image-file path string for image features."),
             "additionalProperties": .bool(true),
           ]),
         ]
