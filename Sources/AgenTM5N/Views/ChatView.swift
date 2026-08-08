@@ -174,9 +174,7 @@ struct ChatView: View {
 
       Spacer(minLength: 8)
 
-      if appState.configuration.agentEnabled,
-        appState.configuration.providerKind != .appleOnDevice
-      {
+      if appState.configuration.agentEnabled {
         Text(
           L10n.text(
             de: "Lokale Werkzeuge aktiv",
@@ -201,9 +199,7 @@ struct ChatView: View {
 
   @ViewBuilder
   private var agentModeBadge: some View {
-    if appState.configuration.agentEnabled,
-      appState.configuration.providerKind != .appleOnDevice
-    {
+    if appState.configuration.agentEnabled {
       Label(
         "Agent · \(permissionTitle(appState.configuration.permissionMode))",
         systemImage: "wrench.and.screwdriver"
