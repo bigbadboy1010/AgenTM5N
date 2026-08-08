@@ -35,7 +35,7 @@ struct ActivityView: View {
                 Text(entry.provider)
                 Text(entry.capability)
                 Text(entry.risk.displayName)
-                Text("\(entry.durationMilliseconds, format: .number.precision(.fractionLength(1))) ms")
+                Text(entry.durationMilliseconds.formatted(.number.precision(.fractionLength(1))) + " ms")
                 Text(ByteCountFormatter.string(fromByteCount: Int64(entry.outputBytes), countStyle: .file))
                 if entry.cacheHit {
                   Label("Cache", systemImage: "bolt.fill")
@@ -73,7 +73,10 @@ struct ActivityView: View {
       metric(L10n.text(de: "Erfolgreich", en: "Succeeded", fr: "Réussis"), value: "\(value.succeeded)")
       metric(L10n.text(de: "Fehler", en: "Failed", fr: "Échecs"), value: "\(value.failed)")
       metric("Cache", value: "\(value.cacheHits)")
-      metric("Ø", value: "\(value.averageMilliseconds, format: .number.precision(.fractionLength(1))) ms")
+      metric(
+        "Ø",
+        value: value.averageMilliseconds.formatted(.number.precision(.fractionLength(1))) + " ms"
+      )
       Spacer()
     }
     .padding(16)
