@@ -1,16 +1,18 @@
+import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 public enum GeneratedDocumentAgentTools {
   public static let definitions: [ProviderToolDefinition] = [
     ProviderToolDefinition(
       name: "document_generate",
-      description: "Generate a local managed document in DOCX, PDF, XLSX, or PPTX format. DOCX/PDF content accepts plain text with simple Markdown headings and bullets. XLSX content accepts TSV or CSV. PPTX content uses slides separated by a line containing only ---, with the first line of each slide used as its title. Returns metadata only; the user exports the file through Document Studio.",
+      description: "Generate a DOCX, PDF, XLSX, or PPTX document and immediately present the native macOS Save dialog so the user can download/save the generated file. DOCX/PDF content accepts plain text with simple Markdown headings and bullets. XLSX content accepts TSV or CSV. PPTX content uses slides separated by a line containing only ---, with the first line of each slide used as its title. Internal managed storage paths are never exposed to the model.",
       parameters: objectSchema(
         required: ["format", "title", "content"],
         properties: [
           "format": stringSchema("Required output format: docx, pdf, xlsx, or pptx."),
           "title": stringSchema("Document title."),
-          "filename": stringSchema("Optional export file name. The required format extension is enforced automatically."),
+          "filename": stringSchema("Optional suggested download file name. The required format extension is enforced automatically."),
           "content": stringSchema("Document content. DOCX/PDF: text or simple Markdown. XLSX: TSV or CSV. PPTX: slides separated by a line containing only ---."),
         ]
       )
@@ -102,6 +104,11 @@ public enum GeneratedDocumentAgentTools {
     let createdAt: Date
   }
 
+  private struct GenerateDescriptor: Encodable {
+    let document: Descriptor
+    let delivery: String
+  }
+
   private struct DeleteDescriptor: Encodable {
     let deleted: Bool
     let id: String
@@ -123,7 +130,22 @@ public enum GeneratedDocumentAgentTools {
       content: try requiredString("content", in: call)
     )
     let summary = try await service.generate(request: request)
-    return encoded(descriptor(summary))
+
+    let destination = await exportDestination(for: summary)
+    let delivery: String
+    if let destination {
+      try await service.export(id: summary.id, to: destination)
+      delivery = "saved"
+    } else {
+      delivery = "save-dialog-cancelled"
+    }
+
+    return encoded(
+      GenerateDescriptor(
+        document: descriptor(summary),
+        delivery: delivery
+      )
+    )
   }
 
   private static func list(
@@ -147,6 +169,25 @@ public enum GeneratedDocumentAgentTools {
         fileName: summary.fileName
       )
     )
+  }
+
+  @MainActor
+  private static func exportDestination(
+    for summary: GeneratedDocumentSummary
+  ) -> URL? {
+    let panel = NSSavePanel()
+    panel.title = L10n.text(
+      de: "Generiertes Dokument speichern",
+      en: "Save Generated Document",
+      fr: "Enregistrer le document généré"
+    )
+    panel.prompt = L10n.text(de: "Speichern", en: "Save", fr: "Enregistrer")
+    panel.nameFieldStringValue = summary.fileName
+    panel.canCreateDirectories = true
+    if let type = UTType(filenameExtension: summary.format.fileExtension) {
+      panel.allowedContentTypes = [type]
+    }
+    return panel.runModal() == .OK ? panel.url : nil
   }
 
   private static func descriptor(_ summary: GeneratedDocumentSummary) -> Descriptor {
