@@ -18,6 +18,7 @@ public enum AppleFoundationModelsProviderError: LocalizedError {
 
 public actor AppleFoundationModelsProvider {
   private let model = SystemLanguageModel.default
+  private static let maximumConversationCharacters = 5_000
 
   public init() {}
 
@@ -59,28 +60,7 @@ public actor AppleFoundationModelsProvider {
       + "\n\n"
       + temporalContext
       + "\n\n"
-      + """
-      CALENDAR GROUNDING RULES — mandatory:
-      - The CURRENT MAC DATE AND TIME above is authoritative.
-      - Calendar event results are data records, not a clock. The earliest returned event does NOT indicate today's date.
-      - An empty calendar interval does NOT mean that interval is in the past.
-      - EventKit can store events in the past and in the future. Do not invent a rule that calendar start dates must be in the future.
-      - If you are about to reject or reinterpret a calendar request because of whether a date is past or future, call system_current_datetime first.
-      - For calendar_create_event, pass the requested local year, month, day, hour, and minute directly to the tool. Do not construct UTC values for event creation.
-      - Only report that a native action failed when the corresponding tool actually returns an error.
-
-      PERSISTENT AGENT RULES:
-      - When the user explicitly asks to create, save, define, update, list, inspect, or delete a reusable specialist agent, use the agent_* tools.
-      - Saved agents are persistent AgenTM5N profiles and appear in the Agenten section.
-      - Never place passwords, API keys, tokens, private keys, or other secrets inside saved agent instructions.
-
-      OPERATIONAL TOOL RULES:
-      - When SSH tools are available, use ssh_list_hosts to discover configured profiles instead of asking the user for a password, private key, passphrase, or secret ID.
-      - ssh_run and ssh_open_terminal resolve credentials internally from the AgenTM5N Vault through the selected SSH profile. Never request, echo, infer, or expose those secret values.
-      - Use run_command only for local non-interactive work. Use ssh_run for remote non-interactive work and ssh_open_terminal for an interactive remote terminal.
-      - Read files before modifying them. Prefer apply_patch over write_file for targeted edits.
-      - Tool execution remains subject to AgenTM5N permission approval, audit records, workspace boundaries, and macOS security controls.
-      """
+      + Self.toolInstructions(selection: selection)
 
     var tools: [any Tool] = [SystemCurrentDateTimeTool()]
     if configuration.agentEnabled {
@@ -92,6 +72,10 @@ public actor AppleFoundationModelsProvider {
       }
       if selection.operational {
         tools.append(contentsOf: AppleRoutedOperationalTools.makeTools())
+      } else if selection.ssh {
+        // SSH is intentionally a focused three-tool pack. Apple Foundation
+        // Models counts every tool schema against its on-device context window.
+        tools.append(contentsOf: AppleRoutedSSHTools.makeTools())
       }
     }
 
@@ -122,39 +106,49 @@ public actor AppleFoundationModelsProvider {
   private struct ToolSelection {
     var macNative: Bool
     var persistentAgents: Bool
+    var ssh: Bool
     var operational: Bool
   }
 
   private static func toolSelection(for messages: [ChatMessage]) -> ToolSelection {
-    let userText = messages
-      .filter { $0.role == .user }
-      .suffix(4)
-      .map(\.content)
-      .joined(separator: "\n")
-      .lowercased()
+    let latestUserText = messages
+      .last(where: { $0.role == .user })?
+      .content
+      .lowercased() ?? ""
 
-    let operationalTerms = [
-      "ssh", "server", "remote", "host", "terminal", "shell", "command", "kommando",
-      "docker", "container", "linux", "systemctl", "journalctl", "git", "repository", "repo",
-      "branch", "commit", "workspace", "datei", "file", "folder", "ordner", "log", "vm",
-      "maschine", "machine", "photon", "redhat", "red hat", "ubuntu", "kubernetes", "openshift",
+    let sshTerms = [
+      "ssh", "server", "remote", "docker", "container", "systemctl", "journalctl",
+      "linux", "photon", "redhat", "red hat", "ubuntu", "kubernetes", "openshift",
+      "lenovo-server", "remote host", "remote-host",
+    ]
+    let broadOperationalTerms = [
+      "git status", "git diff", "git branch", "git commit", "repository", "repo ",
+      "workspace", "datei", "file", "folder", "ordner", "lokales terminal",
+      "local terminal", "lokaler befehl", "local command", "shell command",
     ]
     let macTerms = [
       "calendar", "kalender", "termin", "event", "contact", "kontakt", "address book",
       "adressbuch", "mail", "email", "e-mail", "nachricht", "inbox", "posteingang",
     ]
-    let agentTerms = ["agent", "agenten", "specialist", "spezialist"]
+    // Do not match the generic substring "agent": the application name
+    // "AgenTM5N" itself contains it and previously loaded the persistent-agent
+    // schema unnecessarily for ordinary SSH requests.
+    let agentTerms = [
+      "agent erstellen", "agent anlegen", "agent speichern", "agent ändern",
+      "agent aktualisieren", "agent löschen", "agent auflisten", "agenten",
+      "gespeicherter agent", "gespeicherte agent", "specialist", "spezialist",
+    ]
 
-    let operational = operationalTerms.contains { userText.contains($0) }
-    let macNative = macTerms.contains { userText.contains($0) }
-    let persistentAgents = agentTerms.contains { userText.contains($0) }
+    let ssh = sshTerms.contains { latestUserText.contains($0) }
+    let operational = broadOperationalTerms.contains { latestUserText.contains($0) }
+    let macNative = macTerms.contains { latestUserText.contains($0) }
+    let persistentAgents = agentTerms.contains { latestUserText.contains($0) }
 
-    if !operational && !macNative && !persistentAgents {
-      // Preserve the V1.0 default experience for normal personal-assistant prompts
-      // while avoiding large operational schemas when they are not relevant.
+    if !ssh && !operational && !macNative && !persistentAgents {
       return ToolSelection(
         macNative: true,
         persistentAgents: true,
+        ssh: false,
         operational: false
       )
     }
@@ -162,13 +156,72 @@ public actor AppleFoundationModelsProvider {
     return ToolSelection(
       macNative: macNative,
       persistentAgents: persistentAgents,
+      ssh: ssh,
       operational: operational
     )
   }
 
+  private static func toolInstructions(selection: ToolSelection) -> String {
+    var sections: [String] = [
+      """
+      TOOL RULES — mandatory:
+      - The CURRENT MAC DATE AND TIME above is authoritative.
+      - Only report that a native action failed when the corresponding tool actually returns an error.
+      - Tool execution remains subject to AgenTM5N permission approval, audit records, workspace boundaries, and macOS security controls.
+      """
+    ]
+
+    if selection.macNative {
+      sections.append(
+        """
+        CALENDAR GROUNDING RULES:
+        - Calendar event results are records, not a clock.
+        - EventKit can store events in the past and in the future. Do not invent a future-only rule.
+        - If date interpretation is ambiguous, call system_current_datetime first.
+        - For calendar_create_event, pass requested local calendar components directly. Do not convert the user's wall-clock time to UTC yourself.
+        """
+      )
+    }
+
+    if selection.persistentAgents {
+      sections.append(
+        """
+        PERSISTENT AGENT RULES:
+        - Use agent_* tools when the user explicitly asks to create, save, update, list, inspect, or delete a reusable specialist agent.
+        - Never place passwords, API keys, tokens, private keys, or other secrets inside saved agent instructions.
+        """
+      )
+    }
+
+    if selection.ssh || selection.operational {
+      sections.append(
+        """
+        SSH RULES:
+        - Use ssh_list_hosts to discover configured SSH profiles instead of asking for credentials.
+        - ssh_run and ssh_open_terminal resolve linked password/private-key/passphrase secrets internally from the AgenTM5N Vault.
+        - Never request, echo, infer, or expose password, private-key, passphrase, or secret-ID values.
+        - Use ssh_run for remote non-interactive commands and ssh_open_terminal for an interactive remote session.
+        """
+      )
+    }
+
+    if selection.operational {
+      sections.append(
+        """
+        WORKSPACE RULES:
+        - Use run_command only for local non-interactive work.
+        - Read files before modifying them. Prefer apply_patch over write_file for targeted edits.
+        """
+      )
+    }
+
+    return sections.joined(separator: "\n\n")
+  }
+
   private static func makePrompt(messages: [ChatMessage]) -> String {
-    messages
+    let rendered = messages
       .filter { $0.role != .system }
+      .suffix(6)
       .map { message in
         let role =
           switch message.role {
@@ -179,6 +232,15 @@ public actor AppleFoundationModelsProvider {
         return "\(role):\n\(message.content)"
       }
       .joined(separator: "\n\n")
+
+    guard rendered.count > maximumConversationCharacters else {
+      return rendered
+    }
+
+    // Preserve the newest part of the conversation, including the current user
+    // request, while keeping room for tool schemas and model output.
+    return "[Earlier conversation omitted for Apple on-device context budget]\n\n"
+      + String(rendered.suffix(maximumConversationCharacters))
   }
 
   private static func nanoseconds(from duration: Duration) -> UInt64 {
@@ -193,11 +255,11 @@ public actor AppleFoundationModelsProvider {
 
 private struct SystemCurrentDateTimeTool: Tool {
   let name = "system_current_datetime"
-  let description = "Return the authoritative current Mac date, local time, time zone, and UTC offset. Call this before deciding whether a calendar date is in the past or future, and before resolving relative dates when there is any ambiguity."
+  let description = "Return the authoritative current Mac date, local time, time zone, and UTC offset."
 
   @Generable
   struct Arguments {
-    @Guide(description: "Use the literal value current")
+    @Guide(description: "Use current")
     var query: String
   }
 
