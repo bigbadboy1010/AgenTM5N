@@ -8,6 +8,7 @@ public enum SecureSecretBrokerError: LocalizedError {
   case unsupportedScheme(String)
   case insecureSecretTransport(String)
   case invalidHeaderName(String)
+  case sensitiveHeaderBlocked(String)
   case responseTooLarge(Int)
 
   public var errorDescription: String? {
@@ -26,6 +27,8 @@ public enum SecureSecretBrokerError: LocalizedError {
       return "Ein Secret wird nicht über unverschlüsseltes HTTP an \(host) gesendet. Verwende HTTPS oder einen lokalen Host."
     case .invalidHeaderName(let name):
       return "Ungültiger HTTP-Headername: \(name)"
+    case .sensitiveHeaderBlocked(let name):
+      return "Der direkte HTTP-Header \(name) ist für Modellaufrufe blockiert. Hinterlege Zugangsdaten im Tresor und verwende secret_ref."
     case .responseTooLarge(let limit):
       return "Die HTTP-Antwort überschreitet das Limit von \(limit) Bytes."
     }
@@ -114,6 +117,14 @@ public struct SecureHTTPClient: Sendable {
   public static let maximumResponseBytes = 256 * 1024
   public static let maximumRequestBytes = 1 * 1024 * 1024
 
+  private static let forbiddenRequestHeaders: Set<String> = [
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "set-cookie2",
+  ]
+
   public init() {}
 
   public func request(
@@ -145,7 +156,9 @@ public struct SecureHTTPClient: Sendable {
       .uppercased()
     let allowedMethods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     guard allowedMethods.contains(normalizedMethod) else {
-      throw SecureSecretBrokerError.invalidURL("Unsupported HTTP method: \(normalizedMethod)")
+      throw SecureSecretBrokerError.invalidURL(
+        "Unsupported HTTP method: \(normalizedMethod)"
+      )
     }
 
     var request = URLRequest(url: url)
@@ -155,6 +168,12 @@ public struct SecureHTTPClient: Sendable {
 
     for (name, value) in headers {
       try Self.validateHeaderName(name)
+      if Self.forbiddenRequestHeaders.contains(name.lowercased()) {
+        throw SecureSecretBrokerError.sensitiveHeaderBlocked(name)
+      }
+      guard !value.contains("\r"), !value.contains("\n") else {
+        throw SecureSecretBrokerError.invalidHeaderName(name)
+      }
       request.setValue(value, forHTTPHeaderField: name)
     }
 
@@ -164,14 +183,20 @@ public struct SecureHTTPClient: Sendable {
       }
       request.httpBody = Data(body.utf8)
       if request.value(forHTTPHeaderField: "Content-Type") == nil {
-        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue(
+          "application/json; charset=utf-8",
+          forHTTPHeaderField: "Content-Type"
+        )
       }
     }
 
     if let secret {
       switch secretUsage ?? .bearer {
       case .bearer:
-        request.setValue("Bearer \(secret.value)", forHTTPHeaderField: "Authorization")
+        request.setValue(
+          "Bearer \(secret.value)",
+          forHTTPHeaderField: "Authorization"
+        )
       case .basic:
         let raw = "\(secret.username):\(secret.value)"
         request.setValue(
@@ -179,9 +204,13 @@ public struct SecureHTTPClient: Sendable {
           forHTTPHeaderField: "Authorization"
         )
       case .header:
-        let header = secretHeaderName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let header = secretHeaderName?
+          .trimmingCharacters(in: .whitespacesAndNewlines)
           ?? "X-API-Key"
         try Self.validateHeaderName(header)
+        guard !Self.forbiddenRequestHeaders.contains(header.lowercased()) else {
+          throw SecureSecretBrokerError.sensitiveHeaderBlocked(header)
+        }
         request.setValue(secret.value, forHTTPHeaderField: header)
       }
     }
@@ -207,13 +236,13 @@ public struct SecureHTTPClient: Sendable {
     )
 
     var safeHeaders: [String: String] = [:]
-    let blockedHeaders = Set([
+    let blockedResponseHeaders = Set([
       "authorization", "proxy-authorization", "set-cookie", "set-cookie2",
       "www-authenticate", "proxy-authenticate"
     ])
     for (key, value) in http.allHeaderFields {
       let name = String(describing: key)
-      guard !blockedHeaders.contains(name.lowercased()) else { continue }
+      guard !blockedResponseHeaders.contains(name.lowercased()) else { continue }
       let rendered = SecureSecretBroker.redact(
         String(describing: value),
         secrets: secret.map { [$0] } ?? []
@@ -231,7 +260,9 @@ public struct SecureHTTPClient: Sendable {
   }
 
   private static func validateHeaderName(_ name: String) throws {
-    let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+    let allowed = CharacterSet(
+      charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+    )
     guard !name.isEmpty,
       name.unicodeScalars.allSatisfy({ allowed.contains($0) })
     else {
@@ -244,7 +275,10 @@ public struct SecureHTTPClient: Sendable {
     if normalized == "localhost" || normalized == "::1" || normalized.hasSuffix(".local") {
       return true
     }
-    if normalized.hasPrefix("127.") || normalized.hasPrefix("10.") || normalized.hasPrefix("192.168.") {
+    if normalized.hasPrefix("127.")
+      || normalized.hasPrefix("10.")
+      || normalized.hasPrefix("192.168.")
+    {
       return true
     }
     if normalized.hasPrefix("172."),
