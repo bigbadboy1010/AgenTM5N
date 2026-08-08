@@ -29,6 +29,30 @@ public enum AppleRoutedSSHTools {
   ) -> [any Tool] {
     [RoutedSSHOpenTerminalTool(bridge: bridge)]
   }
+
+  public static func makeUploadTools(
+    bridge: AgentToolExecutionBridge = .shared
+  ) -> [any Tool] {
+    [RoutedSSHUploadTool(bridge: bridge)]
+  }
+
+  public static func makeDownloadTools(
+    bridge: AgentToolExecutionBridge = .shared
+  ) -> [any Tool] {
+    [RoutedSSHDownloadTool(bridge: bridge)]
+  }
+
+  public static func makeTailTools(
+    bridge: AgentToolExecutionBridge = .shared
+  ) -> [any Tool] {
+    [RoutedSSHTailLogTool(bridge: bridge)]
+  }
+
+  public static func makeBatchTools(
+    bridge: AgentToolExecutionBridge = .shared
+  ) -> [any Tool] {
+    [RoutedSSHBatchTool(bridge: bridge)]
+  }
 }
 
 private struct RoutedSSHListHostsTool: Tool {
@@ -43,11 +67,7 @@ private struct RoutedSSHListHostsTool: Tool {
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await routeSSH(
-      bridge: bridge,
-      name: name,
-      arguments: [:]
-    )
+    await routeSSH(bridge: bridge, name: name, arguments: [:])
   }
 }
 
@@ -92,16 +112,110 @@ private struct RoutedSSHOpenTerminalTool: Tool {
   }
 
   func call(arguments: Arguments) async throws -> String {
-    var values: [String: JSONValue] = [
-      "host": .string(arguments.host)
-    ]
-    if !arguments.command.isEmpty {
-      values["command"] = .string(arguments.command)
-    }
+    var values: [String: JSONValue] = ["host": .string(arguments.host)]
+    if !arguments.command.isEmpty { values["command"] = .string(arguments.command) }
+    return await routeSSH(bridge: bridge, name: name, arguments: values)
+  }
+}
+
+private struct RoutedSSHUploadTool: Tool {
+  let bridge: AgentToolExecutionBridge
+  let name = "ssh_upload"
+  let description = "Upload one local workspace file to a saved SSH profile with SCP. Vault credentials stay internal."
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
+    @Guide(description: "Local workspace file path") var localPath: String
+    @Guide(description: "Remote destination path using safe path characters") var remotePath: String
+  }
+
+  func call(arguments: Arguments) async throws -> String {
+    await routeSSH(
+      bridge: bridge,
+      name: name,
+      arguments: [
+        "host": .string(arguments.host),
+        "local_path": .string(arguments.localPath),
+        "remote_path": .string(arguments.remotePath),
+      ]
+    )
+  }
+}
+
+private struct RoutedSSHDownloadTool: Tool {
+  let bridge: AgentToolExecutionBridge
+  let name = "ssh_download"
+  let description = "Download one remote file from a saved SSH profile into the local workspace with SCP. Vault credentials stay internal."
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
+    @Guide(description: "Remote source path using safe path characters") var remotePath: String
+    @Guide(description: "Local workspace destination path") var localPath: String
+  }
+
+  func call(arguments: Arguments) async throws -> String {
+    await routeSSH(
+      bridge: bridge,
+      name: name,
+      arguments: [
+        "host": .string(arguments.host),
+        "remote_path": .string(arguments.remotePath),
+        "local_path": .string(arguments.localPath),
+      ]
+    )
+  }
+}
+
+private struct RoutedSSHTailLogTool: Tool {
+  let bridge: AgentToolExecutionBridge
+  let name = "ssh_tail_log"
+  let description = "Read the last bounded lines of one remote log file through a saved SSH profile."
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
+    @Guide(description: "Remote log path") var path: String
+    @Guide(description: "Number of lines from 1 to 2000") var lines: Int
+  }
+
+  func call(arguments: Arguments) async throws -> String {
+    await routeSSH(
+      bridge: bridge,
+      name: name,
+      arguments: [
+        "host": .string(arguments.host),
+        "path": .string(arguments.path),
+        "lines": .number(Double(arguments.lines)),
+      ]
+    )
+  }
+}
+
+private struct RoutedSSHBatchTool: Tool {
+  let bridge: AgentToolExecutionBridge
+  let name = "ssh_run_batch"
+  let description = "Run an ordered batch of remote commands through one saved SSH profile and one SSH connection. Use this for server health checks instead of several separate ssh_run calls."
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
+    @Guide(description: "Ordered remote commands, one command per line") var commands: String
+  }
+
+  func call(arguments: Arguments) async throws -> String {
+    let commands = arguments.commands
+      .split(whereSeparator: { $0.isNewline })
+      .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
     return await routeSSH(
       bridge: bridge,
       name: name,
-      arguments: values
+      arguments: [
+        "host": .string(arguments.host),
+        "commands": .array(commands.map(JSONValue.string)),
+      ]
     )
   }
 }
