@@ -35,17 +35,23 @@ for command in security codesign hdiutil ditto plutil xcrun spctl; do
 done
 
 if [ -z "$SIGNING_IDENTITY" ]; then
-  IDENTITY_LINES="$(security find-identity -v -p codesigning 2>/dev/null \
+  ALL_DEVELOPER_ID_LINES="$(security find-identity -v -p codesigning 2>/dev/null \
     | grep '"Developer ID Application:' || true)"
+  IDENTITY_LINES="$(printf '%s\n' "$ALL_DEVELOPER_ID_LINES" \
+    | grep -v 'CSSMERR_' || true)"
   IDENTITY_COUNT="$(printf '%s\n' "$IDENTITY_LINES" | awk 'NF { count++ } END { print count + 0 }')"
 
   if [ "$IDENTITY_COUNT" -eq 1 ]; then
     SIGNING_IDENTITY="$(printf '%s\n' "$IDENTITY_LINES" | awk 'NF { print $2; exit }')"
   elif [ "$IDENTITY_COUNT" -eq 0 ]; then
+    if [ -n "$ALL_DEVELOPER_ID_LINES" ]; then
+      printf '%s\n' "$ALL_DEVELOPER_ID_LINES" >&2
+      fail "Es wurden Developer-ID-Zertifikate gefunden, aber keine gültige Developer ID Application Identität."
+    fi
     fail "Keine Developer ID Application Identität im Schlüsselbund gefunden."
   else
     printf '%s\n' "$IDENTITY_LINES" >&2
-    fail "Mehrere Developer-ID-Identitäten gefunden. Setze AGENTM5N_SIGNING_IDENTITY auf den gewünschten SHA-1-Hash oder Identitätsnamen."
+    fail "Mehrere gültige Developer-ID-Identitäten gefunden. Setze AGENTM5N_SIGNING_IDENTITY auf den gewünschten SHA-1-Hash oder Identitätsnamen."
   fi
 fi
 
@@ -54,6 +60,10 @@ IDENTITY_INFO="$(security find-identity -v -p codesigning 2>/dev/null \
 [ -n "$IDENTITY_INFO" ] || fail "Developer-ID-Identität nicht gefunden: $SIGNING_IDENTITY"
 printf '%s\n' "$IDENTITY_INFO" | grep -q '"Developer ID Application:' \
   || fail "AGENTM5N_SIGNING_IDENTITY ist keine Developer ID Application Identität."
+if printf '%s\n' "$IDENTITY_INFO" | grep -q 'CSSMERR_'; then
+  printf '%s\n' "$IDENTITY_INFO" >&2
+  fail "Die ausgewählte Developer-ID-Identität ist ungültig, widerrufen oder anderweitig nicht verwendbar."
+fi
 
 printf '\n=== AgenTM5N %s Build %s Release ===\n' "$VERSION" "$BUILD_NUMBER"
 printf 'Signing Identity: %s\n' "$SIGNING_IDENTITY"
