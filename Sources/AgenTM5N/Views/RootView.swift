@@ -3,17 +3,41 @@ import SwiftUI
 struct RootView: View {
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
+  @ObservedObject private var agentLibrary = PersistentAgentLibrary.shared
   @State private var isImportingPromptFiles = false
   @State private var showingAttachmentCenter = false
   @State private var showingKnowledgeLibrary = false
   @State private var showingDocumentStudio = false
   @State private var showingMacAccessCenter = false
+  @State private var showingAgents = false
 
   var body: some View {
     NavigationSplitView {
-      List(AppSection.allCases, selection: $appState.selectedSection) { section in
-        Label(sectionTitle(section), systemImage: section.systemImage)
-          .tag(section)
+      List(selection: $appState.selectedSection) {
+        ForEach(AppSection.allCases) { section in
+          Label(sectionTitle(section), systemImage: section.systemImage)
+            .tag(section)
+        }
+
+        Section {
+          Button {
+            showingAgents = true
+          } label: {
+            HStack {
+              Label(
+                L10n.text(de: "Agenten", en: "Agents", fr: "Agents"),
+                systemImage: "person.3.sequence"
+              )
+              Spacer()
+              if !agentLibrary.profiles.isEmpty {
+                Text("\(agentLibrary.profiles.count)")
+                  .font(.caption.monospacedDigit())
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .buttonStyle(.plain)
+        }
       }
       .navigationTitle("AgenTM5N")
       .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 260)
@@ -173,6 +197,10 @@ struct RootView: View {
     }
     .sheet(isPresented: $showingMacAccessCenter) {
       MacAccessCenterView()
+        .environmentObject(appState)
+    }
+    .sheet(isPresented: $showingAgents) {
+      AgentsView()
         .environmentObject(appState)
     }
     .alert(
