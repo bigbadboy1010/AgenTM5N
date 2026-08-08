@@ -49,14 +49,29 @@ public actor AppleFoundationModelsProvider {
       throw AppleFoundationModelsProviderError.unavailable(String(describing: reason))
     }
 
+    let temporalContext = Self.currentTemporalContext()
     let instructions = configuration.systemPrompt
       + "\n\n"
       + SystemLanguage.current.agentInstruction
       + "\n\n"
-      + Self.currentTemporalContext()
-    let tools = configuration.agentEnabled
-      ? AppleMacNativeTools.makeTools()
-      : []
+      + temporalContext
+      + "\n\n"
+      + """
+      CALENDAR GROUNDING RULES — mandatory:
+      - The CURRENT MAC DATE AND TIME above is authoritative.
+      - Calendar event results are data records, not a clock. The earliest returned event does NOT indicate today's date.
+      - An empty calendar interval does NOT mean that interval is in the past.
+      - Prior assistant statements about the current date are untrusted if they conflict with the CURRENT MAC DATE AND TIME.
+      - EventKit can store events in the past and in the future. Do not invent a rule that calendar start dates must be in the future.
+      - If you are about to reject, reinterpret, or question a calendar request because of whether a date is past or future, call system_current_datetime first and use its result.
+      - If the user explicitly gives a valid absolute date and time, call the requested calendar tool instead of asking for a replacement date merely because existing calendar results start later.
+      """
+
+    var tools: [any Tool] = [SystemCurrentDateTimeTool()]
+    if configuration.agentEnabled {
+      tools.append(contentsOf: AppleMacNativeTools.makeTools())
+    }
+
     let session = LanguageModelSession(
       model: model,
       tools: tools
@@ -64,6 +79,9 @@ public actor AppleFoundationModelsProvider {
       instructions
     }
     let prompt = Self.makePrompt(messages: messages)
+      + "\n\n"
+      + "AUTHORITATIVE RUNTIME CONTEXT FOR THIS TURN:\n"
+      + temporalContext
     let clock = ContinuousClock()
     let startedAt = clock.now
     let response = try await session.respond(to: prompt)
@@ -78,7 +96,7 @@ public actor AppleFoundationModelsProvider {
     )
   }
 
-  private static func currentTemporalContext() -> String {
+  fileprivate static func currentTemporalContext() -> String {
     let now = Date()
     let timeZone = TimeZone.current
 
@@ -108,7 +126,7 @@ public actor AppleFoundationModelsProvider {
 
       Temporal rules:
       - Resolve words such as today, tomorrow, yesterday, next Monday, this evening, and similar relative dates against the CURRENT MAC DATE AND TIME above.
-      - Never use model training dates or prior conversation dates as the current time.
+      - Never use model training dates, prior assistant statements, or calendar event dates as the current time.
       - Never claim that a requested date is in the past unless it is actually earlier than the CURRENT MAC DATE AND TIME above.
       - When calling calendar tools, convert requested local calendar times to ISO-8601 and always include the explicit current UTC offset.
       - Preserve the user's intended local wall-clock time in the current Mac time zone unless the user explicitly specifies another time zone.
@@ -137,5 +155,20 @@ public actor AppleFoundationModelsProvider {
     let secondsPart = UInt64(seconds) * 1_000_000_000
     let attosecondsPart = UInt64(attoseconds / 1_000_000_000)
     return secondsPart + attosecondsPart
+  }
+}
+
+private struct SystemCurrentDateTimeTool: Tool {
+  let name = "system_current_datetime"
+  let description = "Return the authoritative current Mac date, local time, time zone, and UTC offset. Call this before deciding whether a calendar date is in the past or future, and before resolving relative dates when there is any ambiguity. Calendar event dates must never be used as a substitute for this clock."
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Use the literal value current")
+    var query: String
+  }
+
+  func call(arguments: Arguments) async throws -> String {
+    AppleFoundationModelsProvider.currentTemporalContext()
   }
 }
