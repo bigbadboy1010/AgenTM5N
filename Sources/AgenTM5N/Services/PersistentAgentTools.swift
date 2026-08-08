@@ -9,7 +9,7 @@ public enum PersistentAgentTools {
     ),
     ProviderToolDefinition(
       name: "agent_get",
-      description: "Read one persistent reusable AgenTM5N specialist agent by exact name or UUID, including its purpose and specialist instructions.",
+      description: "Read one persistent reusable AgenTM5N specialist agent by exact name or UUID, including its purpose, specialist instructions, provider preference, and optional tool-capability scope.",
       parameters: objectSchema(
         required: ["agent"],
         properties: [
@@ -19,7 +19,7 @@ public enum PersistentAgentTools {
     ),
     ProviderToolDefinition(
       name: "agent_create",
-      description: "Create or replace a persistent reusable specialist agent for a recurring task. Use when the user explicitly asks to create, save, build, remember, or define an agent. The agent remains available in the Agenten section across app restarts.",
+      description: "Create or replace a persistent reusable specialist agent for a recurring task. Optional capabilities restrict delegated tool packs; omit or use all to inherit the complete centrally authorized tool catalog. Never put secrets in the agent profile.",
       parameters: objectSchema(
         required: ["name", "purpose", "instructions", "provider", "symbol"],
         properties: [
@@ -27,13 +27,14 @@ public enum PersistentAgentTools {
           "purpose": stringSchema("Concise recurring purpose for this specialist agent, maximum 500 characters."),
           "instructions": stringSchema("Complete specialist system instructions. Be operational and specific; do not include secrets. Maximum 12000 characters."),
           "provider": stringSchema("Provider preference: current, apple_on_device, ollama_local, or ollama_cloud."),
-          "symbol": stringSchema("SF Symbols name for the Agenten UI, or an empty string for the default symbol.")
+          "symbol": stringSchema("SF Symbols name for the Agenten UI, or an empty string for the default symbol."),
+          "capabilities": stringSchema("Optional comma-separated tool capabilities, or all. Valid names: workspace, terminal, ssh, git, macPersonal, secrets, http, system, reminders, coreML, memory, knowledge, attachments, documents, agents, workflows, updates.")
         ]
       )
     ),
     ProviderToolDefinition(
       name: "agent_update",
-      description: "Update an existing persistent specialist agent. Empty text fields mean unchanged. enabled_mode must be unchanged, true, or false.",
+      description: "Update an existing persistent specialist agent. Empty text fields mean unchanged. enabled_mode must be unchanged, true, or false. capabilities may be unchanged, all, or a comma-separated restricted capability set.",
       parameters: objectSchema(
         required: ["agent", "name", "purpose", "instructions", "provider", "symbol", "enabled_mode"],
         properties: [
@@ -43,7 +44,8 @@ public enum PersistentAgentTools {
           "instructions": stringSchema("New specialist instructions, or empty string to keep unchanged."),
           "provider": stringSchema("New provider preference, or empty string to keep unchanged."),
           "symbol": stringSchema("New SF Symbols name, or empty string to keep unchanged."),
-          "enabled_mode": stringSchema("Use unchanged, true, or false.")
+          "enabled_mode": stringSchema("Use unchanged, true, or false."),
+          "capabilities": stringSchema("Use unchanged, all, or comma-separated capability names.")
         ]
       )
     ),
@@ -101,6 +103,7 @@ public enum PersistentAgentTools {
         return encoded(ProfileDescriptor(try library.resolve(query)))
 
       case "agent_create":
+        let capabilityText = optionalNonEmptyString("capabilities", in: call)
         let profile = try library.create(
           name: try requiredString("name", in: call),
           purpose: try requiredString("purpose", in: call),
@@ -108,7 +111,11 @@ public enum PersistentAgentTools {
           providerPreference: SavedAgentProviderPreference.parse(
             try requiredString("provider", in: call)
           ),
-          symbolName: try requiredStringAllowingEmpty("symbol", in: call)
+          symbolName: try requiredStringAllowingEmpty("symbol", in: call),
+          allowedCapabilities: try parseCapabilities(
+            capabilityText,
+            emptyMeansNil: true
+          )
         )
         return encoded(MutationDescriptor(status: "saved", profile: profile))
 
@@ -124,6 +131,13 @@ public enum PersistentAgentTools {
         default: enabled = nil
         }
 
+        let capabilityText = optionalNonEmptyString("capabilities", in: call)
+        let replaceCapabilities = capabilityText != nil
+        let capabilities = try parseCapabilities(
+          capabilityText,
+          emptyMeansNil: true
+        )
+
         let profile = try library.update(
           query: query,
           name: optionalNonEmptyString("name", in: call),
@@ -133,7 +147,9 @@ public enum PersistentAgentTools {
             ? nil
             : SavedAgentProviderPreference.parse(providerValue),
           symbolName: optionalNonEmptyString("symbol", in: call),
-          enabled: enabled
+          enabled: enabled,
+          allowedCapabilities: capabilities,
+          replaceCapabilities: replaceCapabilities
         )
         return encoded(MutationDescriptor(status: "updated", profile: profile))
 
@@ -161,6 +177,7 @@ public enum PersistentAgentTools {
     let provider: String
     let symbol: String
     let enabled: Bool
+    let capabilities: [String]?
     let createdAt: Date
     let updatedAt: Date
     let lastUsedAt: Date?
@@ -173,6 +190,7 @@ public enum PersistentAgentTools {
       provider = profile.providerPreference.rawValue
       symbol = profile.symbolName
       enabled = profile.isEnabled
+      capabilities = profile.allowedCapabilities?.map(\.rawValue)
       createdAt = profile.createdAt
       updatedAt = profile.updatedAt
       lastUsedAt = profile.lastUsedAt
@@ -186,6 +204,51 @@ public enum PersistentAgentTools {
     init(status: String, profile: SavedAgentProfile) {
       self.status = status
       self.profile = ProfileDescriptor(profile)
+    }
+  }
+
+  private static func parseCapabilities(
+    _ value: String?,
+    emptyMeansNil: Bool
+  ) throws -> [AgentToolCapability]? {
+    guard let value else { return nil }
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if normalized.isEmpty {
+      return emptyMeansNil ? nil : []
+    }
+    if normalized.caseInsensitiveCompare("all") == .orderedSame {
+      return nil
+    }
+
+    let pieces = normalized
+      .split(separator: ",")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    var result: [AgentToolCapability] = []
+    var invalid: [String] = []
+    for piece in pieces {
+      if let capability = capability(named: piece) {
+        if !result.contains(capability) { result.append(capability) }
+      } else {
+        invalid.append(piece)
+      }
+    }
+    guard invalid.isEmpty else {
+      throw PersistentAgentLibraryError.invalidCapabilities(invalid)
+    }
+    return result
+  }
+
+  private static func capability(named value: String) -> AgentToolCapability? {
+    let normalized = value
+      .replacingOccurrences(of: "_", with: "")
+      .replacingOccurrences(of: "-", with: "")
+      .lowercased()
+    return AgentToolCapability.allCases.first {
+      $0.rawValue
+        .replacingOccurrences(of: "_", with: "")
+        .replacingOccurrences(of: "-", with: "")
+        .lowercased() == normalized
     }
   }
 
