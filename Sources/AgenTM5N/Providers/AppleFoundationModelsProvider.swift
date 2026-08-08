@@ -50,6 +50,7 @@ public actor AppleFoundationModelsProvider {
     }
 
     let temporalContext = AgentRuntimeContext.currentTemporalContext()
+    let selection = Self.toolSelection(for: messages)
     let instructions = configuration.systemPrompt
       + "\n\n"
       + SystemLanguage.current.agentInstruction
@@ -72,12 +73,26 @@ public actor AppleFoundationModelsProvider {
       - When the user explicitly asks to create, save, define, update, list, inspect, or delete a reusable specialist agent, use the agent_* tools.
       - Saved agents are persistent AgenTM5N profiles and appear in the Agenten section.
       - Never place passwords, API keys, tokens, private keys, or other secrets inside saved agent instructions.
+
+      OPERATIONAL TOOL RULES:
+      - When SSH tools are available, use ssh_list_hosts to discover configured profiles instead of asking the user for a password, private key, passphrase, or secret ID.
+      - ssh_run and ssh_open_terminal resolve credentials internally from the AgenTM5N Vault through the selected SSH profile. Never request, echo, infer, or expose those secret values.
+      - Use run_command only for local non-interactive work. Use ssh_run for remote non-interactive work and ssh_open_terminal for an interactive remote terminal.
+      - Read files before modifying them. Prefer apply_patch over write_file for targeted edits.
+      - Tool execution remains subject to AgenTM5N permission approval, audit records, workspace boundaries, and macOS security controls.
       """
 
     var tools: [any Tool] = [SystemCurrentDateTimeTool()]
     if configuration.agentEnabled {
-      tools.append(contentsOf: AppleRoutedMacNativeTools.makeTools())
-      tools.append(contentsOf: AppleRoutedPersistentAgentTools.makeTools())
+      if selection.macNative {
+        tools.append(contentsOf: AppleRoutedMacNativeTools.makeTools())
+      }
+      if selection.persistentAgents {
+        tools.append(contentsOf: AppleRoutedPersistentAgentTools.makeTools())
+      }
+      if selection.operational {
+        tools.append(contentsOf: AppleRoutedOperationalTools.makeTools())
+      }
     }
 
     let session = LanguageModelSession(
@@ -101,6 +116,53 @@ public actor AppleFoundationModelsProvider {
       thinkingDelta: "",
       isFinished: true,
       metrics: ChatMetrics(totalDurationNanoseconds: durationNanoseconds)
+    )
+  }
+
+  private struct ToolSelection {
+    var macNative: Bool
+    var persistentAgents: Bool
+    var operational: Bool
+  }
+
+  private static func toolSelection(for messages: [ChatMessage]) -> ToolSelection {
+    let userText = messages
+      .filter { $0.role == .user }
+      .suffix(4)
+      .map(\.content)
+      .joined(separator: "\n")
+      .lowercased()
+
+    let operationalTerms = [
+      "ssh", "server", "remote", "host", "terminal", "shell", "command", "kommando",
+      "docker", "container", "linux", "systemctl", "journalctl", "git", "repository", "repo",
+      "branch", "commit", "workspace", "datei", "file", "folder", "ordner", "log", "vm",
+      "maschine", "machine", "photon", "redhat", "red hat", "ubuntu", "kubernetes", "openshift",
+    ]
+    let macTerms = [
+      "calendar", "kalender", "termin", "event", "contact", "kontakt", "address book",
+      "adressbuch", "mail", "email", "e-mail", "nachricht", "inbox", "posteingang",
+    ]
+    let agentTerms = ["agent", "agenten", "specialist", "spezialist"]
+
+    let operational = operationalTerms.contains { userText.contains($0) }
+    let macNative = macTerms.contains { userText.contains($0) }
+    let persistentAgents = agentTerms.contains { userText.contains($0) }
+
+    if !operational && !macNative && !persistentAgents {
+      // Preserve the V1.0 default experience for normal personal-assistant prompts
+      // while avoiding large operational schemas when they are not relevant.
+      return ToolSelection(
+        macNative: true,
+        persistentAgents: true,
+        operational: false
+      )
+    }
+
+    return ToolSelection(
+      macNative: macNative,
+      persistentAgents: persistentAgents,
+      operational: operational
     )
   }
 
