@@ -6,8 +6,9 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
-VERSION="0.9.0"
-BUILD_NUMBER="21"
+VERSION="${AGENTM5N_VERSION:-1.0.0}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-22}"
+SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:--}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
@@ -145,20 +146,34 @@ PLIST
 plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
 plutil -lint "$ENTITLEMENTS_FILE" >/dev/null
 
-# Hardened Runtime is required for notarization. The entitlements are limited
-# to the native resources AgenTM5N actually uses in the V1 macOS action layer.
-codesign \
-  --force \
-  --sign - \
-  --options runtime \
-  --entitlements "$ENTITLEMENTS_FILE" \
-  "$APP_DIR"
+# Development builds may remain ad-hoc signed. Release builds pass a real
+# Developer ID Application identity through AGENTM5N_SIGNING_IDENTITY.
+if [ "$SIGNING_IDENTITY" = "-" ]; then
+  codesign \
+    --force \
+    --sign - \
+    --options runtime \
+    --entitlements "$ENTITLEMENTS_FILE" \
+    "$APP_DIR"
+  SIGNING_DESCRIPTION="Ad-hoc (development)"
+else
+  codesign \
+    --force \
+    --sign "$SIGNING_IDENTITY" \
+    --options runtime \
+    --timestamp \
+    --entitlements "$ENTITLEMENTS_FILE" \
+    "$APP_DIR"
+  SIGNING_DESCRIPTION="Developer ID ($SIGNING_IDENTITY)"
+fi
 
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 codesign -d --entitlements - --xml "$APP_DIR" >/dev/null
 
 printf '\nApp erstellt: %s\n' "$APP_DIR"
+printf 'Version: %s Build %s\n' "$VERSION" "$BUILD_NUMBER"
 printf 'App-Icon: %s\n' "$ICON_FILE"
 printf 'Hardened Runtime: aktiv\n'
+printf 'Signierung: %s\n' "$SIGNING_DESCRIPTION"
 printf 'Entitlements: %s\n' "$ENTITLEMENTS_FILE"
 printf 'Starten mit: open %q\n' "$APP_DIR"
