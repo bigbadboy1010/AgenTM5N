@@ -93,7 +93,7 @@ extension AppState {
 
     case "network_info":
       return await expansionCommand(
-        "/sbin/ifconfig -a; printf '\\nDEFAULT ROUTE\\n'; /sbin/route -n get default 2>/dev/null || true"
+        "/sbin/ifconfig -a; printf '\nDEFAULT ROUTE\n'; /sbin/route -n get default 2>/dev/null || true"
       )
 
     case "clipboard_read":
@@ -358,7 +358,7 @@ extension AppState {
       }
 
       let joined = commands.enumerated().map { index, command in
-        "printf '\\n=== AgenTM5N step \(index + 1) ===\\n'; \(command)"
+        "printf '\n=== AgenTM5N step \(index + 1) ===\n'; \(command)"
       }.joined(separator: "; ")
       let forwarded = ProviderToolCall(
         function: .init(
@@ -629,11 +629,12 @@ extension AppState {
         let model = try await service.registeredModel(
           query: expansionOptionalString("model", in: call)
         )
+        let activeID = await service.activeModelID()
         return encodeExpansionResult(
           ExpansionCoreMLModelDescriptor(
             id: model.id.uuidString,
             name: model.name,
-            active: model.id == await service.activeModelID(),
+            active: model.id == activeID,
             inputs: model.inputs,
             outputs: model.outputs,
             computePolicy: model.computeUnits
