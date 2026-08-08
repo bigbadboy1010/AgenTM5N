@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
-VERSION="${AGENTM5N_VERSION:-1.0.1}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-23}"
+VERSION="${AGENTM5N_VERSION:-1.1.0}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-24}"
 NOTARY_PROFILE="${AGENTM5N_NOTARY_PROFILE:-AgenTM5NNotary}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:-}"
 DIST_DIR="$ROOT_DIR/dist"
@@ -30,7 +30,7 @@ fi
 agentm5n_configure_xcode
 cd "$ROOT_DIR"
 
-for command in security codesign hdiutil ditto plutil xcrun spctl; do
+for command in security codesign diskutil hdiutil ditto plutil xcrun spctl; do
   command -v "$command" >/dev/null 2>&1 || fail "Benötigtes Tool fehlt: $command"
 done
 
@@ -69,7 +69,6 @@ printf '\n=== AgenTM5N %s Build %s Release ===\n' "$VERSION" "$BUILD_NUMBER"
 printf 'Signing Identity: %s\n' "$SIGNING_IDENTITY"
 printf 'Notary Profile:    %s\n' "$NOTARY_PROFILE"
 
-# Fail before doing a full release build when the saved notary credentials are invalid.
 if ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
   cat >&2 <<EOF
 Notary-Keychain-Profil '$NOTARY_PROFILE' ist nicht verfügbar oder ungültig.
@@ -105,12 +104,24 @@ ditto "$APP_DIR" "$DMG_ROOT/$APP_NAME.app"
 ln -s /Applications "$DMG_ROOT/Applications"
 rm -f "$DMG_PATH" "$NOTARY_RESULT" "$NOTARY_LOG"
 
-hdiutil create \
-  -volname "$APP_NAME $VERSION" \
-  -srcfolder "$DMG_ROOT" \
-  -ov \
-  -format UDZO \
-  "$DMG_PATH" >/dev/null
+# macOS 27 deprecates the older hdiutil create form. Prefer diskutil image and
+# retain hdiutil only as a compatibility fallback for earlier host versions.
+if diskutil image create from \
+  --volumeName "$APP_NAME $VERSION" \
+  --format UDZO \
+  "$DMG_ROOT" \
+  "$DMG_PATH" >/dev/null 2>&1
+then
+  printf 'DMG: diskutil image create\n'
+else
+  printf 'DMG: diskutil image create nicht verfügbar, verwende hdiutil-Fallback.\n'
+  hdiutil create \
+    -volname "$APP_NAME $VERSION" \
+    -srcfolder "$DMG_ROOT" \
+    -ov \
+    -format UDZO \
+    "$DMG_PATH" >/dev/null
+fi
 
 codesign \
   --force \
