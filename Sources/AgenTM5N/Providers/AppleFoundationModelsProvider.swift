@@ -16,9 +16,9 @@ public enum AppleFoundationModelsProviderError: LocalizedError {
       )
     case .toolsDisabled:
       return L10n.text(
-        de: "Die AgenTM5N-Werkzeuge sind deaktiviert. Aktiviere den Agent-Modus in den Einstellungen und versuche die SSH-Anfrage erneut.",
-        en: "AgenTM5N tools are disabled. Enable Agent mode in Settings and retry the SSH request.",
-        fr: "Les outils AgenTM5N sont désactivés. Activez le mode Agent dans les réglages puis réessayez la requête SSH."
+        de: "Die AgenTM5N-Werkzeuge sind deaktiviert. Aktiviere den Agent-Modus in den Einstellungen und versuche die Anfrage erneut.",
+        en: "AgenTM5N tools are disabled. Enable Agent mode in Settings and retry the request.",
+        fr: "Les outils AgenTM5N sont désactivés. Activez le mode Agent dans les réglages puis réessayez."
       )
     case .generationFailure(let details):
       return L10n.text(
@@ -39,11 +39,7 @@ public actor AppleFoundationModelsProvider {
   public func availabilityDescription() -> String {
     switch model.availability {
     case .available:
-      return L10n.text(
-        de: "Verfügbar",
-        en: "Available",
-        fr: "Disponible"
-      )
+      return L10n.text(de: "Verfügbar", en: "Available", fr: "Disponible")
     case .unavailable(let reason):
       return L10n.text(
         de: "Nicht verfügbar: \(String(describing: reason))",
@@ -66,15 +62,17 @@ public actor AppleFoundationModelsProvider {
 
     let temporalContext = AgentRuntimeContext.currentTemporalContext()
     let selection = Self.toolSelection(for: messages)
-    let focusedSSH = selection.sshMode != nil
 
-    if focusedSSH && !configuration.agentEnabled {
+    if selection.focused != nil, !configuration.agentEnabled {
       throw AppleFoundationModelsProviderError.toolsDisabled
     }
 
     let instructions: String
-    if focusedSSH {
-      instructions = Self.sshInstructions()
+    if let focused = selection.focused {
+      instructions = Self.focusedInstructions(
+        focused,
+        temporalContext: temporalContext
+      )
     } else {
       instructions = configuration.systemPrompt
         + "\n\n"
@@ -88,17 +86,8 @@ public actor AppleFoundationModelsProvider {
     }
 
     var tools: [any Tool] = []
-    if focusedSSH {
-      switch selection.sshMode {
-      case .list:
-        tools.append(contentsOf: AppleRoutedSSHTools.makeListHostsTools())
-      case .run:
-        tools.append(contentsOf: AppleRoutedSSHTools.makeRunTools())
-      case .terminal:
-        tools.append(contentsOf: AppleRoutedSSHTools.makeOpenTerminalTools())
-      case nil:
-        break
-      }
+    if let focused = selection.focused {
+      tools.append(contentsOf: Self.focusedTools(focused))
     } else {
       tools.append(SystemCurrentDateTimeTool())
       if configuration.agentEnabled {
@@ -108,26 +97,19 @@ public actor AppleFoundationModelsProvider {
         if selection.persistentAgents {
           tools.append(contentsOf: AppleRoutedPersistentAgentTools.makeTools())
         }
-        if selection.operational {
-          tools.append(contentsOf: AppleRoutedOperationalTools.makeTools())
-        }
       }
     }
 
-    let session = LanguageModelSession(
-      model: model,
-      tools: tools
-    ) {
+    let session = LanguageModelSession(model: model, tools: tools) {
       instructions
     }
 
     let prompt: String
-    if focusedSSH {
+    if selection.focused != nil {
       prompt = Self.latestUserPrompt(messages: messages)
     } else {
       prompt = Self.makePrompt(messages: messages)
-        + "\n\n"
-        + "AUTHORITATIVE RUNTIME CONTEXT FOR THIS TURN:\n"
+        + "\n\nAUTHORITATIVE RUNTIME CONTEXT FOR THIS TURN:\n"
         + temporalContext
     }
 
@@ -137,13 +119,13 @@ public actor AppleFoundationModelsProvider {
     do {
       let response = try await session.respond(to: prompt)
       let duration = startedAt.duration(to: clock.now)
-      let durationNanoseconds = Self.nanoseconds(from: duration)
-
       return ProviderStreamEvent(
         contentDelta: response.content,
         thinkingDelta: "",
         isFinished: true,
-        metrics: ChatMetrics(totalDurationNanoseconds: durationNanoseconds)
+        metrics: ChatMetrics(
+          totalDurationNanoseconds: Self.nanoseconds(from: duration)
+        )
       )
     } catch {
       throw AppleFoundationModelsProviderError.generationFailure(
@@ -156,17 +138,73 @@ public actor AppleFoundationModelsProvider {
     case list
     case run
     case terminal
+    case upload
+    case download
+    case tail
+    case batch
+  }
+
+  private enum FocusedToolPack {
+    case ssh(SSHMode)
+    case http
+    case system
+    case macUtilities
+    case reminders
+    case delegation
+    case workflows
+    case updates
+    case git
+    case workspaceRead
+    case workspaceEdit
+    case localCommand
   }
 
   private struct ToolSelection {
     var macNative: Bool
     var persistentAgents: Bool
-    var sshMode: SSHMode?
-    var operational: Bool
+    var focused: FocusedToolPack?
+  }
+
+  private static func focusedTools(_ pack: FocusedToolPack) -> [any Tool] {
+    switch pack {
+    case .ssh(let mode):
+      switch mode {
+      case .list: AppleRoutedSSHTools.makeListHostsTools()
+      case .run: AppleRoutedSSHTools.makeRunTools()
+      case .terminal: AppleRoutedSSHTools.makeOpenTerminalTools()
+      case .upload: AppleRoutedSSHTools.makeUploadTools()
+      case .download: AppleRoutedSSHTools.makeDownloadTools()
+      case .tail: AppleRoutedSSHTools.makeTailTools()
+      case .batch: AppleRoutedSSHTools.makeBatchTools()
+      }
+    case .http:
+      AppleRoutedPlatformExpansionTools.makeHTTPTools()
+    case .system:
+      AppleRoutedPlatformExpansionTools.makeSystemTools()
+    case .macUtilities:
+      AppleRoutedPlatformExpansionTools.makeMacUtilityTools()
+    case .reminders:
+      [SystemCurrentDateTimeTool()]
+        + AppleRoutedPlatformExpansionTools.makeReminderTools()
+    case .delegation:
+      AppleRoutedPlatformExpansionTools.makeDelegationTools()
+    case .workflows:
+      AppleRoutedPlatformExpansionTools.makeWorkflowTools()
+    case .updates:
+      AppleRoutedPlatformExpansionTools.makeUpdateTools()
+    case .git:
+      AppleRoutedOperationalTools.makeGitTools()
+    case .workspaceRead:
+      AppleRoutedOperationalTools.makeWorkspaceReadTools()
+    case .workspaceEdit:
+      AppleRoutedOperationalTools.makeWorkspaceEditTools()
+    case .localCommand:
+      AppleRoutedOperationalTools.makeLocalCommandTools()
+    }
   }
 
   private static func toolSelection(for messages: [ChatMessage]) -> ToolSelection {
-    let latestUserText = messages
+    let text = messages
       .last(where: { $0.role == .user })?
       .content
       .lowercased() ?? ""
@@ -174,13 +212,64 @@ public actor AppleFoundationModelsProvider {
     let sshTerms = [
       "ssh", "server", "remote", "docker", "container", "systemctl", "journalctl",
       "linux", "photon", "redhat", "red hat", "ubuntu", "kubernetes", "openshift",
-      "lenovo-server", "remote host", "remote-host",
+      "remote host", "remote-host",
     ]
-    let broadOperationalTerms = [
-      "git status", "git diff", "git branch", "git commit", "repository", "repo ",
-      "workspace", "datei", "file", "folder", "ordner", "lokales terminal",
-      "local terminal", "lokaler befehl", "local command", "shell command",
-    ]
+    if sshTerms.contains(where: { text.contains($0) }) {
+      return ToolSelection(
+        macNative: false,
+        persistentAgents: false,
+        focused: .ssh(sshMode(for: text))
+      )
+    }
+
+    if containsAny(text, ["http://", "https://", " api ", "rest api", "endpoint", "webhook", "bearer", "api key", "api-key", "secret_ref", "secret verwenden", "secret benutzen", "secrets anzeigen"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .http)
+    }
+
+    if containsAny(text, ["erinnerung", "erinnerungen", "reminder", "reminders", "todo", "to-do"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .reminders)
+    }
+
+    if containsAny(text, ["delegiere", "delegieren", "delegate", "übertrage an den agent", "uebertrage an den agent", "lass den agent", "spezialist übernehmen", "spezialist uebernehmen"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .delegation)
+    }
+
+    if containsAny(text, ["workflow", "workflows", "arbeitsablauf", "ablauf speichern", "ablauf ausführen", "ablauf ausfuehren"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .workflows)
+    }
+
+    if containsAny(text, ["app update", "update prüfen", "update pruefen", "neue version", "app version", "version von agentm5n", "versionsnummer"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .updates)
+    }
+
+    if containsAny(text, ["systeminfo", "system info", "systemstatus", "prozesse", "process list", "cpu prozess", "festplatte", "disk info", "speicherplatz", "netzwerkinfo", "network info", "netzwerkschnittstelle"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .system)
+    }
+
+    if containsAny(text, ["zwischenablage", "clipboard", "benachrichtigung", "notification", "kurzbefehl", "shortcut", "shortcuts"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .macUtilities)
+    }
+
+    if containsAny(text, ["git status", "git diff", "git branch", "git checkout", "git commit", "repository", "repo status"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .git)
+    }
+
+    if containsAny(text, ["lokales terminal", "local terminal", "lokaler befehl", "local command", "shell command", "führe lokal", "fuehre lokal"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .localCommand)
+    }
+
+    let workspaceEdit = containsAny(text, [
+      "datei ändern", "datei aendern", "datei bearbeiten", "datei schreiben", "write file",
+      "edit file", "apply patch", "patch datei", "ersetze in der datei",
+    ])
+    if workspaceEdit {
+      return .init(macNative: false, persistentAgents: false, focused: .workspaceEdit)
+    }
+
+    if containsAny(text, ["workspace", "datei lesen", "read file", "suche in dateien", "search files", "swift-dateien", "swift dateien", "ordner auflisten", "list files", "glob"]) {
+      return .init(macNative: false, persistentAgents: false, focused: .workspaceRead)
+    }
+
     let macTerms = [
       "calendar", "kalender", "termin", "event", "contact", "kontakt", "address book",
       "adressbuch", "mail", "email", "e-mail", "nachricht", "inbox", "posteingang",
@@ -191,72 +280,80 @@ public actor AppleFoundationModelsProvider {
       "gespeicherter agent", "gespeicherte agent", "specialist", "spezialist",
     ]
 
-    let isSSHRequest = sshTerms.contains { latestUserText.contains($0) }
-    let operational = !isSSHRequest && broadOperationalTerms.contains {
-      latestUserText.contains($0)
-    }
-    let macNative = !isSSHRequest && macTerms.contains { latestUserText.contains($0) }
-    let persistentAgents = !isSSHRequest && agentTerms.contains {
-      latestUserText.contains($0)
-    }
-
-    let sshMode: SSHMode?
-    if isSSHRequest {
-      let runTerms = [
-        "führe", "ausführen", "ausfuehren", "befehl", "kommando", "command",
-        "docker", "systemctl", "journalctl", "whoami", "hostname", "uname",
-        "df ", "free ", "ps ", "top", "uptime", "kubectl", "oc ",
-      ]
-      let terminalTerms = [
-        "interaktiv", "interactive", "terminal öffnen", "terminal oeffnen",
-        "open terminal", "ssh terminal", "shell öffnen", "shell oeffnen",
-      ]
-      if runTerms.contains(where: { latestUserText.contains($0) }) {
-        sshMode = .run
-      } else if terminalTerms.contains(where: { latestUserText.contains($0) }) {
-        sshMode = .terminal
-      } else {
-        sshMode = .list
-      }
-    } else {
-      sshMode = nil
-    }
-
-    if sshMode == nil && !operational && !macNative && !persistentAgents {
+    let macNative = macTerms.contains { text.contains($0) }
+    let persistentAgents = agentTerms.contains { text.contains($0) }
+    if !macNative && !persistentAgents {
       return ToolSelection(
         macNative: true,
         persistentAgents: true,
-        sshMode: nil,
-        operational: false
+        focused: nil
       )
     }
-
     return ToolSelection(
       macNative: macNative,
       persistentAgents: persistentAgents,
-      sshMode: sshMode,
-      operational: operational
+      focused: nil
     )
   }
 
-  private static func sshInstructions() -> String {
-    """
-    You are AgenTM5N running with the Apple on-device language model.
-    Respond in the user's language.
-    Use the single SSH tool provided for this request when it is needed.
-    If the user requests multiple remote commands, preserve every requested command and pass them together in the single ssh_run command argument, in the same order. Separate independent commands with semicolons or newlines. Do not silently drop commands and do not execute only the final command.
-    Example: when the user asks for whoami, hostname, and uname -a, pass exactly: whoami; hostname; uname -a
-    AgenTM5N resolves passwords, private keys, and passphrases internally from the encrypted Vault.
-    Never ask for, expose, repeat, or infer secret values or secret identifiers.
-    Report success or failure only from the tool result, and summarize all returned command outputs.
-    """
+  private static func sshMode(for text: String) -> SSHMode {
+    if containsAny(text, ["hochladen", "upload", "scp upload"]) { return .upload }
+    if containsAny(text, ["herunterladen", "download", "scp download"]) { return .download }
+    if containsAny(text, ["tail -", "tail log", "logdatei", "log file", "letzten zeilen", "last lines"]) { return .tail }
+    if containsAny(text, ["batch", "health check", "healthcheck", "server check", "mehrere befehle", "mehrere commands", "diagnose-batch"]) { return .batch }
+    if containsAny(text, ["interaktiv", "interactive", "terminal öffnen", "terminal oeffnen", "open terminal", "ssh terminal", "shell öffnen", "shell oeffnen"]) { return .terminal }
+    let runTerms = [
+      "führe", "ausführen", "ausfuehren", "befehl", "kommando", "command", "docker",
+      "systemctl", "journalctl", "whoami", "hostname", "uname", "df ", "free ",
+      "ps ", "top", "uptime", "kubectl", "oc ",
+    ]
+    return runTerms.contains(where: { text.contains($0) }) ? .run : .list
+  }
+
+  private static func focusedInstructions(
+    _ pack: FocusedToolPack,
+    temporalContext: String
+  ) -> String {
+    var lines = [
+      "You are AgenTM5N running with the Apple on-device language model.",
+      "Respond in the user's language.",
+      "Use the small focused AgenTM5N tool set provided for this request instead of claiming that you lack access.",
+      "Report success or failure only from actual tool results.",
+      "Never ask for, expose, repeat, or infer passwords, private keys, passphrases, API keys, tokens, secret values, or internal secret identifiers.",
+    ]
+
+    switch pack {
+    case .ssh(let mode):
+      lines.append("AgenTM5N resolves SSH credentials internally from saved profiles and the encrypted Vault.")
+      if mode == .run {
+        lines.append("If the user requested multiple remote commands, preserve every command and pass all commands together in one ssh_run command string, in the same order.")
+      }
+      if mode == .batch {
+        lines.append("For a diagnostic batch, put every requested remote command on its own line in the ssh_run_batch commands argument.")
+      }
+    case .http:
+      lines.append("Use secret_list only to discover Vault labels/kinds. Use secret_ref by label with http_request; secret values remain native and model-invisible.")
+    case .reminders:
+      lines.append("The authoritative current Mac date/time is: \(temporalContext)")
+      lines.append("Use ISO-8601 for reminder due dates and preserve the user's local wall-clock intent.")
+    case .delegation:
+      lines.append("Delegate only a bounded subtask to the requested saved specialist. Keep the main conversation responsible for the final synthesis.")
+    case .workflows:
+      lines.append("Workflows store tool names and arguments. Never put secret values into workflow steps; use secret_ref labels only.")
+    case .updates:
+      lines.append("Update checks are read-only checks against a user-provided HTTPS manifest and never install automatically.")
+    case .workspaceEdit:
+      lines.append("Read the target before modifying it. Prefer apply_patch for targeted edits.")
+    default:
+      break
+    }
+    return lines.joined(separator: "\n")
   }
 
   private static func toolInstructions(selection: ToolSelection) -> String {
     var sections: [String] = [
       """
       TOOL RULES — mandatory:
-      - The CURRENT MAC DATE AND TIME above is authoritative.
       - Only report that a native action failed when the corresponding tool actually returns an error.
       - Tool execution remains subject to AgenTM5N permission approval, audit records, workspace boundaries, and macOS security controls.
       """
@@ -266,6 +363,7 @@ public actor AppleFoundationModelsProvider {
       sections.append(
         """
         CALENDAR GROUNDING RULES:
+        - The CURRENT MAC DATE AND TIME above is authoritative.
         - Calendar event results are records, not a clock.
         - EventKit can store events in the past and in the future. Do not invent a future-only rule.
         - If date interpretation is ambiguous, call system_current_datetime first.
@@ -284,17 +382,11 @@ public actor AppleFoundationModelsProvider {
       )
     }
 
-    if selection.operational {
-      sections.append(
-        """
-        WORKSPACE RULES:
-        - Use run_command only for local non-interactive work.
-        - Read files before modifying them. Prefer apply_patch over write_file for targeted edits.
-        """
-      )
-    }
-
     return sections.joined(separator: "\n\n")
+  }
+
+  private static func containsAny(_ text: String, _ terms: [String]) -> Bool {
+    terms.contains { text.contains($0) }
   }
 
   private static func latestUserPrompt(messages: [ChatMessage]) -> String {
@@ -310,12 +402,11 @@ public actor AppleFoundationModelsProvider {
       .filter { $0.role != .system }
       .suffix(6)
       .map { message in
-        let role =
-          switch message.role {
-          case .system: "SYSTEM"
-          case .user: "USER"
-          case .assistant: "ASSISTANT"
-          }
+        let role = switch message.role {
+        case .system: "SYSTEM"
+        case .user: "USER"
+        case .assistant: "ASSISTANT"
+        }
         return "\(role):\n\(message.content)"
       }
       .joined(separator: "\n\n")
@@ -323,7 +414,6 @@ public actor AppleFoundationModelsProvider {
     guard rendered.count > maximumConversationCharacters else {
       return rendered
     }
-
     return "[Earlier conversation omitted for Apple on-device context budget]\n\n"
       + String(rendered.suffix(maximumConversationCharacters))
   }
@@ -335,7 +425,6 @@ public actor AppleFoundationModelsProvider {
       "debug=\(String(reflecting: error))",
       "NSError=\(nsError.domain)(\(nsError.code))",
     ]
-
     if !nsError.localizedDescription.isEmpty {
       parts.append("description=\(nsError.localizedDescription)")
     }
@@ -346,11 +435,8 @@ public actor AppleFoundationModelsProvider {
       parts.append("recoverySuggestion=\(suggestion)")
     }
     if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
-      parts.append(
-        "underlying=\(underlying.domain)(\(underlying.code)): \(underlying.localizedDescription)"
-      )
+      parts.append("underlying=\(underlying.domain)(\(underlying.code)): \(underlying.localizedDescription)")
     }
-
     return parts.joined(separator: " | ")
   }
 
@@ -358,9 +444,8 @@ public actor AppleFoundationModelsProvider {
     let components = duration.components
     let seconds = max(components.seconds, 0)
     let attoseconds = max(components.attoseconds, 0)
-    let secondsPart = UInt64(seconds) * 1_000_000_000
-    let attosecondsPart = UInt64(attoseconds / 1_000_000_000)
-    return secondsPart + attosecondsPart
+    return UInt64(seconds) * 1_000_000_000
+      + UInt64(attoseconds / 1_000_000_000)
   }
 }
 
@@ -370,8 +455,7 @@ private struct SystemCurrentDateTimeTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Use current")
-    var query: String
+    @Guide(description: "Use current") var query: String
   }
 
   func call(arguments: Arguments) async throws -> String {
