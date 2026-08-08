@@ -3,15 +3,22 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="AgenTM5N"
-VERSION="${AGENTM5N_VERSION:-1.0.1}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-23}"
+VERSION="${AGENTM5N_VERSION:-1.1.0}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-24}"
 DMG_PATH="${AGENTM5N_DMG_PATH:-$ROOT_DIR/dist/$APP_NAME-$VERSION-build$BUILD_NUMBER.dmg}"
 MOUNT_POINT="$(mktemp -d -t agentm5n-release-mount)"
 ATTACHED=0
+ATTACH_METHOD=""
 
 cleanup() {
   if [ "$ATTACHED" -eq 1 ]; then
-    hdiutil detach "$MOUNT_POINT" -quiet >/dev/null 2>&1 || true
+    if [ "$ATTACH_METHOD" = "diskutil" ]; then
+      diskutil image detach "$MOUNT_POINT" >/dev/null 2>&1 \
+        || hdiutil detach "$MOUNT_POINT" -quiet >/dev/null 2>&1 \
+        || true
+    else
+      hdiutil detach "$MOUNT_POINT" -quiet >/dev/null 2>&1 || true
+    fi
   fi
   rmdir "$MOUNT_POINT" >/dev/null 2>&1 || true
 }
@@ -30,11 +37,22 @@ codesign --verify --verbose=2 "$DMG_PATH"
 xcrun stapler validate "$DMG_PATH"
 
 printf '\n=== DMG read-only mounten ===\n'
-hdiutil attach \
-  -readonly \
-  -nobrowse \
-  -mountpoint "$MOUNT_POINT" \
-  "$DMG_PATH" >/dev/null
+if diskutil image attach \
+  --readOnly \
+  --nobrowse \
+  --mountPoint "$MOUNT_POINT" \
+  "$DMG_PATH" >/dev/null 2>&1
+then
+  ATTACH_METHOD="diskutil"
+else
+  printf 'diskutil image attach nicht verfügbar, verwende hdiutil-Fallback.\n'
+  hdiutil attach \
+    -readonly \
+    -nobrowse \
+    -mountpoint "$MOUNT_POINT" \
+    "$DMG_PATH" >/dev/null
+  ATTACH_METHOD="hdiutil"
+fi
 ATTACHED=1
 
 MOUNTED_APP="$MOUNT_POINT/$APP_NAME.app"
