@@ -52,6 +52,8 @@ public actor AppleFoundationModelsProvider {
     let instructions = configuration.systemPrompt
       + "\n\n"
       + SystemLanguage.current.agentInstruction
+      + "\n\n"
+      + Self.currentTemporalContext()
     let tools = configuration.agentEnabled
       ? AppleMacNativeTools.makeTools()
       : []
@@ -74,6 +76,43 @@ public actor AppleFoundationModelsProvider {
       isFinished: true,
       metrics: ChatMetrics(totalDurationNanoseconds: durationNanoseconds)
     )
+  }
+
+  private static func currentTemporalContext() -> String {
+    let now = Date()
+    let timeZone = TimeZone.current
+
+    let isoFormatter = ISO8601DateFormatter()
+    isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    isoFormatter.timeZone = timeZone
+
+    let readableFormatter = DateFormatter()
+    readableFormatter.locale = Locale(identifier: "en_US_POSIX")
+    readableFormatter.calendar = Calendar(identifier: .gregorian)
+    readableFormatter.timeZone = timeZone
+    readableFormatter.dateFormat = "EEEE, yyyy-MM-dd HH:mm:ss ZZZZZ"
+
+    let zoneName = timeZone.identifier
+    let offsetSeconds = timeZone.secondsFromGMT(for: now)
+    let sign = offsetSeconds >= 0 ? "+" : "-"
+    let absoluteOffset = abs(offsetSeconds)
+    let offsetHours = absoluteOffset / 3_600
+    let offsetMinutes = (absoluteOffset % 3_600) / 60
+    let offset = String(format: "%@%02d:%02d", sign, offsetHours, offsetMinutes)
+
+    return """
+      CURRENT MAC DATE AND TIME — authoritative runtime context:
+      - Local date/time: \(readableFormatter.string(from: now))
+      - ISO-8601 now: \(isoFormatter.string(from: now))
+      - Time zone: \(zoneName) (UTC\(offset))
+
+      Temporal rules:
+      - Resolve words such as today, tomorrow, yesterday, next Monday, this evening, and similar relative dates against the CURRENT MAC DATE AND TIME above.
+      - Never use model training dates or prior conversation dates as the current time.
+      - Never claim that a requested date is in the past unless it is actually earlier than the CURRENT MAC DATE AND TIME above.
+      - When calling calendar tools, convert requested local calendar times to ISO-8601 and always include the explicit current UTC offset.
+      - Preserve the user's intended local wall-clock time in the current Mac time zone unless the user explicitly specifies another time zone.
+      """
   }
 
   private static func makePrompt(messages: [ChatMessage]) -> String {
