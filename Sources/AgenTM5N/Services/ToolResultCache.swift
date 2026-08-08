@@ -47,13 +47,18 @@ public actor ToolResultCache {
 
   public nonisolated func ttl(for toolName: String) -> TimeInterval {
     switch toolName {
-    case "system_info": 60,
-      "ssh_list_hosts", "git_branches", "coreml_list_models", "workflow_list", "agent_list": 20,
-      "git_status", "disk_info", "network_info", "process_list", "workspace_index_status": 8,
-      "shortcuts_list", "secret_list", "app_version_info": 30,
-      "list_directory", "glob_files", "search_text": 5
+    case "system_info":
+      return 60
+    case "ssh_list_hosts", "git_branches", "coreml_list_models", "workflow_list", "agent_list":
+      return 20
+    case "git_status", "disk_info", "network_info", "process_list", "workspace_index_status":
+      return 8
+    case "shortcuts_list", "secret_list", "app_version_info":
+      return 30
+    case "list_directory", "glob_files", "search_text":
+      return 5
     default:
-      0
+      return 0
     }
   }
 
