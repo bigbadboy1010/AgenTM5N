@@ -54,14 +54,14 @@ private struct RoutedSSHListHostsTool: Tool {
 private struct RoutedSSHRunTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "ssh_run"
-  let description = "Run one remote command through a saved SSH profile. AgenTM5N resolves Vault credentials internally."
+  let description = "Run one remote shell command string through a saved SSH profile. The command string may contain multiple requested commands separated by semicolons or newlines; preserve all commands the user asked to run and keep their order. AgenTM5N resolves Vault credentials internally."
 
   @Generable
   struct Arguments {
     @Guide(description: "Saved SSH profile name, hostname, or UUID")
     var host: String
 
-    @Guide(description: "Remote shell command")
+    @Guide(description: "Complete remote shell command string. When the user requested multiple commands, include every command in this single string, separated by semicolons or newlines, for example: whoami; hostname; uname -a")
     var command: String
   }
 
