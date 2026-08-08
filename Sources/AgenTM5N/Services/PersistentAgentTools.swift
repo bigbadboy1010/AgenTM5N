@@ -98,7 +98,7 @@ public enum PersistentAgentTools {
 
       case "agent_get":
         let query = try requiredString("agent", in: call)
-        return encoded(ProfileDescriptor(library.resolve(query)))
+        return encoded(ProfileDescriptor(try library.resolve(query)))
 
       case "agent_create":
         let profile = try library.create(
