@@ -52,6 +52,7 @@ Validated native capabilities include:
 - explicit Apple Events, Contacts, and Calendar entitlements
 - direct-distribution release pipeline using Developer ID Application signing
 - notarized DMG workflow using `notarytool` and `stapler`
+- final mounted-DMG verification including Gatekeeper assessment of the delivered app
 
 ## Version
 
@@ -83,13 +84,12 @@ Inspect identities:
 security find-identity -v -p codesigning
 ```
 
-Create a dedicated notary credential profile once, if required:
+Create a dedicated notary credential profile once, if required. Do not put the app-specific password on the command line; `notarytool` asks for it interactively and stores the validated credentials in the Keychain:
 
 ```bash
 xcrun notarytool store-credentials "AgenTM5NNotary" \
   --apple-id "YOUR_APPLE_ID" \
-  --team-id "YOUR_TEAM_ID" \
-  --password "YOUR_APP_SPECIFIC_PASSWORD"
+  --team-id "YOUR_TEAM_ID"
 ```
 
 Then create the final release:
@@ -115,6 +115,19 @@ dist/AgenTM5N-1.0.0-build22.dmg
 
 The release script also stores the notary result and notary log in `dist/`.
 
+## Automated release gates
+
+The release workflow runs:
+
+1. `scripts/verify.sh`
+2. Developer-ID build through `scripts/build-app.sh`
+3. `scripts/check-release.sh` against the built app
+4. DMG creation and Developer ID signing
+5. Apple `notarytool submit --wait`
+6. immediate download of the notary log when a submission ID is available
+7. `stapler staple` and `stapler validate`
+8. `scripts/verify-release-dmg.sh`, which verifies and mounts the final DMG and checks the delivered app again, including Gatekeeper
+
 ## Final smoke-test checklist
 
 After `scripts/release-macos.sh` reports `RELEASE READY`:
@@ -137,9 +150,9 @@ After `scripts/release-macos.sh` reports `RELEASE READY`:
 V1.0 is release-ready when:
 
 - `scripts/verify.sh` passes
-- `scripts/build-app.sh` passes
-- `scripts/check-release.sh` passes
-- Developer ID Gatekeeper assessment passes in the release pipeline
+- the app reports version `1.0.0` build `22`
+- Developer ID Application signing and Hardened Runtime checks pass
 - Apple notarization returns `Accepted`
-- the ticket is successfully stapled and validated
+- the notary ticket is successfully stapled and validated
+- the mounted final DMG passes `verify-release-dmg.sh` including Gatekeeper assessment
 - the manual smoke-test checklist above is green
