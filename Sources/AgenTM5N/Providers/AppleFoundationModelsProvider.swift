@@ -67,11 +67,17 @@ public actor AppleFoundationModelsProvider {
       - If you are about to reject or reinterpret a calendar request because of whether a date is past or future, call system_current_datetime first.
       - For calendar_create_event, pass the requested local year, month, day, hour, and minute directly to the tool. Do not construct UTC values for event creation.
       - Only report that a native action failed when the corresponding tool actually returns an error.
+
+      PERSISTENT AGENT RULES:
+      - When the user explicitly asks to create, save, define, update, list, inspect, or delete a reusable specialist agent, use the agent_* tools.
+      - Saved agents are persistent AgenTM5N profiles and appear in the Agenten section.
+      - Never place passwords, API keys, tokens, private keys, or other secrets inside saved agent instructions.
       """
 
     var tools: [any Tool] = [SystemCurrentDateTimeTool()]
     if configuration.agentEnabled {
       tools.append(contentsOf: AppleRoutedMacNativeTools.makeTools())
+      tools.append(contentsOf: AppleRoutedPersistentAgentTools.makeTools())
     }
 
     let session = LanguageModelSession(
