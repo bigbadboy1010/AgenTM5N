@@ -525,11 +525,28 @@ public final class AppState: ObservableObject {
           throw PromptAttachmentError.imageProviderUnsupported
         }
         let providerMessages = makeAppleMessages(excludingAssistantID: assistantID)
-        let event = try await appleProvider.complete(
-          configuration: configuration,
-          messages: providerMessages
+        let bridgeSessionID = UUID()
+        await AgentToolExecutionBridge.shared.install(
+          sessionID: bridgeSessionID,
+          executor: { [self] call in
+            let message = await self.executeToolCall(
+              call,
+              assistantID: assistantID
+            )
+            return message.content
+          }
         )
-        apply(event: event, to: assistantID)
+        do {
+          let event = try await appleProvider.complete(
+            configuration: configuration,
+            messages: providerMessages
+          )
+          await AgentToolExecutionBridge.shared.clear(sessionID: bridgeSessionID)
+          apply(event: event, to: assistantID)
+        } catch {
+          await AgentToolExecutionBridge.shared.clear(sessionID: bridgeSessionID)
+          throw error
+        }
       }
 
       try await conversationStore.save(messages)
@@ -1054,12 +1071,13 @@ public final class AppState: ObservableObject {
   ) async -> Bool {
     let remoteExecution = call.function.name == "ssh_run"
       || call.function.name == "ssh_open_terminal"
+    let personalMacMutation = MacNativeMutationAgentTools.handles(call)
 
     switch configuration.permissionMode {
     case .fullAccess:
       return true
     case .workspaceTrusted:
-      if remoteExecution {
+      if remoteExecution || personalMacMutation {
         return await requestToolApproval(call: call, risk: risk, summary: summary)
       }
       return true
@@ -1175,10 +1193,17 @@ public final class AppState: ObservableObject {
   private func makeOllamaMessages(
     excludingAssistantID: UUID
   ) -> [ProviderMessage] {
+    let runtimeContext = AgentRuntimeContext.currentTemporalContext()
+    let systemContent = configuration.systemPrompt
+      + "\n\n"
+      + AgentRuntimeContext.providerInstruction()
+      + "\n\n"
+      + runtimeContext
+
     var result = [
       ProviderMessage(
         role: .system,
-        content: configuration.systemPrompt
+        content: systemContent
       )
     ]
     result.append(
