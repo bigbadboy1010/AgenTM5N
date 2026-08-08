@@ -1,4 +1,4 @@
-import EventKit
+@preconcurrency import EventKit
 import Foundation
 
 public enum RemindersAgentToolError: LocalizedError {
@@ -46,18 +46,18 @@ public actor RemindersToolService {
       ending: nil,
       calendars: nil
     )
-    let reminders = try await fetch(predicate: predicate)
-    return reminders
+    let descriptors = await fetchDescriptors(predicate: predicate)
+    return descriptors
       .sorted { lhs, rhs in
-        let left = dueDate(lhs) ?? .distantFuture
-        let right = dueDate(rhs) ?? .distantFuture
+        let left = lhs.dueDate ?? .distantFuture
+        let right = rhs.dueDate ?? .distantFuture
         if left == right {
           return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
         return left < right
       }
       .prefix(max(1, min(limit, 100)))
-      .map(descriptor)
+      .map { $0 }
   }
 
   public func create(
@@ -119,10 +119,17 @@ public actor RemindersToolService {
         ending: nil,
         calendars: nil
       )
-      let candidates = try await fetch(predicate: predicate).filter {
-        $0.title.caseInsensitiveCompare(normalized) == .orderedSame
+      let identifiers = await fetchMatchingIdentifiers(
+        predicate: predicate,
+        title: normalized
+      )
+      if identifiers.count == 1,
+        let identifier = identifiers.first
+      {
+        reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder
+      } else {
+        reminder = nil
       }
-      reminder = candidates.count == 1 ? candidates.first : nil
     }
 
     guard let reminder else {
@@ -150,10 +157,35 @@ public actor RemindersToolService {
     }
   }
 
-  private func fetch(predicate: NSPredicate) async throws -> [EKReminder] {
-    try await withCheckedThrowingContinuation { continuation in
+  private func fetchDescriptors(predicate: NSPredicate) async -> [ReminderDescriptor] {
+    await withCheckedContinuation { continuation in
       eventStore.fetchReminders(matching: predicate) { reminders in
-        continuation.resume(returning: reminders ?? [])
+        let values = (reminders ?? []).map { reminder in
+          ReminderDescriptor(
+            identifier: reminder.calendarItemIdentifier,
+            title: reminder.title,
+            list: reminder.calendar.title,
+            dueDate: Self.date(from: reminder.dueDateComponents),
+            completed: reminder.isCompleted,
+            priority: reminder.priority,
+            notes: reminder.notes
+          )
+        }
+        continuation.resume(returning: values)
+      }
+    }
+  }
+
+  private func fetchMatchingIdentifiers(
+    predicate: NSPredicate,
+    title: String
+  ) async -> [String] {
+    await withCheckedContinuation { continuation in
+      eventStore.fetchReminders(matching: predicate) { reminders in
+        let identifiers = (reminders ?? [])
+          .filter { $0.title.caseInsensitiveCompare(title) == .orderedSame }
+          .map(\.calendarItemIdentifier)
+        continuation.resume(returning: identifiers)
       }
     }
   }
@@ -163,15 +195,15 @@ public actor RemindersToolService {
       identifier: reminder.calendarItemIdentifier,
       title: reminder.title,
       list: reminder.calendar.title,
-      dueDate: dueDate(reminder),
+      dueDate: Self.date(from: reminder.dueDateComponents),
       completed: reminder.isCompleted,
       priority: reminder.priority,
       notes: reminder.notes
     )
   }
 
-  private func dueDate(_ reminder: EKReminder) -> Date? {
-    guard let components = reminder.dueDateComponents else { return nil }
+  private static func date(from components: DateComponents?) -> Date? {
+    guard let components else { return nil }
     return Calendar.current.date(from: components)
   }
 
