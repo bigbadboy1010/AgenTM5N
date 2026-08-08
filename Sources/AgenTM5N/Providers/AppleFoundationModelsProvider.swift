@@ -157,6 +157,12 @@ public actor AppleFoundationModelsProvider {
     case workspaceRead
     case workspaceEdit
     case localCommand
+    case memory
+    case context
+    case knowledge
+    case attachments
+    case documents
+    case coreML
   }
 
   private struct ToolSelection {
@@ -200,6 +206,18 @@ public actor AppleFoundationModelsProvider {
       AppleRoutedOperationalTools.makeWorkspaceEditTools()
     case .localCommand:
       AppleRoutedOperationalTools.makeLocalCommandTools()
+    case .memory:
+      AppleRoutedKnowledgeMemoryTools.makeMemoryTools()
+    case .context:
+      AppleRoutedKnowledgeMemoryTools.makeContextTools()
+    case .knowledge:
+      AppleRoutedKnowledgeMemoryTools.makeKnowledgeTools()
+    case .attachments:
+      AppleRoutedKnowledgeMemoryTools.makeAttachmentTools()
+    case .documents:
+      AppleRoutedKnowledgeMemoryTools.makeDocumentTools()
+    case .coreML:
+      AppleRoutedKnowledgeMemoryTools.makeCoreMLTools()
     }
   }
 
@@ -215,58 +233,134 @@ public actor AppleFoundationModelsProvider {
       "remote host", "remote-host",
     ]
     if sshTerms.contains(where: { text.contains($0) }) {
-      return ToolSelection(
+      return .init(
         macNative: false,
         persistentAgents: false,
         focused: .ssh(sshMode(for: text))
       )
     }
 
-    if containsAny(text, ["http://", "https://", " api ", "rest api", "endpoint", "webhook", "bearer", "api key", "api-key", "secret_ref", "secret verwenden", "secret benutzen", "secrets anzeigen"]) {
+    if containsAny(text, [
+      "http://", "https://", " api ", "rest api", "endpoint", "webhook", "bearer",
+      "api key", "api-key", "secret_ref", "secret verwenden", "secret benutzen",
+      "secrets anzeigen", "secret-label", "secret label",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .http)
     }
 
-    if containsAny(text, ["erinnerung", "erinnerungen", "reminder", "reminders", "todo", "to-do"]) {
+    if containsAny(text, [
+      "core ml", "coreml", "mlmodel", "mlpackage", "neural-engine-modell",
+      "neural engine modell", "core ml modell", "core ml vorhersage", "coreml prediction",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .coreML)
+    }
+
+    if containsAny(text, [
+      "workspace memory", "workspace-gedächtnis", "workspace gedächtnis",
+      "workspace-gedaechtnis", "semantic search", "semantische suche", "embedding",
+      "embeddings", "vektorsuche", "vector search", "semantischer index",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .memory)
+    }
+
+    if containsAny(text, [
+      "kontextsuche", "kontext suche", "context search", "context_search",
+      "über alle quellen", "ueber alle quellen", "anhänge und wissen",
+      "anhaenge und wissen", "attachments und knowledge",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .context)
+    }
+
+    if containsAny(text, [
+      "wissensbibliothek", "knowledge library", "knowledge-base", "knowledge base",
+      "knowledge_search", "wissenssammlung", "wissensdokument",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .knowledge)
+    }
+
+    if containsAny(text, [
+      "anhang", "anhänge", "anhaenge", "attachment", "attachments",
+      "angehängte datei", "angehaengte datei", "beigefügte datei", "beigefuegte datei",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .attachments)
+    }
+
+    if containsAny(text, [
+      "document studio", "dokument erstellen", "dokument generieren", "docx erstellen",
+      "pdf erstellen", "xlsx erstellen", "pptx erstellen", "powerpoint erstellen",
+      "word dokument", "excel dokument", "generiertes dokument",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .documents)
+    }
+
+    if containsAny(text, [
+      "erinnerung", "erinnerungen", "reminder", "reminders", "todo", "to-do",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .reminders)
     }
 
-    if containsAny(text, ["delegiere", "delegieren", "delegate", "übertrage an den agent", "uebertrage an den agent", "lass den agent", "spezialist übernehmen", "spezialist uebernehmen"]) {
+    if containsAny(text, [
+      "delegiere", "delegieren", "delegate", "übertrage an den agent",
+      "uebertrage an den agent", "lass den agent", "spezialist übernehmen",
+      "spezialist uebernehmen",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .delegation)
     }
 
-    if containsAny(text, ["workflow", "workflows", "arbeitsablauf", "ablauf speichern", "ablauf ausführen", "ablauf ausfuehren"]) {
+    if containsAny(text, [
+      "workflow", "workflows", "arbeitsablauf", "ablauf speichern",
+      "ablauf ausführen", "ablauf ausfuehren",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .workflows)
     }
 
-    if containsAny(text, ["app update", "update prüfen", "update pruefen", "neue version", "app version", "version von agentm5n", "versionsnummer"]) {
+    if containsAny(text, [
+      "app update", "update prüfen", "update pruefen", "neue version", "app version",
+      "version von agentm5n", "versionsnummer",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .updates)
     }
 
-    if containsAny(text, ["systeminfo", "system info", "systemstatus", "prozesse", "process list", "cpu prozess", "festplatte", "disk info", "speicherplatz", "netzwerkinfo", "network info", "netzwerkschnittstelle"]) {
+    if containsAny(text, [
+      "systeminfo", "system info", "systemstatus", "prozesse", "process list",
+      "cpu prozess", "festplatte", "disk info", "speicherplatz", "netzwerkinfo",
+      "network info", "netzwerkschnittstelle",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .system)
     }
 
-    if containsAny(text, ["zwischenablage", "clipboard", "benachrichtigung", "notification", "kurzbefehl", "shortcut", "shortcuts"]) {
+    if containsAny(text, [
+      "zwischenablage", "clipboard", "benachrichtigung", "notification",
+      "kurzbefehl", "shortcut", "shortcuts",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .macUtilities)
     }
 
-    if containsAny(text, ["git status", "git diff", "git branch", "git checkout", "git commit", "repository", "repo status"]) {
+    if containsAny(text, [
+      "git status", "git diff", "git branch", "git checkout", "git commit",
+      "repository", "repo status",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .git)
     }
 
-    if containsAny(text, ["lokales terminal", "local terminal", "lokaler befehl", "local command", "shell command", "führe lokal", "fuehre lokal"]) {
+    if containsAny(text, [
+      "lokales terminal", "local terminal", "lokaler befehl", "local command",
+      "shell command", "führe lokal", "fuehre lokal",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .localCommand)
     }
 
-    let workspaceEdit = containsAny(text, [
-      "datei ändern", "datei aendern", "datei bearbeiten", "datei schreiben", "write file",
-      "edit file", "apply patch", "patch datei", "ersetze in der datei",
-    ])
-    if workspaceEdit {
+    if containsAny(text, [
+      "datei ändern", "datei aendern", "datei bearbeiten", "datei schreiben",
+      "write file", "edit file", "apply patch", "patch datei", "ersetze in der datei",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .workspaceEdit)
     }
 
-    if containsAny(text, ["workspace", "datei lesen", "read file", "suche in dateien", "search files", "swift-dateien", "swift dateien", "ordner auflisten", "list files", "glob"]) {
+    if containsAny(text, [
+      "workspace", "datei lesen", "read file", "suche in dateien", "search files",
+      "swift-dateien", "swift dateien", "ordner auflisten", "list files", "glob",
+    ]) {
       return .init(macNative: false, persistentAgents: false, focused: .workspaceRead)
     }
 
@@ -283,13 +377,9 @@ public actor AppleFoundationModelsProvider {
     let macNative = macTerms.contains { text.contains($0) }
     let persistentAgents = agentTerms.contains { text.contains($0) }
     if !macNative && !persistentAgents {
-      return ToolSelection(
-        macNative: true,
-        persistentAgents: true,
-        focused: nil
-      )
+      return .init(macNative: true, persistentAgents: true, focused: nil)
     }
-    return ToolSelection(
+    return .init(
       macNative: macNative,
       persistentAgents: persistentAgents,
       focused: nil
@@ -299,9 +389,17 @@ public actor AppleFoundationModelsProvider {
   private static func sshMode(for text: String) -> SSHMode {
     if containsAny(text, ["hochladen", "upload", "scp upload"]) { return .upload }
     if containsAny(text, ["herunterladen", "download", "scp download"]) { return .download }
-    if containsAny(text, ["tail -", "tail log", "logdatei", "log file", "letzten zeilen", "last lines"]) { return .tail }
-    if containsAny(text, ["batch", "health check", "healthcheck", "server check", "mehrere befehle", "mehrere commands", "diagnose-batch"]) { return .batch }
-    if containsAny(text, ["interaktiv", "interactive", "terminal öffnen", "terminal oeffnen", "open terminal", "ssh terminal", "shell öffnen", "shell oeffnen"]) { return .terminal }
+    if containsAny(text, [
+      "tail -", "tail log", "logdatei", "log file", "letzten zeilen", "last lines",
+    ]) { return .tail }
+    if containsAny(text, [
+      "batch", "health check", "healthcheck", "server check", "mehrere befehle",
+      "mehrere commands", "diagnose-batch",
+    ]) { return .batch }
+    if containsAny(text, [
+      "interaktiv", "interactive", "terminal öffnen", "terminal oeffnen",
+      "open terminal", "ssh terminal", "shell öffnen", "shell oeffnen",
+    ]) { return .terminal }
     let runTerms = [
       "führe", "ausführen", "ausfuehren", "befehl", "kommando", "command", "docker",
       "systemctl", "journalctl", "whoami", "hostname", "uname", "df ", "free ",
@@ -344,6 +442,18 @@ public actor AppleFoundationModelsProvider {
       lines.append("Update checks are read-only checks against a user-provided HTTPS manifest and never install automatically.")
     case .workspaceEdit:
       lines.append("Read the target before modifying it. Prefer apply_patch for targeted edits.")
+    case .memory:
+      lines.append("Prefer workspace_semantic_search for meaning-based retrieval. If an embedding model is configured, query embeddings are computed locally through Core ML with CPU + Apple Neural Engine policy.")
+    case .context:
+      lines.append("Use context_search before context_read_source. Keep source IDs exact and preserve source locators in the answer.")
+    case .knowledge:
+      lines.append("Use knowledge_search before reading a source. Imported files must stay inside the configured workspace.")
+    case .attachments:
+      lines.append("Use attachment_search or attachment_list before reading a bounded attachment section. Do not invent attachment content.")
+    case .documents:
+      lines.append("Generate managed documents only from the user's requested content. Report the generated metadata returned by Document Studio.")
+    case .coreML:
+      lines.append("Use coreml_describe_model before coreml_predict when input names or shapes are not known. Core ML runs locally and may use CPU + Apple Neural Engine according to the registered model policy.")
     default:
       break
     }
@@ -435,7 +545,9 @@ public actor AppleFoundationModelsProvider {
       parts.append("recoverySuggestion=\(suggestion)")
     }
     if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
-      parts.append("underlying=\(underlying.domain)(\(underlying.code)): \(underlying.localizedDescription)")
+      parts.append(
+        "underlying=\(underlying.domain)(\(underlying.code)): \(underlying.localizedDescription)"
+      )
     }
     return parts.joined(separator: " | ")
   }
