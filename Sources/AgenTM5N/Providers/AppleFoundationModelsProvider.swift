@@ -65,11 +65,20 @@ public actor AppleFoundationModelsProvider {
       - EventKit can store events in the past and in the future. Do not invent a rule that calendar start dates must be in the future.
       - If you are about to reject, reinterpret, or question a calendar request because of whether a date is past or future, call system_current_datetime first and use its result.
       - If the user explicitly gives a valid absolute date and time, call the requested calendar tool instead of asking for a replacement date merely because existing calendar results start later.
+      - For calendar_create_event, pass the requested local year, month, day, hour, and minute directly to the tool. Do NOT construct UTC or ISO-8601 date strings for event creation.
+      - The calendar_create_event tool itself resolves the components using the Mac's current local time zone.
+      - Only report that calendar creation failed if calendar_create_event actually returns a result whose status is error.
+      - If calendar_create_event returns an error JSON object, report its code, source, local start/end fields when present, and message exactly. Never invent a different system or EventKit error.
+      - If calendar_create_event returns status created, the event was saved successfully; do not reinterpret that as a failure.
       """
 
     var tools: [any Tool] = [SystemCurrentDateTimeTool()]
     if configuration.agentEnabled {
-      tools.append(contentsOf: AppleMacNativeTools.makeTools())
+      let nativeTools = AppleMacNativeTools.makeTools().filter {
+        $0.name != "calendar_create_event"
+      }
+      tools.append(contentsOf: nativeTools)
+      tools.append(AppleLocalCalendarCreateTool())
     }
 
     let session = LanguageModelSession(
@@ -128,7 +137,8 @@ public actor AppleFoundationModelsProvider {
       - Resolve words such as today, tomorrow, yesterday, next Monday, this evening, and similar relative dates against the CURRENT MAC DATE AND TIME above.
       - Never use model training dates, prior assistant statements, or calendar event dates as the current time.
       - Never claim that a requested date is in the past unless it is actually earlier than the CURRENT MAC DATE AND TIME above.
-      - When calling calendar tools, convert requested local calendar times to ISO-8601 and always include the explicit current UTC offset.
+      - For event creation, preserve the user's local wall-clock year, month, day, hour, and minute and pass those components directly to calendar_create_event.
+      - Do not convert calendar creation requests to UTC. The tool performs the authoritative local-time conversion using the Mac time zone.
       - Preserve the user's intended local wall-clock time in the current Mac time zone unless the user explicitly specifies another time zone.
       """
   }
