@@ -7,6 +7,7 @@ struct RootView: View {
   @State private var showingAttachmentCenter = false
   @State private var showingKnowledgeLibrary = false
   @State private var showingDocumentStudio = false
+  @State private var showingMacAccessCenter = false
 
   var body: some View {
     NavigationSplitView {
@@ -132,6 +133,26 @@ struct RootView: View {
                 fr: "Générer et exporter localement des documents DOCX, PDF, XLSX et PPTX."
               )
             )
+
+            Button {
+              showingMacAccessCenter = true
+            } label: {
+              Label(
+                L10n.text(
+                  de: "Mac Access Center",
+                  en: "Mac Access Center",
+                  fr: "Centre d’accès Mac"
+                ),
+                systemImage: "lock.shield"
+              )
+            }
+            .help(
+              L10n.text(
+                de: "macOS-Berechtigungen, gemeinsamen Tool-Router und Audit-Status prüfen.",
+                en: "Inspect macOS permissions, the shared tool router, and audit status.",
+                fr: "Vérifier les autorisations macOS, le routeur d’outils partagé et l’audit."
+              )
+            )
           }
         }
       }
@@ -149,6 +170,10 @@ struct RootView: View {
     .sheet(isPresented: $showingDocumentStudio) {
       DocumentStudioView()
         .frame(minWidth: 1_050, minHeight: 700)
+    }
+    .sheet(isPresented: $showingMacAccessCenter) {
+      MacAccessCenterView()
+        .environmentObject(appState)
     }
     .alert(
       L10n.text(de: "Fehler", en: "Error", fr: "Erreur"),
