@@ -52,7 +52,13 @@ public actor AppleFoundationModelsProvider {
     let instructions = configuration.systemPrompt
       + "\n\n"
       + SystemLanguage.current.agentInstruction
-    let session = LanguageModelSession(model: model) {
+    let tools = configuration.agentEnabled
+      ? AppleMacNativeTools.makeTools()
+      : []
+    let session = LanguageModelSession(
+      model: model,
+      tools: tools
+    ) {
       instructions
     }
     let prompt = Self.makePrompt(messages: messages)
