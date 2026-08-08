@@ -30,13 +30,16 @@ public enum GeneratedDocumentAgentTools {
         ]
       )
     ),
-  ]
+  ] + PersistentAgentTools.definitions
 
   public static func handles(_ call: ProviderToolCall) -> Bool {
     definitions.contains { $0.function.name == call.function.name }
   }
 
   public static func risk(for call: ProviderToolCall) -> ToolRisk {
+    if PersistentAgentTools.handles(call) {
+      return PersistentAgentTools.risk(for: call)
+    }
     switch call.function.name {
     case "document_list_generated":
       return .read
@@ -48,6 +51,9 @@ public enum GeneratedDocumentAgentTools {
   }
 
   public static func summary(for call: ProviderToolCall) -> String {
+    if PersistentAgentTools.handles(call) {
+      return PersistentAgentTools.summary(for: call)
+    }
     let values = call.function.arguments.keys.sorted().compactMap { key -> String? in
       guard let value = call.function.arguments[key] else { return nil }
       let description = value.compactDescription
@@ -63,6 +69,10 @@ public enum GeneratedDocumentAgentTools {
     call: ProviderToolCall,
     service: GeneratedDocumentService = .shared
   ) async -> ToolExecutionResult {
+    if PersistentAgentTools.handles(call) {
+      return await PersistentAgentTools.execute(call: call)
+    }
+
     do {
       switch call.function.name {
       case "document_generate":
