@@ -3,6 +3,7 @@ import FoundationModels
 
 public enum AppleFoundationModelsProviderError: LocalizedError {
   case unavailable(String)
+  case toolsDisabled
   case generationFailure(String)
 
   public var errorDescription: String? {
@@ -12,6 +13,12 @@ public enum AppleFoundationModelsProviderError: LocalizedError {
         de: "Apple Foundation Models ist nicht verfügbar: \(reason)",
         en: "Apple Foundation Models is unavailable: \(reason)",
         fr: "Apple Foundation Models n’est pas disponible : \(reason)"
+      )
+    case .toolsDisabled:
+      return L10n.text(
+        de: "Die AgenTM5N-Werkzeuge sind deaktiviert. Aktiviere den Agent-Modus in den Einstellungen und versuche die SSH-Anfrage erneut.",
+        en: "AgenTM5N tools are disabled. Enable Agent mode in Settings and retry the SSH request.",
+        fr: "Les outils AgenTM5N sont désactivés. Activez le mode Agent dans les réglages puis réessayez la requête SSH."
       )
     case .generationFailure(let details):
       return L10n.text(
@@ -60,6 +67,10 @@ public actor AppleFoundationModelsProvider {
     let temporalContext = AgentRuntimeContext.currentTemporalContext()
     let selection = Self.toolSelection(for: messages)
     let focusedSSH = selection.sshMode != nil
+
+    if focusedSSH && !configuration.agentEnabled {
+      throw AppleFoundationModelsProviderError.toolsDisabled
+    }
 
     let instructions: String
     if focusedSSH {
