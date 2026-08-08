@@ -211,6 +211,50 @@ struct RootView: View {
       }
     }
     .navigationSplitViewStyle(.balanced)
+    .overlay(alignment: .bottomTrailing) {
+      if let document = documentDelivery.pendingDocument {
+        HStack(spacing: 10) {
+          Image(systemName: "doc.badge.arrow.up")
+          VStack(alignment: .leading, spacing: 2) {
+            Text(
+              L10n.text(
+                de: "Dokument bereit",
+                en: "Document Ready",
+                fr: "Document prêt"
+              )
+            )
+            .font(.headline)
+            Text("\(document.fileName) · \(document.format.rawValue.uppercased())")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
+
+          Button {
+            Task { await documentDelivery.presentPending() }
+          } label: {
+            Label(
+              L10n.text(de: "Speichern…", en: "Save…", fr: "Enregistrer…"),
+              systemImage: "square.and.arrow.down"
+            )
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(documentDelivery.isPresenting)
+
+          Button {
+            documentDelivery.dismissPending()
+          } label: {
+            Image(systemName: "xmark")
+          }
+          .buttonStyle(.plain)
+          .disabled(documentDelivery.isPresenting)
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .shadow(radius: 8)
+        .padding(16)
+      }
+    }
     .sheet(isPresented: $showingAttachmentCenter) {
       AttachmentCenterView()
         .environmentObject(appState)
