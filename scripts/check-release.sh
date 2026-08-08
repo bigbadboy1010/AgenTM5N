@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="AgenTM5N"
-EXPECTED_VERSION="${AGENTM5N_VERSION:-1.0.1}"
-EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-23}"
+EXPECTED_VERSION="${AGENTM5N_VERSION:-1.1.0}"
+EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-24}"
 REQUIRE_DEVELOPER_ID="${AGENTM5N_REQUIRE_DEVELOPER_ID:-0}"
 REQUIRE_GATEKEEPER="${AGENTM5N_REQUIRE_GATEKEEPER:-0}"
 APP_DIR="${AGENTM5N_APP_PATH:-$ROOT_DIR/dist/$APP_NAME.app}"
@@ -37,6 +37,16 @@ ICON_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$PLIST")"
 [ "$ICON_NAME" = "$APP_NAME" ] \
   || fail "CFBundleIconFile ist $ICON_NAME statt $APP_NAME."
 
+for usage_key in \
+  NSCalendarsFullAccessUsageDescription \
+  NSRemindersFullAccessUsageDescription \
+  NSContactsUsageDescription \
+  NSAppleEventsUsageDescription
+do
+  USAGE_VALUE="$(/usr/libexec/PlistBuddy -c "Print :$usage_key" "$PLIST" 2>/dev/null || true)"
+  [ -n "$USAGE_VALUE" ] || fail "Privacy Usage Description fehlt: $usage_key"
+done
+
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 SIGNATURE_INFO="$(codesign -dv --verbose=4 "$APP_DIR" 2>&1)"
 printf '%s\n' "$SIGNATURE_INFO" | grep -q 'runtime' \
@@ -65,8 +75,6 @@ if [ "$REQUIRE_DEVELOPER_ID" = "1" ]; then
     || fail "Keine Developer ID Application Signatur gefunden."
 fi
 
-# Only enable this after notarization. Before Apple issues a ticket, a correctly
-# Developer-ID-signed app can legitimately assess as Unnotarized Developer ID.
 if [ "$REQUIRE_GATEKEEPER" = "1" ]; then
   spctl --assess --type execute --verbose=4 "$APP_DIR"
 fi
@@ -78,6 +86,7 @@ printf 'Build:      %s\n' "$BUILD"
 printf 'Bundle ID:  %s\n' "$BUNDLE_ID"
 printf 'Icon:       vorhanden\n'
 printf 'Runtime:    hardened\n'
+printf 'Privacy:    Calendar + Reminders + Contacts + Apple Events\n'
 printf 'Entitlements: Calendar + Contacts + Apple Events\n'
 if [ "$REQUIRE_DEVELOPER_ID" = "1" ]; then
   printf 'Developer ID: bestanden\n'
