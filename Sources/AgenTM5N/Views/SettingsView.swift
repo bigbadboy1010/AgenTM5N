@@ -65,7 +65,6 @@ struct SettingsView: View {
           ),
           isOn: $appState.configuration.agentEnabled
         )
-        .disabled(appState.configuration.providerKind == .appleOnDevice)
 
         Picker(
           L10n.text(de: "Berechtigungsmodus", en: "Permission Mode", fr: "Mode d’autorisation"),
@@ -120,9 +119,9 @@ struct SettingsView: View {
         if appState.configuration.providerKind == .appleOnDevice {
           Text(
             L10n.text(
-              de: "Apple lokal ist derzeit ein reiner Chat-Anbieter. Strukturierte Werkzeugaufrufe verwenden Ollama.",
-              en: "Apple on-device is currently a chat-only provider. Structured tool calls use Ollama.",
-              fr: "Apple local est actuellement un fournisseur de chat uniquement. Les appels d’outils structurés utilisent Ollama."
+              de: "Apple lokal verwendet bei aktiviertem Agent-Modus den gemeinsamen AgenTM5N-Tool-Router. SSH, macOS-Werkzeuge und weitere freigegebene Tool-Pakete laufen durch dieselbe Berechtigungs- und Audit-Schicht wie Ollama.",
+              en: "With Agent mode enabled, Apple on-device uses the shared AgenTM5N tool router. SSH, macOS tools, and other enabled tool packs use the same permission and audit layer as Ollama.",
+              fr: "Lorsque le mode Agent est activé, Apple local utilise le routeur d’outils AgenTM5N partagé. SSH, les outils macOS et les autres packs activés utilisent la même couche d’autorisation et d’audit qu’Ollama."
             )
           )
           .font(.caption)
