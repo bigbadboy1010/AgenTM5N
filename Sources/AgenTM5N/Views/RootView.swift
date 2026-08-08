@@ -4,12 +4,15 @@ struct RootView: View {
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
   @ObservedObject private var agentLibrary = PersistentAgentLibrary.shared
+  @ObservedObject private var workflowLibrary = AgentWorkflowLibrary.shared
   @State private var isImportingPromptFiles = false
   @State private var showingAttachmentCenter = false
   @State private var showingKnowledgeLibrary = false
   @State private var showingDocumentStudio = false
   @State private var showingMacAccessCenter = false
   @State private var showingAgents = false
+  @State private var showingWorkflows = false
+  @State private var showingActivity = false
 
   var body: some View {
     NavigationSplitView {
@@ -35,6 +38,31 @@ struct RootView: View {
                   .foregroundStyle(.secondary)
               }
             }
+          }
+          .buttonStyle(.plain)
+
+          Button {
+            showingWorkflows = true
+          } label: {
+            HStack {
+              Label("Workflows", systemImage: "point.3.connected.trianglepath.dotted")
+              Spacer()
+              if !workflowLibrary.workflows.isEmpty {
+                Text("\(workflowLibrary.workflows.count)")
+                  .font(.caption.monospacedDigit())
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .buttonStyle(.plain)
+
+          Button {
+            showingActivity = true
+          } label: {
+            Label(
+              L10n.text(de: "Aktivität", en: "Activity", fr: "Activité"),
+              systemImage: "waveform.path.ecg"
+            )
           }
           .buttonStyle(.plain)
         }
@@ -202,6 +230,13 @@ struct RootView: View {
     .sheet(isPresented: $showingAgents) {
       AgentsView()
         .environmentObject(appState)
+    }
+    .sheet(isPresented: $showingWorkflows) {
+      WorkflowsView()
+        .environmentObject(appState)
+    }
+    .sheet(isPresented: $showingActivity) {
+      ActivityView()
     }
     .alert(
       L10n.text(de: "Fehler", en: "Error", fr: "Erreur"),
