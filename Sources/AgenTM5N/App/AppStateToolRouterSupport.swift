@@ -1,0 +1,208 @@
+import Foundation
+
+@MainActor
+extension AppState {
+  func registryRiskAndSummary(
+    for call: ProviderToolCall
+  ) async -> (risk: ToolRisk, summary: String) {
+    if PlatformExpansionAgentTools.handles(call) {
+      return (
+        PlatformExpansionAgentTools.risk(for: call),
+        PlatformExpansionAgentTools.summary(for: call)
+      )
+    }
+    if RemindersAgentTools.handles(call) {
+      return (
+        RemindersAgentTools.risk(for: call),
+        RemindersAgentTools.summary(for: call)
+      )
+    }
+    if AgentDelegationTools.handles(call) {
+      return (
+        AgentDelegationTools.risk(for: call),
+        AgentDelegationTools.summary(for: call)
+      )
+    }
+    if WorkflowAgentTools.handles(call) {
+      return (
+        WorkflowAgentTools.risk(for: call),
+        WorkflowAgentTools.summary(for: call)
+      )
+    }
+    if MacNativeAgentTools.handles(call) {
+      return (MacNativeAgentTools.risk(for: call), MacNativeAgentTools.summary(for: call))
+    }
+    if MacNativeMutationAgentTools.handles(call) {
+      return (
+        MacNativeMutationAgentTools.risk(for: call),
+        MacNativeMutationAgentTools.summary(for: call)
+      )
+    }
+    if PersistentAgentTools.handles(call) {
+      return (PersistentAgentTools.risk(for: call), PersistentAgentTools.summary(for: call))
+    }
+    if GeneratedDocumentAgentTools.handles(call) {
+      return (
+        GeneratedDocumentAgentTools.risk(for: call),
+        GeneratedDocumentAgentTools.summary(for: call)
+      )
+    }
+    if UnifiedContextAgentTools.handles(call) {
+      return (
+        UnifiedContextAgentTools.risk(for: call),
+        UnifiedContextAgentTools.summary(for: call)
+      )
+    }
+    if CoreMLAgentTools.handles(call) {
+      return (CoreMLAgentTools.risk(for: call), CoreMLAgentTools.summary(for: call))
+    }
+    if WorkspaceMemoryAgentTools.handles(call) {
+      return (
+        WorkspaceMemoryAgentTools.risk(for: call),
+        WorkspaceMemoryAgentTools.summary(for: call)
+      )
+    }
+    if ConversationAttachmentAgentTools.handles(call) {
+      return (
+        ConversationAttachmentAgentTools.risk(for: call),
+        ConversationAttachmentAgentTools.summary(for: call)
+      )
+    }
+    if KnowledgeLibraryAgentTools.handles(call) {
+      return (
+        KnowledgeLibraryAgentTools.risk(for: call),
+        KnowledgeLibraryAgentTools.summary(for: call)
+      )
+    }
+
+    if let entry = AgentToolRegistry.entry(named: call.function.name) {
+      return (entry.risk, genericRegistrySummary(call))
+    }
+    return (.execute, genericRegistrySummary(call))
+  }
+
+  func executeMeasuredTool(
+    call: ProviderToolCall,
+    risk: ToolRisk,
+    operation: () async -> ToolExecutionResult
+  ) async -> ToolExecutionResult {
+    let startedAt = Date()
+    let entry = AgentToolRegistry.entry(named: call.function.name)
+    let ttl = ToolResultCache.shared.ttl(for: call.function.name)
+
+    if risk == .read, entry?.cacheable == true,
+      let cached = await ToolResultCache.shared.result(for: call)
+    {
+      let sanitized = sanitizeToolResult(cached)
+      recordTelemetry(
+        call: call,
+        risk: risk,
+        result: sanitized,
+        startedAt: startedAt,
+        cacheHit: true
+      )
+      return sanitized
+    }
+
+    let raw = await operation()
+    let result = sanitizeToolResult(raw)
+
+    if risk == .read, entry?.cacheable == true, ttl > 0 {
+      await ToolResultCache.shared.store(result, for: call, ttl: ttl)
+    } else if risk != .read {
+      await ToolResultCache.shared.invalidateAll()
+    }
+
+    recordTelemetry(
+      call: call,
+      risk: risk,
+      result: result,
+      startedAt: startedAt,
+      cacheHit: false
+    )
+    return result
+  }
+
+  func requiresWorkspaceTrustedApproval(
+    call: ProviderToolCall,
+    risk: ToolRisk
+  ) -> Bool {
+    if AgentToolRegistry.isRemoteOrExternal(call.function.name) {
+      return true
+    }
+    if MacNativeMutationAgentTools.handles(call) {
+      return true
+    }
+    if RemindersAgentTools.handles(call), risk != .read {
+      return true
+    }
+    if call.function.name == "agent_delegate"
+      || call.function.name == "workflow_run"
+    {
+      return true
+    }
+    return false
+  }
+
+  func isPlatformExpansionCall(_ call: ProviderToolCall) -> Bool {
+    PlatformExpansionAgentTools.handles(call)
+      || RemindersAgentTools.handles(call)
+      || AgentDelegationTools.handles(call)
+      || WorkflowAgentTools.handles(call)
+  }
+
+  private func sanitizeToolResult(_ result: ToolExecutionResult) -> ToolExecutionResult {
+    ToolExecutionResult(
+      success: result.success,
+      output: SecureSecretBroker.redact(result.output, secrets: secrets)
+    )
+  }
+
+  private func recordTelemetry(
+    call: ProviderToolCall,
+    risk: ToolRisk,
+    result: ToolExecutionResult,
+    startedAt: Date,
+    cacheHit: Bool
+  ) {
+    let endedAt = Date()
+    let milliseconds = max(0, endedAt.timeIntervalSince(startedAt) * 1_000)
+    let entry = AgentToolRegistry.entry(named: call.function.name)
+    ToolTelemetryStore.shared.record(
+      ToolTelemetryEntry(
+        startedAt: startedAt,
+        endedAt: endedAt,
+        toolName: call.function.name,
+        capability: entry?.capability.rawValue ?? "unknown",
+        provider: configuration.providerKind.displayName,
+        risk: risk,
+        success: result.success,
+        durationMilliseconds: milliseconds,
+        outputBytes: result.output.utf8.count,
+        cacheHit: cacheHit
+      )
+    )
+  }
+
+  private func genericRegistrySummary(_ call: ProviderToolCall) -> String {
+    let values = call.function.arguments.keys.sorted().compactMap { key -> String? in
+      guard let value = call.function.arguments[key] else { return nil }
+      let lower = key.lowercased()
+      if lower == "body" || lower == "content" || lower == "text"
+        || lower == "instructions" || lower == "old_text" || lower == "new_text"
+      {
+        return "\(key): <\(value.compactDescription.utf8.count) Bytes>"
+      }
+      if lower.contains("password") || lower.contains("token")
+        || lower.contains("private_key") || lower.contains("passphrase")
+      {
+        return "\(key): <redacted>"
+      }
+      let rendered = value.compactDescription
+      return "\(key): \(rendered.count > 180 ? String(rendered.prefix(180)) + "…" : rendered)"
+    }
+    return values.isEmpty
+      ? call.function.name
+      : "\(call.function.name) — \(values.joined(separator: ", "))"
+  }
+}
