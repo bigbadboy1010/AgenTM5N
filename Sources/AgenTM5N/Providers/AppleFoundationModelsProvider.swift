@@ -327,29 +327,26 @@ public actor AppleFoundationModelsProvider {
   }
 
   private static func describeFoundationModelError(_ error: any Error) -> String {
-    var parts: [String] = []
-
-    if let languageError = error as? LanguageModelError {
-      parts.append("LanguageModelError=\(String(reflecting: languageError))")
-    }
-    if let systemError = error as? SystemLanguageModel.Error {
-      parts.append("SystemLanguageModel.Error=\(String(reflecting: systemError))")
-    }
-    if let sessionError = error as? LanguageModelSession.Error {
-      parts.append("LanguageModelSession.Error=\(String(reflecting: sessionError))")
-    }
-    if let toolError = error as? LanguageModelSession.ToolCallError {
-      parts.append("ToolCallError=\(String(reflecting: toolError))")
-      parts.append("underlying=\(String(reflecting: toolError.underlyingError))")
-    }
-
     let nsError = error as NSError
-    parts.append("NSError=\(nsError.domain)(\(nsError.code))")
+    var parts: [String] = [
+      "type=\(String(reflecting: type(of: error)))",
+      "debug=\(String(reflecting: error))",
+      "NSError=\(nsError.domain)(\(nsError.code))",
+    ]
+
     if !nsError.localizedDescription.isEmpty {
       parts.append("description=\(nsError.localizedDescription)")
     }
-    if parts.isEmpty {
-      parts.append(String(reflecting: error))
+    if let reason = nsError.localizedFailureReason, !reason.isEmpty {
+      parts.append("failureReason=\(reason)")
+    }
+    if let suggestion = nsError.localizedRecoverySuggestion, !suggestion.isEmpty {
+      parts.append("recoverySuggestion=\(suggestion)")
+    }
+    if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+      parts.append(
+        "underlying=\(underlying.domain)(\(underlying.code)): \(underlying.localizedDescription)"
+      )
     }
 
     return parts.joined(separator: " | ")
