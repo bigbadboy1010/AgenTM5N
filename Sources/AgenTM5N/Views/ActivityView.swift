@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ActivityView: View {
+  @Environment(\.dismiss) private var dismiss
   @ObservedObject private var telemetry = ToolTelemetryStore.shared
 
   var body: some View {
@@ -50,7 +51,7 @@ struct ActivityView: View {
       }
       .navigationTitle(L10n.text(de: "Aktivität", en: "Activity", fr: "Activité"))
       .toolbar {
-        ToolbarItem {
+        ToolbarItemGroup {
           Button(role: .destructive) {
             telemetry.clear()
           } label: {
@@ -60,6 +61,16 @@ struct ActivityView: View {
             )
           }
           .disabled(telemetry.entries.isEmpty)
+
+          Button {
+            dismiss()
+          } label: {
+            Label(
+              L10n.text(de: "Schließen", en: "Close", fr: "Fermer"),
+              systemImage: "xmark"
+            )
+          }
+          .keyboardShortcut(.cancelAction)
         }
       }
     }
