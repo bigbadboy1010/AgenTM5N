@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import UniformTypeIdentifiers
 
@@ -17,6 +18,11 @@ public final class GeneratedDocumentDeliveryCenter: ObservableObject {
 
   public func queue(_ document: GeneratedDocumentSummary) {
     pendingDocument = document
+  }
+
+  public func dismissPending() {
+    guard !isPresenting else { return }
+    pendingDocument = nil
   }
 
   public func presentPending() async {
