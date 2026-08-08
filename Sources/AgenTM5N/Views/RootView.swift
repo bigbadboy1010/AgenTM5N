@@ -5,6 +5,7 @@ struct RootView: View {
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
   @ObservedObject private var agentLibrary = PersistentAgentLibrary.shared
   @ObservedObject private var workflowLibrary = AgentWorkflowLibrary.shared
+  @ObservedObject private var documentDelivery = GeneratedDocumentDeliveryCenter.shared
   @State private var isImportingPromptFiles = false
   @State private var showingAttachmentCenter = false
   @State private var showingKnowledgeLibrary = false
@@ -237,6 +238,10 @@ struct RootView: View {
     }
     .sheet(isPresented: $showingActivity) {
       ActivityView()
+    }
+    .onChange(of: documentDelivery.pendingDocument?.id) { _, documentID in
+      guard documentID != nil, !documentDelivery.isPresenting else { return }
+      Task { await documentDelivery.presentPending() }
     }
     .alert(
       L10n.text(de: "Fehler", en: "Error", fr: "Erreur"),
