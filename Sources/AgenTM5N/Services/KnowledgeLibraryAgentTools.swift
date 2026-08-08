@@ -61,7 +61,9 @@ public enum KnowledgeLibraryAgentTools {
         ]
       )
     )
-  ] + UnifiedContextAgentTools.definitions + GeneratedDocumentAgentTools.definitions
+  ] + UnifiedContextAgentTools.definitions
+    + GeneratedDocumentAgentTools.definitions
+    + MacNativeAgentTools.definitions
 
   public static func handles(_ call: ProviderToolCall) -> Bool {
     definitions.contains { $0.function.name == call.function.name }
@@ -70,6 +72,9 @@ public enum KnowledgeLibraryAgentTools {
   public static func risk(for call: ProviderToolCall) -> ToolRisk {
     if GeneratedDocumentAgentTools.handles(call) {
       return GeneratedDocumentAgentTools.risk(for: call)
+    }
+    if MacNativeAgentTools.handles(call) {
+      return MacNativeAgentTools.risk(for: call)
     }
     if UnifiedContextAgentTools.handles(call) {
       return UnifiedContextAgentTools.risk(for: call)
@@ -85,6 +90,9 @@ public enum KnowledgeLibraryAgentTools {
   public static func summary(for call: ProviderToolCall) -> String {
     if GeneratedDocumentAgentTools.handles(call) {
       return GeneratedDocumentAgentTools.summary(for: call)
+    }
+    if MacNativeAgentTools.handles(call) {
+      return MacNativeAgentTools.summary(for: call)
     }
     if UnifiedContextAgentTools.handles(call) {
       return UnifiedContextAgentTools.summary(for: call)
@@ -108,6 +116,10 @@ public enum KnowledgeLibraryAgentTools {
   ) async -> ToolExecutionResult {
     if GeneratedDocumentAgentTools.handles(call) {
       return await GeneratedDocumentAgentTools.execute(call: call)
+    }
+
+    if MacNativeAgentTools.handles(call) {
+      return await MacNativeAgentTools.execute(call: call)
     }
 
     if UnifiedContextAgentTools.handles(call) {
