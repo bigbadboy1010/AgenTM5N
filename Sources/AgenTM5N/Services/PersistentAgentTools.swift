@@ -131,12 +131,21 @@ public enum PersistentAgentTools {
         default: enabled = nil
         }
 
-        let capabilityText = optionalNonEmptyString("capabilities", in: call)
-        let replaceCapabilities = capabilityText != nil
-        let capabilities = try parseCapabilities(
-          capabilityText,
-          emptyMeansNil: true
-        )
+        let capabilityMode = optionalNonEmptyString("capabilities", in: call)
+        let replaceCapabilities: Bool
+        let capabilities: [AgentToolCapability]?
+        if capabilityMode == nil
+          || capabilityMode?.caseInsensitiveCompare("unchanged") == .orderedSame
+        {
+          replaceCapabilities = false
+          capabilities = nil
+        } else {
+          replaceCapabilities = true
+          capabilities = try parseCapabilities(
+            capabilityMode,
+            emptyMeansNil: true
+          )
+        }
 
         let profile = try library.update(
           query: query,
