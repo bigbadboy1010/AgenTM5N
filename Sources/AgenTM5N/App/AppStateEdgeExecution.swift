@@ -93,8 +93,14 @@ extension AppState {
   }
 
   private func edgeWriteFile(_ call: ProviderToolCall) async -> ToolExecutionResult {
+    var localStagingURL: URL?
+    var remoteStagingPath: String?
+    var hostQueryForCleanup: String?
+
     do {
-      let host = try edgeRequiredString("host", in: call)
+      let hostQuery = try edgeRequiredString("host", in: call)
+      hostQueryForCleanup = hostQuery
+      let host = try edgeResolveSSHHost(hostQuery)
       let path = try edgeAbsoluteRemotePath(
         try edgeRequiredString("path", in: call)
       )
@@ -109,36 +115,89 @@ extension AppState {
       let parent = NSString(string: path).deletingLastPathComponent
       let target = ShellEscaping.singleQuoted(path)
       let parentQuoted = ShellEscaping.singleQuoted(parent)
-      let encoded = Data(content.utf8).base64EncodedString()
-      let encodedQuoted = ShellEscaping.singleQuoted(encoded)
 
+      let stagingName = "agentm5n-edge-\(UUID().uuidString.lowercased()).tmp"
+      let localURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(stagingName, isDirectory: false)
+      localStagingURL = localURL
+      let remoteStage = "/tmp/\(stagingName)"
+      remoteStagingPath = remoteStage
+
+      try Data(content.utf8).write(to: localURL, options: .atomic)
+      try FileManager.default.setAttributes(
+        [.posixPermissions: 0o600],
+        ofItemAtPath: localURL.path
+      )
+
+      let credentials = try edgeAuthenticationSecrets(for: host)
+      let transfer = try SSHLaunchService().makeTransferLaunch(
+        host: host,
+        authenticationSecret: credentials.authentication,
+        passphraseSecret: credentials.passphrase,
+        localPath: localURL.path,
+        remotePath: remoteStage,
+        upload: true
+      )
+      defer {
+        for path in transfer.cleanupPaths {
+          try? FileManager.default.removeItem(at: path)
+        }
+      }
+      guard let transferCommand = transfer.initialCommand else {
+        throw SSHAgentToolError.missingLaunchCommand
+      }
+      let transferResult = await AgentRuntime().executeCommand(
+        transferCommand,
+        workspacePath: configuration.workspacePath
+      )
+      guard transferResult.success else {
+        return .init(
+          success: false,
+          output: SecureSecretBroker.redact(transferResult.output, secrets: secrets)
+        )
+      }
+
+      let staged = ShellEscaping.singleQuoted(remoteStage)
       var commands: [String] = ["set -e"]
       if createParent {
         commands.append("mkdir -p -- \(parentQuoted)")
       } else {
         commands.append("test -d \(parentQuoted)")
       }
-      commands.append("target=\(target)")
-      commands.append("tmp=\"${target}.agentm5n.$$\"")
-      commands.append("trap 'rm -f -- \"$tmp\"' EXIT")
-      commands.append("printf %s \(encodedQuoted) | base64 -d > \"$tmp\"")
       if backup {
-        commands.append("if [ -e \"$target\" ]; then cp -p -- \"$target\" \"${target}.bak.$(date +%Y%m%d%H%M%S)\"; fi")
+        commands.append("if [ -e \(target) ]; then cp -p -- \(target) \(target).bak.$(date +%Y%m%d%H%M%S); fi")
       }
-      commands.append("if [ -e \"$target\" ]; then chmod --reference=\"$target\" \"$tmp\" 2>/dev/null || true; chown --reference=\"$target\" \"$tmp\" 2>/dev/null || true; fi")
-      commands.append("mv -f -- \"$tmp\" \"$target\"")
-      commands.append("trap - EXIT")
-      commands.append("wc -c -- \"$target\"")
+      commands.append("if [ -e \(target) ]; then chmod --reference=\(target) \(staged) 2>/dev/null || true; chown --reference=\(target) \(staged) 2>/dev/null || true; fi")
+      commands.append("mv -f -- \(staged) \(target)")
+      commands.append("wc -c -- \(target)")
 
-      return await edgeRunSSH(
-        hostQuery: host,
+      let result = await edgeRunSSH(
+        hostQuery: hostQuery,
         command: commands.joined(separator: "; ")
       )
+      if result.success {
+        remoteStagingPath = nil
+      }
+      return result
     } catch {
       return .init(
         success: false,
         output: SecureSecretBroker.redact(error.localizedDescription, secrets: secrets)
       )
+    }
+
+    defer {
+      if let localStagingURL {
+        try? FileManager.default.removeItem(at: localStagingURL)
+      }
+      if let remoteStagingPath, let hostQueryForCleanup {
+        Task { @MainActor in
+          _ = await edgeRunSSH(
+            hostQuery: hostQueryForCleanup,
+            command: "rm -f -- \(ShellEscaping.singleQuoted(remoteStagingPath))"
+          )
+        }
+      }
     }
   }
 
