@@ -33,7 +33,7 @@ public enum CoreMLManagedStorage {
       guard let enumerator = manager.enumerator(
         at: standardized,
         includingPropertiesForKeys: keys,
-        options: [.skipsHiddenFiles],
+        options: [],
         errorHandler: { _, _ in true }
       ) else {
         return hex(hasher.finalize())
@@ -95,16 +95,16 @@ public enum CoreMLManagedStorage {
 
     let contentHash: String
     if let digest {
-      contentHash = digest
+      contentHash = digest.lowercased()
     } else {
       contentHash = try contentDigest(at: sourceURL)
     }
 
-    let baseName = sanitizedBaseName(
-      sourceURL.deletingPathExtension().lastPathComponent
-    )
+    // The persistent filename is derived only from content, not from the source
+    // filename or the temporary Core ML compiler output name. Identical model
+    // contents therefore converge on exactly one managed artifact.
     let destination = directory.appendingPathComponent(
-      "\(baseName)-\(contentHash).\(preferredExtension)",
+      "model-\(contentHash).\(preferredExtension)",
       isDirectory: preferredExtension == "mlpackage" || preferredExtension == "mlmodelc"
     )
 
@@ -183,18 +183,5 @@ public enum CoreMLManagedStorage {
 
   private static func hex(_ digest: SHA256.Digest) -> String {
     digest.map { String(format: "%02x", $0) }.joined()
-  }
-
-  private static func sanitizedBaseName(_ value: String) -> String {
-    let allowed = CharacterSet.alphanumerics.union(
-      CharacterSet(charactersIn: "-_")
-    )
-    let scalars = value.unicodeScalars.map {
-      allowed.contains($0) ? Character(String($0)) : "-"
-    }
-    let result = String(scalars).trimmingCharacters(
-      in: CharacterSet(charactersIn: "-")
-    )
-    return result.isEmpty ? "CoreMLModel" : result
   }
 }
