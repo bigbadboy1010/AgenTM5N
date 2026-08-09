@@ -50,7 +50,7 @@ extension AppState {
     if WorkflowAgentTools.handles(call) {
       return (
         WorkflowAgentTools.risk(for: call),
-        workflowApprovalSummary(for: call)
+        await workflowApprovalSummary(for: call)
       )
     }
     if MacNativeAgentTools.handles(call) {
@@ -198,7 +198,7 @@ extension AppState {
       || WorkflowAgentTools.handles(call)
   }
 
-  private func workflowApprovalSummary(for call: ProviderToolCall) -> String {
+  private func workflowApprovalSummary(for call: ProviderToolCall) async -> String {
     let base = WorkflowAgentTools.summary(for: call)
     guard call.function.name == "workflow_run",
       let query = call.function.arguments["workflow"]?.stringValue,
@@ -207,11 +207,23 @@ extension AppState {
       return base
     }
 
-    let steps = workflow.steps.prefix(20).map { step -> String in
-      let risk = AgentToolRegistry.entry(named: step.toolName)?.risk.displayName ?? "Execute"
-      return "\(step.toolName)[\(risk)]"
+    var stepSummaries: [String] = []
+    for (index, step) in workflow.steps.prefix(20).enumerated() {
+      let stepCall = ProviderToolCall(
+        function: .init(name: step.toolName, arguments: step.arguments)
+      )
+      let routing = await registryRiskAndSummary(for: stepCall)
+      let bounded = routing.summary.count > 500
+        ? String(routing.summary.prefix(500)) + "…"
+        : routing.summary
+      stepSummaries.append("\(index + 1). [\(routing.risk.displayName)] \(bounded)")
     }
-    return "\(base) — \(workflow.steps.count) Schritte: \(steps.joined(separator: " → "))"
+
+    return """
+      \(base)
+      Gespeicherte Workflow-Schritte (eine Freigabe für den gesamten Ablauf):
+      \(stepSummaries.joined(separator: "\n"))
+      """
   }
 
   private func sanitizeToolResult(_ result: ToolExecutionResult) -> ToolExecutionResult {
