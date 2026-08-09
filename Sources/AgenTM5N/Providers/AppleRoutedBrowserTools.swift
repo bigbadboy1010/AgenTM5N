@@ -63,21 +63,23 @@ private struct BrowserTabsTool: Tool {
 private struct BrowserOpenTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "browser_open"
-  let description = "Open a URL in Microsoft Edge. Leave tab_id empty to open a new tab; otherwise navigate that existing tab."
+  let description = "Open a URL in Microsoft Edge. Omit tab_id to open a new tab; otherwise navigate that existing tab."
 
   @Generable
   struct Arguments {
     @Guide(description: "Absolute http, https, edge, or about URL")
     var url: String
 
-    @Guide(description: "Existing tab ID, or empty string for a new tab")
-    var tabID: String
+    @Guide(description: "Optional existing tab ID. Omit for a new tab.")
+    var tabID: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
     var values: [String: JSONValue] = ["url": .string(arguments.url)]
-    if !arguments.tabID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      values["tab_id"] = .string(arguments.tabID)
+    if let tabID = arguments.tabID,
+      !tabID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      values["tab_id"] = .string(tabID)
     }
     return await routeBrowser(bridge: bridge, name: name, arguments: values)
   }
@@ -86,41 +88,42 @@ private struct BrowserOpenTool: Tool {
 private struct BrowserReadTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "browser_read"
-  let description = "Read a semantic snapshot of a Microsoft Edge page. It returns visible text plus interactive elements with temporary refs such as b12. Use these refs with browser_action."
+  let description = "Read a semantic snapshot of a Microsoft Edge page. It returns visible text plus interactive elements with temporary refs such as b12. Use these refs with browser_batch or browser_action."
 
   @Generable
   struct Arguments {
-    @Guide(description: "Tab ID, or empty for the last selected tab")
-    var tabID: String
+    @Guide(description: "Optional tab ID. Omit for the last selected tab.")
+    var tabID: String? = nil
 
-    @Guide(description: "Maximum visible-text characters from 1000 to 60000")
-    var maxChars: Int
+    @Guide(description: "Optional maximum visible-text characters from 1000 to 60000. Defaults to 30000.")
+    var maxChars: Int? = nil
 
-    @Guide(description: "Maximum interactive elements from 10 to 250")
-    var maxElements: Int
+    @Guide(description: "Optional maximum interactive elements from 10 to 250. Defaults to 120.")
+    var maxElements: Int? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
     var values: [String: JSONValue] = [
-      "max_chars": .number(Double(arguments.maxChars)),
-      "max_elements": .number(Double(arguments.maxElements)),
+      "max_chars": .number(Double(arguments.maxChars ?? 30_000)),
+      "max_elements": .number(Double(arguments.maxElements ?? 120)),
     ]
-    if !arguments.tabID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      values["tab_id"] = .string(arguments.tabID)
+    if let tabID = arguments.tabID,
+      !tabID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      values["tab_id"] = .string(tabID)
     }
     return await routeBrowser(bridge: bridge, name: name, arguments: values)
   }
 }
 
-
 private struct BrowserBatchTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "browser_batch"
   let description = """
-  Execute multiple Microsoft Edge interactions in exact order in one tool call.
-  Use this whenever the user requests two or more browser actions such as
-  fill, check, select, click, press, scroll, or wait.
-  Prefer refs returned by the latest browser_read.
+  Execute multiple Microsoft Edge interactions in exact order in one centrally
+  authorized tool call. Use this whenever the user requests two or more browser
+  actions such as fill, check, select, click, press, scroll, or wait. Prefer refs
+  returned by the latest browser_read.
   """
 
   @Generable
@@ -128,7 +131,7 @@ private struct BrowserBatchTool: Tool {
     @Guide(description: "click, fill, select, check, uncheck, press, scroll, or wait")
     var action: String
 
-    @Guide(description: "Element ref from the latest browser_read, such as b1")
+    @Guide(description: "Optional element ref from the latest browser_read, such as b1")
     var ref: String? = nil
 
     @Guide(description: "Optional CSS selector")
@@ -137,7 +140,7 @@ private struct BrowserBatchTool: Tool {
     @Guide(description: "Optional visible element text or label")
     var targetText: String? = nil
 
-    @Guide(description: "Text for fill/select or key fallback for press")
+    @Guide(description: "Optional text for fill/select or key fallback for press")
     var text: String? = nil
 
     @Guide(description: "Optional keyboard key")
@@ -152,7 +155,7 @@ private struct BrowserBatchTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Existing tab ID. Omit to use the currently selected browser tab.")
+    @Guide(description: "Optional existing tab ID. Omit to use the currently selected browser tab.")
     var tabID: String? = nil
 
     @Guide(description: "Browser operations to perform, in exact order")
@@ -166,23 +169,12 @@ private struct BrowserBatchTool: Tool {
     guard !arguments.steps.isEmpty else {
       return "browser_batch failed: no steps supplied."
     }
-
     guard arguments.steps.count <= 12 else {
       return "browser_batch failed: maximum 12 steps."
     }
 
-    var outputs: [String] = []
-
-    for (index, step) in arguments.steps.enumerated() {
-      var values: [String: JSONValue] = [
-        "action": .string(step.action)
-      ]
-
-      if let tabID = arguments.tabID,
-         !tabID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        values["tab_id"] = .string(tabID)
-      }
-
+    let stepValues: [JSONValue] = arguments.steps.map { step in
+      var object: [String: JSONValue] = ["action": .string(step.action)]
       let optionalStrings: [(String, String?)] = [
         ("ref", step.ref),
         ("selector", step.selector),
@@ -190,54 +182,37 @@ private struct BrowserBatchTool: Tool {
         ("text", step.text),
         ("key", step.key),
       ]
-
       for (name, value) in optionalStrings {
         if let value,
-           !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          values[name] = .string(value)
+          !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+          object[name] = .string(value)
         }
       }
-
       if let amount = step.amount {
-        values["amount"] = .number(Double(amount))
+        object["amount"] = .number(Double(amount))
       }
-
       if let timeout = step.timeoutMilliseconds {
-        values["timeout_ms"] = .number(Double(timeout))
+        object["timeout_ms"] = .number(Double(timeout))
       }
-
-      let result = await routeBrowser(
-        bridge: bridge,
-        name: "browser_action",
-        arguments: values
-      )
-
-      outputs.append(
-        "STEP \(index + 1) \(step.action):\n\(result)"
-      )
+      return .object(object)
     }
 
-    if arguments.readAfter ?? true {
-      var readArguments: [String: JSONValue] = [
-        "max_chars": .number(10_000),
-        "max_elements": .number(120)
-      ]
-
-      if let tabID = arguments.tabID,
-         !tabID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        readArguments["tab_id"] = .string(tabID)
-      }
-
-      let snapshot = await routeBrowser(
-        bridge: bridge,
-        name: "browser_read",
-        arguments: readArguments
-      )
-
-      outputs.append("FINAL PAGE:\n\(snapshot)")
+    var values: [String: JSONValue] = [
+      "steps": .array(stepValues),
+      "read_after": .bool(arguments.readAfter ?? true),
+    ]
+    if let tabID = arguments.tabID,
+      !tabID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      values["tab_id"] = .string(tabID)
     }
 
-    return outputs.joined(separator: "\n\n")
+    return await routeBrowser(
+      bridge: bridge,
+      name: name,
+      arguments: values
+    )
   }
 }
 
@@ -251,48 +226,53 @@ private struct BrowserActionTool: Tool {
     @Guide(description: "click, fill, select, check, uncheck, press, scroll, wait, activate_tab, close_tab, back, forward, or reload")
     var action: String
 
-    @Guide(description: "Tab ID, or empty for the last selected tab")
-    var tabID: String
+    @Guide(description: "Optional tab ID")
+    var tabID: String? = nil
 
-    @Guide(description: "Element ref from browser_read, or empty")
-    var ref: String
+    @Guide(description: "Optional element ref from browser_read")
+    var ref: String? = nil
 
-    @Guide(description: "CSS selector, or empty")
-    var selector: String
+    @Guide(description: "Optional CSS selector")
+    var selector: String? = nil
 
-    @Guide(description: "Visible target text, or empty")
-    var targetText: String
+    @Guide(description: "Optional visible target text")
+    var targetText: String? = nil
 
-    @Guide(description: "Text to fill/select, key fallback for press, or empty")
-    var text: String
+    @Guide(description: "Optional text to fill/select or key fallback for press")
+    var text: String? = nil
 
-    @Guide(description: "Keyboard key such as Enter, Tab, Escape, ArrowDown, or empty")
-    var key: String
+    @Guide(description: "Optional keyboard key such as Enter, Tab, Escape, ArrowDown")
+    var key: String? = nil
 
-    @Guide(description: "Scroll pixels; use 700 when not scrolling")
-    var amount: Int
+    @Guide(description: "Optional scroll pixels")
+    var amount: Int? = nil
 
-    @Guide(description: "Timeout in milliseconds; use 5000 when not waiting")
-    var timeoutMilliseconds: Int
+    @Guide(description: "Optional timeout in milliseconds")
+    var timeoutMilliseconds: Int? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    var values: [String: JSONValue] = [
-      "action": .string(arguments.action),
-      "text": .string(arguments.text),
-      "amount": .number(Double(arguments.amount)),
-      "timeout_ms": .number(Double(arguments.timeoutMilliseconds)),
-    ]
-    let optional: [(String, String)] = [
+    var values: [String: JSONValue] = ["action": .string(arguments.action)]
+    let optional: [(String, String?)] = [
       ("tab_id", arguments.tabID),
       ("ref", arguments.ref),
       ("selector", arguments.selector),
       ("target_text", arguments.targetText),
+      ("text", arguments.text),
       ("key", arguments.key),
     ]
-    for (name, value) in optional
-    where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      values[name] = .string(value)
+    for (name, value) in optional {
+      if let value,
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      {
+        values[name] = .string(value)
+      }
+    }
+    if let amount = arguments.amount {
+      values["amount"] = .number(Double(amount))
+    }
+    if let timeout = arguments.timeoutMilliseconds {
+      values["timeout_ms"] = .number(Double(timeout))
     }
     return await routeBrowser(bridge: bridge, name: name, arguments: values)
   }
