@@ -206,7 +206,8 @@ final class SecurityPolicyTests: XCTestCase {
       for await _ in group {}
     }
 
-    XCTAssertEqual(await probe.maximum(), 1)
+    let maximumConcurrentExecutions = await probe.maximum()
+    XCTAssertEqual(maximumConcurrentExecutions, 1)
     await bridge.clear(sessionID: sessionID)
   }
 
