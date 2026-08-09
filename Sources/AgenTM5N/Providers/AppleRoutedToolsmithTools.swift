@@ -12,14 +12,14 @@ public enum AppleRoutedToolsmithTools {
 private struct ToolsmithTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "toolsmith"
-  let description = "Build, inspect, list, delete, or run persistent AgenTM5N runtime tools. Self-built tools use zsh or python3, receive structured parameters, run in the configured workspace, and never receive Vault secrets automatically."
+  let description = "Build, inspect, list, enable, disable, delete, or run persistent AgenTM5N runtime tools. Self-built tools use zsh or python3, receive structured parameters, run in the configured workspace, and never receive Vault secrets automatically."
 
   @Generable
   struct Arguments {
-    @Guide(description: "Operation: list, get, create, delete, or run")
+    @Guide(description: "Operation: list, get, create, enable, disable, delete, or run")
     var operation: String
 
-    @Guide(description: "Optional exact custom tool name or UUID for get/delete/run")
+    @Guide(description: "Optional exact custom tool name or UUID for get/enable/disable/delete/run")
     var tool: String? = nil
 
     @Guide(description: "Optional new tool name for create; custom_ is added automatically")
@@ -68,6 +68,15 @@ private struct ToolsmithTool: Tool {
         ]
       )
 
+    case "enable", "disable":
+      return await route(
+        name: "toolsmith_set_enabled",
+        arguments: [
+          "tool": .string(arguments.tool ?? ""),
+          "enabled": .bool(operation == "enable"),
+        ]
+      )
+
     case "delete":
       return await route(
         name: "toolsmith_delete",
@@ -84,7 +93,7 @@ private struct ToolsmithTool: Tool {
       )
 
     default:
-      return "TOOL_ERROR: toolsmith operation must be list, get, create, delete, or run."
+      return "TOOL_ERROR: toolsmith operation must be list, get, create, enable, disable, delete, or run."
     }
   }
 
