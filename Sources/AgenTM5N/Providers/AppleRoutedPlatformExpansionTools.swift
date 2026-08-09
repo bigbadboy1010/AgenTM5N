@@ -78,7 +78,8 @@ private struct AppleSecretListTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Use all") var query: String
+    @Guide(description: "Optional. Omit this value or use all.")
+    var query: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -93,13 +94,26 @@ private struct AppleHTTPRequestTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "GET, HEAD, POST, PUT, PATCH, DELETE, or OPTIONS") var method: String
-    @Guide(description: "Absolute http or https URL without embedded credentials") var url: String
-    @Guide(description: "Optional JSON object of non-secret string headers, or {}") var headersJson: String
-    @Guide(description: "Optional request body; use empty string when absent") var body: String
-    @Guide(description: "Optional exact Vault secret label; empty means no secret") var secretRef: String
-    @Guide(description: "bearer, basic, header, or empty for bearer") var secretUsage: String
-    @Guide(description: "Header name when secret_usage is header; empty uses X-API-Key") var secretHeader: String
+    @Guide(description: "GET, HEAD, POST, PUT, PATCH, DELETE, or OPTIONS")
+    var method: String
+
+    @Guide(description: "Absolute http or https URL without embedded credentials")
+    var url: String
+
+    @Guide(description: "Optional JSON object of non-secret string headers")
+    var headersJson: String? = nil
+
+    @Guide(description: "Optional request body")
+    var body: String? = nil
+
+    @Guide(description: "Optional exact Vault secret label")
+    var secretRef: String? = nil
+
+    @Guide(description: "Optional secret usage: bearer, basic, or header")
+    var secretUsage: String? = nil
+
+    @Guide(description: "Optional header name when secret_usage is header")
+    var secretHeader: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -107,12 +121,26 @@ private struct AppleHTTPRequestTool: Tool {
       "method": .string(arguments.method),
       "url": .string(arguments.url),
     ]
-    if !arguments.body.isEmpty { values["body"] = .string(arguments.body) }
-    if !arguments.secretRef.isEmpty { values["secret_ref"] = .string(arguments.secretRef) }
-    if !arguments.secretUsage.isEmpty { values["secret_usage"] = .string(arguments.secretUsage) }
-    if !arguments.secretHeader.isEmpty { values["secret_header"] = .string(arguments.secretHeader) }
-    if let headers = parseStringMap(arguments.headersJson), !headers.isEmpty {
-      values["headers"] = .object(headers.mapValues(JSONValue.string))
+
+    if let body = normalizedOptional(arguments.body, preserveWhitespace: true) {
+      values["body"] = .string(body)
+    }
+    if let secretRef = normalizedOptional(arguments.secretRef) {
+      values["secret_ref"] = .string(secretRef)
+    }
+    if let secretUsage = normalizedOptional(arguments.secretUsage) {
+      values["secret_usage"] = .string(secretUsage)
+    }
+    if let secretHeader = normalizedOptional(arguments.secretHeader) {
+      values["secret_header"] = .string(secretHeader)
+    }
+    if let headersJSON = normalizedOptional(arguments.headersJson) {
+      guard let headers = parseStringMap(headersJSON) else {
+        return "TOOL_ERROR: headersJson must be a JSON object containing string values only."
+      }
+      if !headers.isEmpty {
+        values["headers"] = .object(headers.mapValues(JSONValue.string))
+      }
     }
     return await routePlatform(bridge: bridge, name: name, arguments: values)
   }
@@ -122,7 +150,13 @@ private struct AppleSystemInfoTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "system_info"
   let description = "Read local Mac hardware, OS, architecture, uptime, and memory metadata."
-  @Generable struct Arguments { @Guide(description: "Use current") var query: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Optional. Omit this value or use current.")
+    var query: String? = nil
+  }
+
   func call(arguments: Arguments) async throws -> String {
     await routePlatform(bridge: bridge, name: name, arguments: [:])
   }
@@ -132,9 +166,19 @@ private struct AppleProcessListTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "process_list"
   let description = "Read a bounded local process list sorted by CPU usage."
-  @Generable struct Arguments { @Guide(description: "Maximum process count from 1 to 100") var limit: Int }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Optional maximum process count from 1 to 100. Defaults to 25.")
+    var limit: Int? = nil
+  }
+
   func call(arguments: Arguments) async throws -> String {
-    await routePlatform(bridge: bridge, name: name, arguments: ["limit": .number(Double(arguments.limit))])
+    var values: [String: JSONValue] = [:]
+    if let limit = arguments.limit {
+      values["limit"] = .number(Double(limit))
+    }
+    return await routePlatform(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -142,7 +186,13 @@ private struct AppleDiskInfoTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "disk_info"
   let description = "Read local filesystem size and free-space information."
-  @Generable struct Arguments { @Guide(description: "Use current") var query: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Optional. Omit this value or use current.")
+    var query: String? = nil
+  }
+
   func call(arguments: Arguments) async throws -> String {
     await routePlatform(bridge: bridge, name: name, arguments: [:])
   }
@@ -152,7 +202,13 @@ private struct AppleNetworkInfoTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "network_info"
   let description = "Read local network-interface and default-route information."
-  @Generable struct Arguments { @Guide(description: "Use current") var query: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Optional. Omit this value or use current.")
+    var query: String? = nil
+  }
+
   func call(arguments: Arguments) async throws -> String {
     await routePlatform(bridge: bridge, name: name, arguments: [:])
   }
@@ -162,7 +218,13 @@ private struct AppleClipboardReadTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "clipboard_read"
   let description = "Read plain text from the macOS clipboard when explicitly relevant to the user's request."
-  @Generable struct Arguments { @Guide(description: "Use current") var query: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Optional. Omit this value or use current.")
+    var query: String? = nil
+  }
+
   func call(arguments: Arguments) async throws -> String {
     await routePlatform(bridge: bridge, name: name, arguments: [:])
   }
@@ -172,9 +234,19 @@ private struct AppleClipboardWriteTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "clipboard_write"
   let description = "Replace the macOS clipboard with plain text."
-  @Generable struct Arguments { @Guide(description: "Text to copy") var text: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Text to copy")
+    var text: String
+  }
+
   func call(arguments: Arguments) async throws -> String {
-    await routePlatform(bridge: bridge, name: name, arguments: ["text": .string(arguments.text)])
+    await routePlatform(
+      bridge: bridge,
+      name: name,
+      arguments: ["text": .string(arguments.text)]
+    )
   }
 }
 
@@ -182,18 +254,27 @@ private struct AppleNotificationTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "notification_send"
   let description = "Display one local macOS notification."
+
   @Generable
   struct Arguments {
-    @Guide(description: "Notification title") var title: String
-    @Guide(description: "Notification message") var message: String
-    @Guide(description: "Optional subtitle, or empty") var subtitle: String
+    @Guide(description: "Notification title")
+    var title: String
+
+    @Guide(description: "Notification message")
+    var message: String
+
+    @Guide(description: "Optional subtitle")
+    var subtitle: String? = nil
   }
+
   func call(arguments: Arguments) async throws -> String {
     var values: [String: JSONValue] = [
       "title": .string(arguments.title),
       "message": .string(arguments.message),
     ]
-    if !arguments.subtitle.isEmpty { values["subtitle"] = .string(arguments.subtitle) }
+    if let subtitle = normalizedOptional(arguments.subtitle) {
+      values["subtitle"] = .string(subtitle)
+    }
     return await routePlatform(bridge: bridge, name: name, arguments: values)
   }
 }
@@ -202,7 +283,13 @@ private struct AppleShortcutsListTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "shortcuts_list"
   let description = "List macOS Shortcuts available to the current user."
-  @Generable struct Arguments { @Guide(description: "Use all") var query: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Optional. Omit this value or use all.")
+    var query: String? = nil
+  }
+
   func call(arguments: Arguments) async throws -> String {
     await routePlatform(bridge: bridge, name: name, arguments: [:])
   }
@@ -212,9 +299,19 @@ private struct AppleShortcutsRunTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "shortcuts_run"
   let description = "Run one named macOS Shortcut through AgenTM5N approval."
-  @Generable struct Arguments { @Guide(description: "Exact Shortcut name") var shortcutName: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Exact Shortcut name")
+    var shortcutName: String
+  }
+
   func call(arguments: Arguments) async throws -> String {
-    await routePlatform(bridge: bridge, name: name, arguments: ["name": .string(arguments.shortcutName)])
+    await routePlatform(
+      bridge: bridge,
+      name: name,
+      arguments: ["name": .string(arguments.shortcutName)]
+    )
   }
 }
 
@@ -222,9 +319,19 @@ private struct AppleRemindersListTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "reminders_list"
   let description = "List incomplete macOS Reminders."
-  @Generable struct Arguments { @Guide(description: "Maximum reminders from 1 to 100") var limit: Int }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Optional maximum reminders from 1 to 100. Defaults to 25.")
+    var limit: Int? = nil
+  }
+
   func call(arguments: Arguments) async throws -> String {
-    await routePlatform(bridge: bridge, name: name, arguments: ["limit": .number(Double(arguments.limit))])
+    var values: [String: JSONValue] = [:]
+    if let limit = arguments.limit {
+      values["limit"] = .number(Double(limit))
+    }
+    return await routePlatform(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -232,18 +339,33 @@ private struct AppleRemindersCreateTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "reminders_create"
   let description = "Create one macOS Reminder. AgenTM5N applies personal-data confirmation policy."
+
   @Generable
   struct Arguments {
-    @Guide(description: "Reminder title") var title: String
-    @Guide(description: "Optional notes, or empty") var notes: String
-    @Guide(description: "Optional ISO-8601 due date/time, or empty") var dueDate: String
-    @Guide(description: "Optional exact Reminders list name, or empty") var listName: String
+    @Guide(description: "Reminder title")
+    var title: String
+
+    @Guide(description: "Optional notes")
+    var notes: String? = nil
+
+    @Guide(description: "Optional ISO-8601 due date/time")
+    var dueDate: String? = nil
+
+    @Guide(description: "Optional exact Reminders list name")
+    var listName: String? = nil
   }
+
   func call(arguments: Arguments) async throws -> String {
     var values: [String: JSONValue] = ["title": .string(arguments.title)]
-    if !arguments.notes.isEmpty { values["notes"] = .string(arguments.notes) }
-    if !arguments.dueDate.isEmpty { values["due_date"] = .string(arguments.dueDate) }
-    if !arguments.listName.isEmpty { values["list"] = .string(arguments.listName) }
+    if let notes = normalizedOptional(arguments.notes, preserveWhitespace: true) {
+      values["notes"] = .string(notes)
+    }
+    if let dueDate = normalizedOptional(arguments.dueDate) {
+      values["due_date"] = .string(dueDate)
+    }
+    if let listName = normalizedOptional(arguments.listName) {
+      values["list"] = .string(listName)
+    }
     return await routePlatform(bridge: bridge, name: name, arguments: values)
   }
 }
@@ -252,9 +374,19 @@ private struct AppleRemindersCompleteTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "reminders_complete"
   let description = "Mark one incomplete macOS Reminder complete by exact title or identifier."
-  @Generable struct Arguments { @Guide(description: "Exact reminder title or identifier") var reminder: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Exact reminder title or identifier")
+    var reminder: String
+  }
+
   func call(arguments: Arguments) async throws -> String {
-    await routePlatform(bridge: bridge, name: name, arguments: ["reminder": .string(arguments.reminder)])
+    await routePlatform(
+      bridge: bridge,
+      name: name,
+      arguments: ["reminder": .string(arguments.reminder)]
+    )
   }
 }
 
@@ -262,21 +394,31 @@ private struct AppleAgentDelegateTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "agent_delegate"
   let description = "Delegate a bounded subtask to one saved AgenTM5N specialist agent. The delegated agent never receives Vault secret values directly."
+
   @Generable
   struct Arguments {
-    @Guide(description: "Exact saved agent name or UUID") var agent: String
-    @Guide(description: "Concrete bounded specialist task") var task: String
-    @Guide(description: "Allow AgenTM5N tools for an Ollama delegate") var allowTools: Bool
+    @Guide(description: "Exact saved agent name or UUID")
+    var agent: String
+
+    @Guide(description: "Concrete bounded specialist task")
+    var task: String
+
+    @Guide(description: "Optional. Allow AgenTM5N tools for the delegate. Defaults to true.")
+    var allowTools: Bool? = nil
   }
+
   func call(arguments: Arguments) async throws -> String {
-    await routePlatform(
+    var values: [String: JSONValue] = [
+      "agent": .string(arguments.agent),
+      "task": .string(arguments.task),
+    ]
+    if let allowTools = arguments.allowTools {
+      values["allow_tools"] = .bool(allowTools)
+    }
+    return await routePlatform(
       bridge: bridge,
       name: name,
-      arguments: [
-        "agent": .string(arguments.agent),
-        "task": .string(arguments.task),
-        "allow_tools": .bool(arguments.allowTools),
-      ]
+      arguments: values
     )
   }
 }
@@ -285,7 +427,13 @@ private struct AppleWorkflowListTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "workflow_list"
   let description = "List persistent AgenTM5N workflows without secret values."
-  @Generable struct Arguments { @Guide(description: "Use all") var query: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Optional. Omit this value or use all.")
+    var query: String? = nil
+  }
+
   func call(arguments: Arguments) async throws -> String {
     await routePlatform(bridge: bridge, name: name, arguments: [:])
   }
@@ -295,12 +443,19 @@ private struct AppleWorkflowCreateTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "workflow_create"
   let description = "Create a reusable AgenTM5N workflow. Steps are JSON objects with tool and arguments. Store secret_ref labels only, never secret values."
+
   @Generable
   struct Arguments {
-    @Guide(description: "Workflow name") var workflowName: String
-    @Guide(description: "Workflow purpose") var purpose: String
-    @Guide(description: "JSON array of {tool,arguments} objects") var stepsJson: String
+    @Guide(description: "Workflow name")
+    var workflowName: String
+
+    @Guide(description: "Workflow purpose")
+    var purpose: String
+
+    @Guide(description: "JSON array of {tool,arguments} objects")
+    var stepsJson: String
   }
+
   func call(arguments: Arguments) async throws -> String {
     guard let steps = parseJSONArray(arguments.stepsJson) else {
       return "TOOL_ERROR: Invalid workflow steps JSON."
@@ -321,9 +476,19 @@ private struct AppleWorkflowDeleteTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "workflow_delete"
   let description = "Delete one saved AgenTM5N workflow by exact name or UUID."
-  @Generable struct Arguments { @Guide(description: "Exact workflow name or UUID") var workflow: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Exact workflow name or UUID")
+    var workflow: String
+  }
+
   func call(arguments: Arguments) async throws -> String {
-    await routePlatform(bridge: bridge, name: name, arguments: ["workflow": .string(arguments.workflow)])
+    await routePlatform(
+      bridge: bridge,
+      name: name,
+      arguments: ["workflow": .string(arguments.workflow)]
+    )
   }
 }
 
@@ -331,9 +496,19 @@ private struct AppleWorkflowRunTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "workflow_run"
   let description = "Run one saved AgenTM5N workflow after central execution approval."
-  @Generable struct Arguments { @Guide(description: "Exact workflow name or UUID") var workflow: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Exact workflow name or UUID")
+    var workflow: String
+  }
+
   func call(arguments: Arguments) async throws -> String {
-    await routePlatform(bridge: bridge, name: name, arguments: ["workflow": .string(arguments.workflow)])
+    await routePlatform(
+      bridge: bridge,
+      name: name,
+      arguments: ["workflow": .string(arguments.workflow)]
+    )
   }
 }
 
@@ -341,7 +516,13 @@ private struct AppleAppVersionTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "app_version_info"
   let description = "Read current AgenTM5N version and build metadata."
-  @Generable struct Arguments { @Guide(description: "Use current") var query: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "Optional. Omit this value or use current.")
+    var query: String? = nil
+  }
+
   func call(arguments: Arguments) async throws -> String {
     await routePlatform(bridge: bridge, name: name, arguments: [:])
   }
@@ -351,9 +532,19 @@ private struct AppleUpdateCheckTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "app_check_update"
   let description = "Check an HTTPS AgenTM5N update manifest. Never installs automatically."
-  @Generable struct Arguments { @Guide(description: "HTTPS JSON manifest URL") var manifestURL: String }
+
+  @Generable
+  struct Arguments {
+    @Guide(description: "HTTPS JSON manifest URL")
+    var manifestURL: String
+  }
+
   func call(arguments: Arguments) async throws -> String {
-    await routePlatform(bridge: bridge, name: name, arguments: ["manifest_url": .string(arguments.manifestURL)])
+    await routePlatform(
+      bridge: bridge,
+      name: name,
+      arguments: ["manifest_url": .string(arguments.manifestURL)]
+    )
   }
 }
 
@@ -367,6 +558,18 @@ private func routePlatform(
       function: .init(name: name, arguments: arguments)
     )
   )
+}
+
+private func normalizedOptional(
+  _ value: String?,
+  preserveWhitespace: Bool = false
+) -> String? {
+  guard let value else { return nil }
+  if preserveWhitespace {
+    return value.isEmpty ? nil : value
+  }
+  let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  return normalized.isEmpty ? nil : normalized
 }
 
 private func parseStringMap(_ text: String) -> [String: String]? {
@@ -388,7 +591,8 @@ private func parseJSONArray(_ text: String) -> [JSONValue]? {
     let raw = try? JSONSerialization.jsonObject(with: data),
     let array = raw as? [Any]
   else { return nil }
-  return array.compactMap(jsonValue)
+  let converted = array.compactMap(jsonValue)
+  return converted.count == array.count ? converted : nil
 }
 
 private func jsonValue(_ value: Any) -> JSONValue? {
