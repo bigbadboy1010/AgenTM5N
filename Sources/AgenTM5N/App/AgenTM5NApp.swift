@@ -6,12 +6,9 @@ struct AgenTM5NApp: App {
 
   var body: some Scene {
     WindowGroup("AgenTM5N") {
-      RootView()
+      StartupGateView()
         .environmentObject(appState)
         .frame(minWidth: 760, minHeight: 520)
-        .task {
-          await appState.bootstrap()
-        }
     }
     .defaultSize(width: 1_280, height: 820)
 
