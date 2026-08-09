@@ -1,6 +1,24 @@
 import XCTest
 @testable import AgenTM5N
 
+private actor BridgeConcurrencyProbe {
+  private var active = 0
+  private var maximumActive = 0
+
+  func enter() {
+    active += 1
+    maximumActive = max(maximumActive, active)
+  }
+
+  func leave() {
+    active -= 1
+  }
+
+  func maximum() -> Int {
+    maximumActive
+  }
+}
+
 final class SecurityPolicyTests: XCTestCase {
   func testWorkspaceTrustedSensitiveExecutorsAreApprovalClassified() {
     let approvalRequired: [(String, ToolRisk)] = [
@@ -163,6 +181,35 @@ final class SecurityPolicyTests: XCTestCase {
     await bridge.clear(sessionID: sessionID)
   }
 
+  func testBridgeSerializesConcurrentFoundationToolExecution() async {
+    let bridge = AgentToolExecutionBridge()
+    let probe = BridgeConcurrencyProbe()
+    let sessionID = UUID()
+
+    await bridge.install(sessionID: sessionID) { call in
+      await probe.enter()
+      try? await Task.sleep(for: .milliseconds(40))
+      await probe.leave()
+      return "EXECUTED:\(call.function.name)"
+    }
+
+    await withTaskGroup(of: String.self) { group in
+      for _ in 0..<3 {
+        group.addTask {
+          await bridge.execute(
+            ProviderToolCall(
+              function: .init(name: "list_directory", arguments: [:])
+            )
+          )
+        }
+      }
+      for await _ in group {}
+    }
+
+    XCTAssertEqual(await probe.maximum(), 1)
+    await bridge.clear(sessionID: sessionID)
+  }
+
   func testToolsmithNormalizesNamesAndRejectsCredentialSource() throws {
     XCTAssertEqual(
       try SelfBuiltToolAgentTools.normalizedToolName("Hello Tool"),
@@ -285,13 +332,16 @@ final class SecurityPolicyTests: XCTestCase {
         requestHost: "other.example.com"
       )
     ) { error in
-      guard case SecureSecretBrokerError.secretHostMismatch = error else {
-        return XCTFail("Expected secretHostMismatch, got \(error)")
+      guard let brokerError = error as? SecureSecretBrokerError else {
+        return XCTFail("Expected SecureSecretBrokerError, got \(error)")
+      }
+      guard case .secretHostMismatch = brokerError else {
+        return XCTFail("Expected secretHostMismatch, got \(brokerError)")
       }
     }
   }
 
-  func testCoreMLManagedStorageDeduplicatesIdenticalContent() throws {
+  func testCoreMLManagedStorageDeduplicatesIdenticalContentAcrossDifferentNames() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("agentm5n-coreml-dedupe-\(UUID().uuidString)", isDirectory: true)
     let sourceA = root.appendingPathComponent("A.mlpackage", isDirectory: true)
@@ -319,10 +369,10 @@ final class SecurityPolicyTests: XCTestCase {
       digest: digestA
     )
     let second = try CoreMLManagedStorage.persistentCopy(
-      of: sourceA,
+      of: sourceB,
       in: store,
       preferredExtension: "mlpackage",
-      digest: digestA
+      digest: digestB
     )
     XCTAssertTrue(first.created)
     XCTAssertFalse(second.created)
@@ -344,5 +394,84 @@ final class SecurityPolicyTests: XCTestCase {
 
     XCTAssertTrue(FileManager.default.fileExists(atPath: keep.path))
     XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+  }
+
+  @MainActor
+  func testWorkflowReplacementPreservesDisabledState() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agentm5n-workflow-state-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let file = root.appendingPathComponent("workflows.json")
+    let original = AgentWorkflow(
+      name: "disabled-workflow",
+      purpose: "Original",
+      steps: [AgentWorkflowStep(toolName: "list_directory", arguments: [:])],
+      isEnabled: false
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try encoder.encode([original]).write(to: file)
+
+    let library = AgentWorkflowLibrary(fileURL: file)
+    let replaced = try library.create(
+      name: original.name,
+      purpose: "Replacement",
+      steps: [AgentWorkflowStep(toolName: "list_directory", arguments: [:])]
+    )
+    XCTAssertFalse(replaced.isEnabled)
+  }
+
+  @MainActor
+  func testPersistentAgentReplacementPreservesDisabledState() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agentm5n-agent-state-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let library = PersistentAgentLibrary(fileURL: root.appendingPathComponent("agents.json"))
+    let original = try library.create(
+      name: "disabled-agent",
+      purpose: "Original",
+      instructions: "Stay focused on the original task.",
+      providerPreference: .current,
+      allowedCapabilities: [.workspace]
+    )
+    _ = try library.update(query: original.id.uuidString, enabled: false)
+
+    let replaced = try library.create(
+      name: original.name,
+      purpose: "Replacement",
+      instructions: "Stay focused on the replacement task.",
+      providerPreference: .current,
+      allowedCapabilities: [.workspace]
+    )
+    XCTAssertFalse(replaced.isEnabled)
+  }
+
+  @MainActor
+  func testPersistentAgentResolveIntersectsRestrictedParentScope() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agentm5n-agent-scope-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let library = PersistentAgentLibrary(fileURL: root.appendingPathComponent("agents.json"))
+    let child = try library.create(
+      name: "broader-child",
+      purpose: "Nested scope regression",
+      instructions: "Use only the tools made available by AgenTM5N.",
+      providerPreference: .ollamaLocal,
+      allowedCapabilities: [.workspace, .browser]
+    )
+
+    let resolved = try AgentCapabilityExecutionContext.$allowedCapabilities.withValue(
+      Set<AgentToolCapability>([.workspace, .agents])
+    ) {
+      try library.resolve(child.id.uuidString)
+    }
+
+    XCTAssertEqual(resolved.allowedCapabilities, [.workspace])
   }
 }
