@@ -1,7 +1,6 @@
 # AgenTM5N Toolsmith
 
-Toolsmith lets AgenTM5N create persistent runtime tools without rebuilding or
-resigning the macOS application.
+Toolsmith lets AgenTM5N create persistent runtime tools without rebuilding or resigning the macOS application.
 
 ## Model
 
@@ -14,8 +13,7 @@ A self-built tool contains:
 - enabled/disabled state
 - persistent metadata and last-run timestamp
 
-The library is stored under AgenTM5N Application Support as
-`self-built-tools.json` with directory mode `0700` and file mode `0600`.
+The library is stored under AgenTM5N Application Support as `self-built-tools.json` with directory mode `0700` and file mode `0600`.
 
 ## Toolsmith management tools
 
@@ -26,14 +24,9 @@ The library is stored under AgenTM5N Application Support as
 - `toolsmith_delete`
 - `toolsmith_run`
 
-Ollama Local/Cloud additionally receive enabled self-built tools as first-class
-generated function definitions, so a tool such as `custom_workspace_summary`
-can be called directly on a subsequent model request.
+Ollama Local/Cloud additionally receive enabled self-built tools as first-class generated function definitions, so a tool such as `custom_workspace_summary` can be called directly on a subsequent model request.
 
-Apple Foundation Models cannot synthesize new Swift `Tool` conformances at
-runtime. AgenTM5N therefore exposes a focused static `toolsmith` adapter with
-`list/get/create/enable/disable/delete/run` operations. It resolves and executes
-the same persistent runtime tools through the provider-neutral bridge.
+Apple Foundation Models cannot synthesize new Swift `Tool` conformances at runtime. AgenTM5N therefore exposes a focused static `toolsmith` adapter with `list/get/create/enable/disable/delete/run` operations. It resolves and executes the same persistent runtime tools through the provider-neutral bridge.
 
 ## Runtime contract
 
@@ -49,11 +42,7 @@ Self-built source receives a deliberately minimal environment:
 - `PYTHONNOUSERSITE=1`
 - a minimal system `PATH`
 
-The process does **not** inherit the AgenTM5N process environment, so Vault
-values, provider tokens and SSH-agent variables are not automatically available.
-The process runs with the configured workspace as its current directory. It
-should print its result to stdout and use stderr for diagnostics. Exit status
-zero means success.
+The process does **not** inherit the AgenTM5N process environment, so Vault values, provider tokens and SSH-agent variables are not automatically available. The process runs with the configured workspace as its current directory. It should print its result to stdout and use stderr for diagnostics. Exit status zero means success.
 
 Example Python source:
 
@@ -92,17 +81,13 @@ Example parameter manifest:
 8. Private-key blocks and direct macOS Keychain password-dump patterns are rejected from generated source.
 9. Temporary source, argument and output files use restrictive permissions and are removed after execution.
 10. Disabling a custom tool removes it from enabled provider definitions without deleting its source or metadata.
+11. The central execution router fails closed if `toolsmith_create` targets an existing disabled tool. The user must explicitly re-enable the record with `toolsmith_set_enabled` before replacing its implementation, so replacement cannot silently reactivate disabled runtime code.
 
 ## Trust boundary
 
-Toolsmith is **not a kernel-level sandbox**. An approved zsh/Python program runs
-as the logged-in user and can intentionally reference absolute paths or initiate
-network connections. The primary boundary is therefore the AgenTM5N capability
-and permission system: Toolsmith remains execute-risk outside Full Access.
+Toolsmith is **not a kernel-level sandbox**. An approved zsh/Python program runs as the logged-in user and can intentionally reference absolute paths or initiate network connections. The primary boundary is therefore the AgenTM5N capability and permission system: Toolsmith remains execute-risk outside Full Access.
 
-For a future stricter multi-user or enterprise deployment, move dynamic runtime
-code into a dedicated sandboxed helper/XPC service with an explicit workspace
-grant and separately declared network/filesystem capabilities.
+For a future stricter multi-user or enterprise deployment, move dynamic runtime code into a dedicated sandboxed helper/XPC service with an explicit workspace grant and separately declared network/filesystem capabilities.
 
 ## Suggested acceptance test
 
@@ -118,6 +103,4 @@ Then run it with `name=AgenTM5N` and expect:
 Hello AgenTM5N
 ```
 
-Then disable it with `toolsmith_set_enabled`, verify execution is rejected,
-re-enable it and verify execution succeeds again. Finally delete the disposable
-tool with `toolsmith_delete`.
+Then disable it with `toolsmith_set_enabled` and verify execution is rejected. Attempting `toolsmith_create` with the same disabled name must also be rejected. Explicitly re-enable the tool, replace it if desired, verify execution succeeds again, and finally delete the disposable tool with `toolsmith_delete`.
