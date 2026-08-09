@@ -22,7 +22,7 @@ The library is stored under AgenTM5N Application Support as `self-built-tools.js
 - `toolsmith_delete`
 - `toolsmith_run`
 
-Ollama Local/Cloud additionally receive enabled self-built tools as first-class generated function definitions, so a tool such as `custom_workspace_summary` can be called directly.
+Ollama Local/Cloud additionally receive enabled self-built tools as first-class generated function definitions, so a tool such as `custom_workspace_summary` can be called directly on a subsequent model request.
 
 Apple Foundation Models cannot synthesize new Swift `Tool` conformances at runtime. The Apple persistent-agent pack therefore exposes one static `toolsmith` adapter with `list/get/create/delete/run` operations. It resolves and executes the same persistent runtime tools through the provider-neutral bridge.
 
@@ -66,13 +66,13 @@ Example parameter manifest:
 
 1. Every self-built tool is classified as `execute` risk regardless of its source or description. A generated manifest cannot downgrade its own risk.
 2. Tool creation/deletion is a mutation and execution remains subject to AgenTM5N permission policy and audit.
-3. Workspace Trusted treats the `customTools` capability as externally sensitive, so self-built tool operations require approval there. Full Access is the explicit opt-in for unattended execution.
+3. Toolsmith belongs to the existing `terminal` capability so existing agent-profile schemas remain compatible. In Workspace Trusted mode, Toolsmith management and every direct `custom_*` execution are explicitly approval-required. Full Access is the explicit opt-in for unattended execution.
 4. The child process does not inherit the application's environment. API keys, provider tokens and Vault values are not passed automatically.
 5. The global AgenTM5N result sanitizer still redacts known unlocked Vault values from tool output.
 6. Source is capped at 64 KiB; arguments are schema-validated; execution is capped at 60 seconds; combined model-visible output is capped at 256 KiB.
 7. Private-key blocks and direct macOS Keychain password lookup commands are rejected from generated source.
 8. Temporary source, argument and output files are created in a private runtime directory and removed after execution.
-9. Restricted specialist agents must explicitly include the `customTools` capability. Full-parity agents inherit it automatically through `capabilities=all`.
+9. Restricted specialist agents need the existing `terminal` capability to create or execute self-built tools. Full-parity agents inherit it automatically through `capabilities=all`.
 
 ## Suggested acceptance test
 
