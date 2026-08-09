@@ -53,8 +53,9 @@ public struct SavedAgentProfile: Codable, Identifiable, Equatable, Sendable {
   public var symbolName: String
   public var isEnabled: Bool
   /// Nil means the specialist inherits the full centrally registered AgenTM5N
-  /// tool catalog. A non-empty list restricts delegated Ollama specialists to
-  /// the selected capability packs. Existing V1 profiles decode with nil.
+  /// tool catalog on every supported provider. A non-empty list is an explicit
+  /// sandbox that restricts delegated specialists to the selected capability packs.
+  /// Existing V1 profiles decode with nil and therefore keep full tool parity.
   public var allowedCapabilities: [AgentToolCapability]?
   public let createdAt: Date
   public var updatedAt: Date
@@ -88,7 +89,7 @@ public struct SavedAgentProfile: Codable, Identifiable, Equatable, Sendable {
 
   public var systemInstruction: String {
     let capabilityText = allowedCapabilities?.map(\.rawValue).joined(separator: ", ")
-      ?? "inherit all centrally authorized capabilities"
+      ?? "all"
     return """
     PERSISTENT SPECIALIST AGENT ACTIVE:
     - Name: \(name)
