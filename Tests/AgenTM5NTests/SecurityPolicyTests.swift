@@ -3,48 +3,32 @@ import XCTest
 
 final class SecurityPolicyTests: XCTestCase {
   func testWorkspaceTrustedSensitiveExecutorsAreApprovalClassified() {
-    XCTAssertTrue(
-      AgentToolRegistry.requiresWorkspaceTrustedApproval(
-        "run_command",
-        risk: .execute
+    let approvalRequired: [(String, ToolRisk)] = [
+      ("run_command", .execute),
+      ("terminal_open", .execute),
+      ("shortcuts_run", .execute),
+      ("toolsmith_create", .write),
+      ("toolsmith_run", .execute),
+      ("agent_delegate", .execute),
+      ("browser_open", .execute),
+      ("clipboard_write", .write),
+      ("notification_send", .write),
+      ("finder_reveal", .execute),
+      ("agent_create", .write),
+      ("agent_update", .write),
+      ("agent_delete", .write),
+      ("workflow_create", .write),
+      ("workflow_delete", .write),
+      ("workflow_run", .execute),
+    ]
+
+    for (name, risk) in approvalRequired {
+      XCTAssertTrue(
+        AgentToolRegistry.requiresWorkspaceTrustedApproval(name, risk: risk),
+        "Workspace Trusted must require approval for \(name)"
       )
-    )
-    XCTAssertTrue(
-      AgentToolRegistry.requiresWorkspaceTrustedApproval(
-        "terminal_open",
-        risk: .execute
-      )
-    )
-    XCTAssertTrue(
-      AgentToolRegistry.requiresWorkspaceTrustedApproval(
-        "shortcuts_run",
-        risk: .execute
-      )
-    )
-    XCTAssertTrue(
-      AgentToolRegistry.requiresWorkspaceTrustedApproval(
-        "toolsmith_create",
-        risk: .write
-      )
-    )
-    XCTAssertTrue(
-      AgentToolRegistry.requiresWorkspaceTrustedApproval(
-        "toolsmith_run",
-        risk: .execute
-      )
-    )
-    XCTAssertTrue(
-      AgentToolRegistry.requiresWorkspaceTrustedApproval(
-        "agent_delegate",
-        risk: .execute
-      )
-    )
-    XCTAssertTrue(
-      AgentToolRegistry.requiresWorkspaceTrustedApproval(
-        "browser_open",
-        risk: .execute
-      )
-    )
+    }
+
     XCTAssertFalse(
       AgentToolRegistry.requiresWorkspaceTrustedApproval(
         "browser_read",
@@ -55,6 +39,12 @@ final class SecurityPolicyTests: XCTestCase {
       AgentToolRegistry.requiresWorkspaceTrustedApproval(
         "list_directory",
         risk: .read
+      )
+    )
+    XCTAssertFalse(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "write_file",
+        risk: .write
       )
     )
   }
@@ -215,6 +205,39 @@ final class SecurityPolicyTests: XCTestCase {
     XCTAssertTrue(try library.resolve(created.id.uuidString).isEnabled)
   }
 
+  func testDisabledToolsmithReplacementFailsClosed() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agentm5n-tool-policy-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let library = SelfBuiltToolLibrary(fileURL: root.appendingPathComponent("tools.json"))
+    let created = try library.createOrReplace(
+      name: "disabled_replace",
+      description: "Disabled replacement regression",
+      language: .zsh,
+      parameters: [],
+      source: "print -- first"
+    )
+    _ = try library.setEnabled(false, query: created.id.uuidString)
+
+    let call = ProviderToolCall(
+      function: .init(
+        name: "toolsmith_create",
+        arguments: [
+          "name": .string("disabled_replace"),
+          "description": .string("Replacement"),
+          "language": .string("zsh"),
+          "source": .string("print -- second"),
+        ]
+      )
+    )
+    let denial = SelfBuiltToolReplacementPolicy.denial(for: call, library: library)
+    XCTAssertNotNil(denial)
+    XCTAssertFalse(denial?.success ?? true)
+    XCTAssertFalse(try library.resolve(created.id.uuidString).isEnabled)
+  }
+
   func testTerminalCapabilityDefinitionsContainToolsmithManagement() {
     let definitions = AgentToolRegistry.definitions(capabilities: [.terminal])
     let names = Set(definitions.map { $0.function.name })
@@ -224,5 +247,102 @@ final class SecurityPolicyTests: XCTestCase {
     XCTAssertTrue(names.contains("toolsmith_run"))
     XCTAssertFalse(names.contains("ssh_run"))
     XCTAssertFalse(names.contains("browser_open"))
+  }
+
+  func testRegistryCatalogHasProviderDefinitionForEveryFixedTool() {
+    let definitionNames = Set(AgentToolRegistry.allDefinitions.map { $0.function.name })
+    for entry in AgentToolRegistry.catalog {
+      XCTAssertTrue(
+        definitionNames.contains(entry.name),
+        "Missing provider-neutral definition for \(entry.name)"
+      )
+    }
+  }
+
+  func testRegistryIsSingleRiskAuthorityForWorkspaceIndexBuild() {
+    XCTAssertEqual(AgentToolRegistry.entry(named: "workspace_index_build")?.risk, .write)
+    XCTAssertEqual(AgentToolRegistry.entry(named: "coreml_predict")?.risk, .execute)
+    XCTAssertEqual(AgentToolRegistry.entry(named: "browser_read")?.risk, .read)
+  }
+
+  func testSecretHostBindingRejectsDifferentHTTPSHost() throws {
+    let secret = VaultSecret(
+      kind: .apiKey,
+      label: "host-bound-test",
+      host: "https://api.example.com",
+      value: "test-value-not-real"
+    )
+
+    XCTAssertNoThrow(
+      try SecureHTTPClient.validateSecretHostBinding(
+        secret,
+        requestHost: "API.EXAMPLE.COM."
+      )
+    )
+    XCTAssertThrowsError(
+      try SecureHTTPClient.validateSecretHostBinding(
+        secret,
+        requestHost: "other.example.com"
+      )
+    ) { error in
+      guard case SecureSecretBrokerError.secretHostMismatch = error else {
+        return XCTFail("Expected secretHostMismatch, got \(error)")
+      }
+    }
+  }
+
+  func testCoreMLManagedStorageDeduplicatesIdenticalContent() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agentm5n-coreml-dedupe-\(UUID().uuidString)", isDirectory: true)
+    let sourceA = root.appendingPathComponent("A.mlpackage", isDirectory: true)
+    let sourceB = root.appendingPathComponent("B.mlpackage", isDirectory: true)
+    let store = root.appendingPathComponent("store", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceA, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: sourceB, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try Data("same-model-content".utf8).write(
+      to: sourceA.appendingPathComponent("weights.bin")
+    )
+    try Data("same-model-content".utf8).write(
+      to: sourceB.appendingPathComponent("weights.bin")
+    )
+
+    let digestA = try CoreMLManagedStorage.contentDigest(at: sourceA)
+    let digestB = try CoreMLManagedStorage.contentDigest(at: sourceB)
+    XCTAssertEqual(digestA, digestB)
+
+    let first = try CoreMLManagedStorage.persistentCopy(
+      of: sourceA,
+      in: store,
+      preferredExtension: "mlpackage",
+      digest: digestA
+    )
+    let second = try CoreMLManagedStorage.persistentCopy(
+      of: sourceA,
+      in: store,
+      preferredExtension: "mlpackage",
+      digest: digestA
+    )
+    XCTAssertTrue(first.created)
+    XCTAssertFalse(second.created)
+    XCTAssertEqual(first.url, second.url)
+  }
+
+  func testCoreMLManagedStorageRemovesOnlyUnreferencedTopLevelArtifacts() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agentm5n-coreml-orphans-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let keep = root.appendingPathComponent("keep.mlmodelc", isDirectory: true)
+    let orphan = root.appendingPathComponent("orphan.mlmodelc", isDirectory: true)
+    try FileManager.default.createDirectory(at: keep, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: true)
+
+    try CoreMLManagedStorage.removeOrphans(in: root, referencedURLs: [keep])
+
+    XCTAssertTrue(FileManager.default.fileExists(atPath: keep.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
   }
 }
