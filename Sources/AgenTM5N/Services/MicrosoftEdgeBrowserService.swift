@@ -1224,23 +1224,23 @@ public actor MicrosoftEdgeBrowserService {
   private func keySpec(_ value: String) -> KeySpec {
     switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
     case "enter", "return":
-      KeySpec(key: "Enter", code: "Enter", virtualKey: 13, text: "\r")
+      return KeySpec(key: "Enter", code: "Enter", virtualKey: 13, text: "\r")
     case "tab":
-      KeySpec(key: "Tab", code: "Tab", virtualKey: 9, text: "\t")
+      return KeySpec(key: "Tab", code: "Tab", virtualKey: 9, text: "\t")
     case "escape", "esc":
-      KeySpec(key: "Escape", code: "Escape", virtualKey: 27, text: nil)
+      return KeySpec(key: "Escape", code: "Escape", virtualKey: 27, text: nil)
     case "backspace":
-      KeySpec(key: "Backspace", code: "Backspace", virtualKey: 8, text: nil)
+      return KeySpec(key: "Backspace", code: "Backspace", virtualKey: 8, text: nil)
     case "arrowdown", "down":
-      KeySpec(key: "ArrowDown", code: "ArrowDown", virtualKey: 40, text: nil)
+      return KeySpec(key: "ArrowDown", code: "ArrowDown", virtualKey: 40, text: nil)
     case "arrowup", "up":
-      KeySpec(key: "ArrowUp", code: "ArrowUp", virtualKey: 38, text: nil)
+      return KeySpec(key: "ArrowUp", code: "ArrowUp", virtualKey: 38, text: nil)
     case "arrowleft", "left":
-      KeySpec(key: "ArrowLeft", code: "ArrowLeft", virtualKey: 37, text: nil)
+      return KeySpec(key: "ArrowLeft", code: "ArrowLeft", virtualKey: 37, text: nil)
     case "arrowright", "right":
-      KeySpec(key: "ArrowRight", code: "ArrowRight", virtualKey: 39, text: nil)
+      return KeySpec(key: "ArrowRight", code: "ArrowRight", virtualKey: 39, text: nil)
     case "space", "spacebar":
-      KeySpec(key: " ", code: "Space", virtualKey: 32, text: " ")
+      return KeySpec(key: " ", code: "Space", virtualKey: 32, text: " ")
     default:
       let first = String(value.prefix(1))
       let scalarValue = first.uppercased().unicodeScalars.first.map {

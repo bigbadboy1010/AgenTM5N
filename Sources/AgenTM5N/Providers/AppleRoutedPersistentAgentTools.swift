@@ -72,7 +72,7 @@ private struct AgentCreateTool: Tool {
   }
 
   func call(arguments: Arguments) async throws -> String {
-    var values: [String: JSONValue] = [
+    let values: [String: JSONValue] = [
       "name": .string(arguments.name),
       "purpose": .string(arguments.purpose),
       "instructions": .string(arguments.instructions),
