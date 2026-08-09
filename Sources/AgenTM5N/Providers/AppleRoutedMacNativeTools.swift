@@ -160,17 +160,17 @@ private struct RoutedCalendarCreateEventTool: Tool {
     @Guide(description: "End minute", .range(0...59))
     var endMinute: Int
 
-    @Guide(description: "Exact writable calendar title, or an empty string for the default")
-    var calendar: String
+    @Guide(description: "Optional exact writable calendar title. Omit for default calendar.")
+    var calendar: String? = nil
 
-    @Guide(description: "Location, or an empty string")
-    var location: String
+    @Guide(description: "Optional location")
+    var location: String? = nil
 
-    @Guide(description: "Notes, or an empty string")
-    var notes: String
+    @Guide(description: "Optional notes")
+    var notes: String? = nil
 
-    @Guide(description: "Whether this is an all-day event")
-    var isAllDay: Bool
+    @Guide(description: "Optional all-day flag. Defaults to false.")
+    var isAllDay: Bool? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -196,19 +196,25 @@ private struct RoutedCalendarCreateEventTool: Tool {
         return "TOOL_ERROR: Calendar end must be later than start."
       }
 
-      return await route(
-        bridge: bridge,
-        name: name,
-        arguments: [
-          "title": .string(arguments.title),
-          "start": .string(localISO8601(start, timeZone: timeZone)),
-          "end": .string(localISO8601(end, timeZone: timeZone)),
-          "calendar": .string(arguments.calendar),
-          "location": .string(arguments.location),
-          "notes": .string(arguments.notes),
-          "is_all_day": .bool(arguments.isAllDay),
-        ]
-      )
+      var values: [String: JSONValue] = [
+        "title": .string(arguments.title),
+        "start": .string(localISO8601(start, timeZone: timeZone)),
+        "end": .string(localISO8601(end, timeZone: timeZone)),
+      ]
+      if let calendar = normalizedMac(arguments.calendar) {
+        values["calendar"] = .string(calendar)
+      }
+      if let location = normalizedMac(arguments.location, preserveWhitespace: true) {
+        values["location"] = .string(location)
+      }
+      if let notes = normalizedMac(arguments.notes, preserveWhitespace: true) {
+        values["notes"] = .string(notes)
+      }
+      if let isAllDay = arguments.isAllDay {
+        values["is_all_day"] = .bool(isAllDay)
+      }
+
+      return await route(bridge: bridge, name: name, arguments: values)
     } catch {
       return "TOOL_ERROR: \(error.localizedDescription)"
     }
@@ -218,46 +224,56 @@ private struct RoutedCalendarCreateEventTool: Tool {
 private struct RoutedCalendarUpdateEventTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "calendar_update_event"
-  let description = "Update an existing macOS Calendar event by the exact event identifier returned by calendar_list_events. Empty text values leave fields unchanged."
+  let description = "Update an existing macOS Calendar event by the exact event identifier returned by calendar_list_events. Omitted values leave fields unchanged."
 
   @Generable
   struct Arguments {
     @Guide(description: "Exact event identifier")
     var eventID: String
 
-    @Guide(description: "New title, or an empty string")
-    var title: String
+    @Guide(description: "Optional new title")
+    var title: String? = nil
 
-    @Guide(description: "New ISO-8601 start date with explicit offset, or an empty string")
-    var start: String
+    @Guide(description: "Optional new ISO-8601 start date with explicit offset")
+    var start: String? = nil
 
-    @Guide(description: "New ISO-8601 end date with explicit offset, or an empty string")
-    var end: String
+    @Guide(description: "Optional new ISO-8601 end date with explicit offset")
+    var end: String? = nil
 
-    @Guide(description: "New exact calendar title, or an empty string")
-    var calendar: String
+    @Guide(description: "Optional new exact calendar title")
+    var calendar: String? = nil
 
-    @Guide(description: "New location, or an empty string")
-    var location: String
+    @Guide(description: "Optional new location")
+    var location: String? = nil
 
-    @Guide(description: "New notes, or an empty string")
-    var notes: String
+    @Guide(description: "Optional new notes")
+    var notes: String? = nil
 
-    @Guide(description: "Use unchanged, true, or false")
-    var allDayMode: String
+    @Guide(description: "Optional all-day mode: true or false. Omit to preserve current value.")
+    var allDayMode: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    var values: [String: JSONValue] = [
-      "event_id": .string(arguments.eventID),
-      "title": .string(arguments.title),
-      "start": .string(arguments.start),
-      "end": .string(arguments.end),
-      "calendar": .string(arguments.calendar),
-      "location": .string(arguments.location),
-      "notes": .string(arguments.notes),
-    ]
-    switch arguments.allDayMode.lowercased() {
+    var values: [String: JSONValue] = ["event_id": .string(arguments.eventID)]
+    if let title = normalizedMac(arguments.title, preserveWhitespace: true) {
+      values["title"] = .string(title)
+    }
+    if let start = normalizedMac(arguments.start) {
+      values["start"] = .string(start)
+    }
+    if let end = normalizedMac(arguments.end) {
+      values["end"] = .string(end)
+    }
+    if let calendar = normalizedMac(arguments.calendar) {
+      values["calendar"] = .string(calendar)
+    }
+    if let location = normalizedMac(arguments.location, preserveWhitespace: true) {
+      values["location"] = .string(location)
+    }
+    if let notes = normalizedMac(arguments.notes, preserveWhitespace: true) {
+      values["notes"] = .string(notes)
+    }
+    switch normalizedMac(arguments.allDayMode)?.lowercased() {
     case "true": values["is_all_day"] = .bool(true)
     case "false": values["is_all_day"] = .bool(false)
     default: break
@@ -295,65 +311,82 @@ private struct RoutedContactsCreateTool: Tool {
   struct Arguments {
     @Guide(description: "Given name")
     var givenName: String
-    @Guide(description: "Family name, or an empty string")
-    var familyName: String
-    @Guide(description: "Organization, or an empty string")
-    var organization: String
-    @Guide(description: "Email, or an empty string")
-    var email: String
-    @Guide(description: "Phone number, or an empty string")
-    var phone: String
+
+    @Guide(description: "Optional family name")
+    var familyName: String? = nil
+
+    @Guide(description: "Optional organization")
+    var organization: String? = nil
+
+    @Guide(description: "Optional email")
+    var email: String? = nil
+
+    @Guide(description: "Optional phone number")
+    var phone: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await route(
-      bridge: bridge,
-      name: name,
-      arguments: [
-        "given_name": .string(arguments.givenName),
-        "family_name": .string(arguments.familyName),
-        "organization": .string(arguments.organization),
-        "email": .string(arguments.email),
-        "phone": .string(arguments.phone),
-      ]
-    )
+    var values: [String: JSONValue] = ["given_name": .string(arguments.givenName)]
+    if let familyName = normalizedMac(arguments.familyName) {
+      values["family_name"] = .string(familyName)
+    }
+    if let organization = normalizedMac(arguments.organization) {
+      values["organization"] = .string(organization)
+    }
+    if let email = normalizedMac(arguments.email) {
+      values["email"] = .string(email)
+    }
+    if let phone = normalizedMac(arguments.phone) {
+      values["phone"] = .string(phone)
+    }
+    return await route(bridge: bridge, name: name, arguments: values)
   }
 }
 
 private struct RoutedContactsUpdateTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "contacts_update"
-  let description = "Update a macOS Contact by the exact contact identifier returned by contacts_search. Empty values leave fields unchanged."
+  let description = "Update a macOS Contact by the exact contact identifier returned by contacts_search. Omitted values leave fields unchanged."
 
   @Generable
   struct Arguments {
     @Guide(description: "Exact contact identifier")
     var contactID: String
-    @Guide(description: "New given name, or an empty string")
-    var givenName: String
-    @Guide(description: "New family name, or an empty string")
-    var familyName: String
-    @Guide(description: "New organization, or an empty string")
-    var organization: String
-    @Guide(description: "New email, or an empty string")
-    var email: String
-    @Guide(description: "New phone number, or an empty string")
-    var phone: String
+
+    @Guide(description: "Optional new given name")
+    var givenName: String? = nil
+
+    @Guide(description: "Optional new family name")
+    var familyName: String? = nil
+
+    @Guide(description: "Optional new organization")
+    var organization: String? = nil
+
+    @Guide(description: "Optional new email")
+    var email: String? = nil
+
+    @Guide(description: "Optional new phone number")
+    var phone: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await route(
-      bridge: bridge,
-      name: name,
-      arguments: [
-        "contact_id": .string(arguments.contactID),
-        "given_name": .string(arguments.givenName),
-        "family_name": .string(arguments.familyName),
-        "organization": .string(arguments.organization),
-        "email": .string(arguments.email),
-        "phone": .string(arguments.phone),
-      ]
-    )
+    var values: [String: JSONValue] = ["contact_id": .string(arguments.contactID)]
+    if let givenName = normalizedMac(arguments.givenName) {
+      values["given_name"] = .string(givenName)
+    }
+    if let familyName = normalizedMac(arguments.familyName) {
+      values["family_name"] = .string(familyName)
+    }
+    if let organization = normalizedMac(arguments.organization) {
+      values["organization"] = .string(organization)
+    }
+    if let email = normalizedMac(arguments.email) {
+      values["email"] = .string(email)
+    }
+    if let phone = normalizedMac(arguments.phone) {
+      values["phone"] = .string(phone)
+    }
+    return await route(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -366,28 +399,29 @@ private struct RoutedMailCreateDraftTool: Tool {
   struct Arguments {
     @Guide(description: "To recipients, comma- or semicolon-separated")
     var to: String
-    @Guide(description: "CC recipients, or an empty string")
-    var cc: String
-    @Guide(description: "BCC recipients, or an empty string")
-    var bcc: String
+
+    @Guide(description: "Optional CC recipients")
+    var cc: String? = nil
+
+    @Guide(description: "Optional BCC recipients")
+    var bcc: String? = nil
+
     @Guide(description: "Message subject")
     var subject: String
+
     @Guide(description: "Complete plain-text body")
     var body: String
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await route(bridge: bridge, name: name, arguments: mailArguments(arguments))
-  }
-
-  private func mailArguments(_ arguments: Arguments) -> [String: JSONValue] {
-    [
+    var values: [String: JSONValue] = [
       "to": .string(arguments.to),
-      "cc": .string(arguments.cc),
-      "bcc": .string(arguments.bcc),
       "subject": .string(arguments.subject),
       "body": .string(arguments.body),
     ]
+    if let cc = normalizedMac(arguments.cc) { values["cc"] = .string(cc) }
+    if let bcc = normalizedMac(arguments.bcc) { values["bcc"] = .string(bcc) }
+    return await route(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -400,28 +434,29 @@ private struct RoutedMailSendTool: Tool {
   struct Arguments {
     @Guide(description: "To recipients, comma- or semicolon-separated")
     var to: String
-    @Guide(description: "CC recipients, or an empty string")
-    var cc: String
-    @Guide(description: "BCC recipients, or an empty string")
-    var bcc: String
+
+    @Guide(description: "Optional CC recipients")
+    var cc: String? = nil
+
+    @Guide(description: "Optional BCC recipients")
+    var bcc: String? = nil
+
     @Guide(description: "Message subject")
     var subject: String
+
     @Guide(description: "Complete plain-text body")
     var body: String
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await route(
-      bridge: bridge,
-      name: name,
-      arguments: [
-        "to": .string(arguments.to),
-        "cc": .string(arguments.cc),
-        "bcc": .string(arguments.bcc),
-        "subject": .string(arguments.subject),
-        "body": .string(arguments.body),
-      ]
-    )
+    var values: [String: JSONValue] = [
+      "to": .string(arguments.to),
+      "subject": .string(arguments.subject),
+      "body": .string(arguments.body),
+    ]
+    if let cc = normalizedMac(arguments.cc) { values["cc"] = .string(cc) }
+    if let bcc = normalizedMac(arguments.bcc) { values["bcc"] = .string(bcc) }
+    return await route(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -434,8 +469,10 @@ private struct RoutedMailReplyTool: Tool {
   struct Arguments {
     @Guide(description: "Numeric message ID returned by mail_list_recent")
     var messageID: Int
+
     @Guide(description: "Reply body")
     var body: String
+
     @Guide(description: "true sends immediately; false saves a draft")
     var sendNow: Bool
   }
@@ -451,6 +488,18 @@ private struct RoutedMailReplyTool: Tool {
       ]
     )
   }
+}
+
+private func normalizedMac(
+  _ value: String?,
+  preserveWhitespace: Bool = false
+) -> String? {
+  guard let value else { return nil }
+  if preserveWhitespace {
+    return value.isEmpty ? nil : value
+  }
+  let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  return normalized.isEmpty ? nil : normalized
 }
 
 private func route(
