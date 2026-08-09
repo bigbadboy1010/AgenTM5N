@@ -127,9 +127,9 @@ public enum SelfBuiltToolError: LocalizedError {
 
 /// Persistent runtime library for model-authored tools.
 ///
-/// The source is stored locally with mode 0600. Executions deliberately receive
-/// a minimal environment without inherited API keys or Vault secrets. Every
-/// self-built tool is classified as execute-risk by SelfBuiltToolAgentTools.
+/// Definitions are stored with protected POSIX permissions. Runtime source is
+/// always execute-risk and gets a minimal environment without inherited Vault,
+/// provider, SSH-agent, shell-profile, or user HOME credentials.
 public final class SelfBuiltToolLibrary: @unchecked Sendable {
   public static let shared = SelfBuiltToolLibrary()
 
@@ -216,6 +216,25 @@ public final class SelfBuiltToolLibrary: @unchecked Sendable {
     return record
   }
 
+  @discardableResult
+  public func setEnabled(_ enabled: Bool, query: String) throws -> SelfBuiltToolRecord {
+    let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    lock.lock()
+    defer { lock.unlock() }
+    let matches = storage.indices.filter { index in
+      storage[index].id.uuidString.caseInsensitiveCompare(normalized) == .orderedSame
+        || storage[index].name.caseInsensitiveCompare(normalized) == .orderedSame
+    }
+    guard !matches.isEmpty else { throw SelfBuiltToolError.notFound(query) }
+    guard matches.count == 1, let index = matches.first else {
+      throw SelfBuiltToolError.ambiguous(query)
+    }
+    storage[index].isEnabled = enabled
+    storage[index].updatedAt = Date()
+    try saveLocked()
+    return storage[index]
+  }
+
   public func delete(_ query: String) throws -> SelfBuiltToolRecord {
     let record = try resolve(query)
     lock.lock()
@@ -259,6 +278,10 @@ public final class SelfBuiltToolLibrary: @unchecked Sendable {
       withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700]
     )
+    try? FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: directory.path
+    )
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     encoder.dateEncodingStrategy = .iso8601
@@ -279,6 +302,7 @@ public enum SelfBuiltToolAgentTools {
     "toolsmith_list",
     "toolsmith_get",
     "toolsmith_create",
+    "toolsmith_set_enabled",
     "toolsmith_delete",
     "toolsmith_run",
   ]
@@ -299,7 +323,7 @@ public enum SelfBuiltToolAgentTools {
     ),
     ProviderToolDefinition(
       name: "toolsmith_create",
-      description: "Create or replace a persistent AgenTM5N runtime tool. Tool names are normalized to custom_<name>. Source may be zsh or python3 and must read inputs from AGENTM5N_ARGS_FILE or AGENTM5N_ARG_<NAME>. Never embed passwords, tokens, API keys, private keys or other secrets in source.",
+      description: "Create or replace a persistent AgenTM5N runtime tool. Tool names are normalized to custom_<name>. Source may be zsh or python3 and must read inputs from AGENTM5N_ARGS_FILE or AGENTM5N_ARG_<NAME>. Never embed passwords, tokens, API keys, private keys or other secrets in source. Runtime execution is always execute-risk.",
       parameters: objectSchema(
         required: ["name", "description", "language", "source"],
         properties: [
@@ -313,6 +337,17 @@ public enum SelfBuiltToolAgentTools {
       )
     ),
     ProviderToolDefinition(
+      name: "toolsmith_set_enabled",
+      description: "Enable or disable one persistent self-built AgenTM5N runtime tool without deleting it.",
+      parameters: objectSchema(
+        required: ["tool", "enabled"],
+        properties: [
+          "tool": stringSchema("Exact custom tool name or UUID."),
+          "enabled": boolSchema("true enables the tool; false disables it."),
+        ]
+      )
+    ),
+    ProviderToolDefinition(
       name: "toolsmith_delete",
       description: "Delete one persistent self-built AgenTM5N runtime tool by exact name or UUID.",
       parameters: objectSchema(
@@ -322,7 +357,7 @@ public enum SelfBuiltToolAgentTools {
     ),
     ProviderToolDefinition(
       name: "toolsmith_run",
-      description: "Run one persistent self-built AgenTM5N tool. Prefer calling the custom tool directly when the provider exposes its generated function definition. This meta-tool is primarily for Apple Foundation Models.",
+      description: "Run one persistent self-built AgenTM5N tool. Prefer calling the custom tool directly when the provider exposes its generated function definition. Self-built execution always uses execute-risk and requires the active AgenTM5N permission policy.",
       parameters: objectSchema(
         required: ["tool"],
         properties: [
@@ -341,25 +376,25 @@ public enum SelfBuiltToolAgentTools {
   public static func handles(_ call: ProviderToolCall) -> Bool {
     managementNames.contains(call.function.name)
       || SelfBuiltToolLibrary.shared.records.contains {
-        $0.name == call.function.name
+        $0.name.caseInsensitiveCompare(call.function.name) == .orderedSame
       }
   }
 
   public static func isDynamicToolName(_ name: String) -> Bool {
-    SelfBuiltToolLibrary.shared.records.contains { $0.name == name }
+    SelfBuiltToolLibrary.shared.records.contains {
+      $0.name.caseInsensitiveCompare(name) == .orderedSame
+    }
   }
 
   public static func risk(for call: ProviderToolCall) -> ToolRisk {
     switch call.function.name {
     case "toolsmith_list", "toolsmith_get":
       return .read
-    case "toolsmith_create", "toolsmith_delete":
+    case "toolsmith_create", "toolsmith_set_enabled", "toolsmith_delete":
       return .write
     case "toolsmith_run":
       return .execute
     default:
-      // Model-authored source is always execute-risk. A manifest can never
-      // downgrade its own risk classification.
       return .execute
     }
   }
@@ -376,9 +411,12 @@ public enum SelfBuiltToolAgentTools {
       let rendered = value.compactDescription
       return "\(key): \(rendered.count > 160 ? String(rendered.prefix(160)) + "…" : rendered)"
     }
-    return values.isEmpty
+    let suffix = risk(for: call) == .execute
+      ? " — selbst erzeugter Runtime-Code / explizite Ausführungsfreigabe"
+      : ""
+    return (values.isEmpty
       ? call.function.name
-      : "\(call.function.name) — \(values.joined(separator: ", "))"
+      : "\(call.function.name) — \(values.joined(separator: ", "))") + suffix
   }
 
   public static func execute(
@@ -407,6 +445,20 @@ public enum SelfBuiltToolAgentTools {
           source: try requiredStringAllowingNewlines("source", in: call)
         )
         return encoded(MutationDescriptor(status: "saved", tool: record))
+
+      case "toolsmith_set_enabled":
+        guard let enabled = call.function.arguments["enabled"]?.boolValue else {
+          throw AgentRuntimeError.missingArgument(tool: call.function.name, name: "enabled")
+        }
+        return encoded(
+          MutationDescriptor(
+            status: enabled ? "enabled" : "disabled",
+            tool: try library.setEnabled(
+              enabled,
+              query: try requiredString("tool", in: call)
+            )
+          )
+        )
 
       case "toolsmith_delete":
         return encoded(
@@ -499,6 +551,7 @@ public enum SelfBuiltToolAgentTools {
       "-----begin openssh private key-----",
       "security find-generic-password",
       "security find-internet-password",
+      "security dump-keychain",
     ]
     if let blocked = blockedFragments.first(where: { lower.contains($0) }) {
       throw SelfBuiltToolError.unsafeSource("gesperrtes Credential-Muster: \(blocked)")
@@ -513,11 +566,18 @@ public enum SelfBuiltToolAgentTools {
     guard record.isEnabled else { throw SelfBuiltToolError.disabled(record.name) }
     try validate(arguments: arguments, parameters: record.parameters)
 
-    let workspace = currentWorkspaceURL()
+    let workspace = try currentWorkspaceURL()
     let runtime = FileManager.default.temporaryDirectory
       .appendingPathComponent("agentm5n-tool-\(UUID().uuidString)", isDirectory: true)
+    let runtimeHome = runtime.appendingPathComponent("home", isDirectory: true)
+    let runtimeTmp = runtime.appendingPathComponent("tmp", isDirectory: true)
     try FileManager.default.createDirectory(
-      at: runtime,
+      at: runtimeHome,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    try FileManager.default.createDirectory(
+      at: runtimeTmp,
       withIntermediateDirectories: true,
       attributes: [.posixPermissions: 0o700]
     )
@@ -564,8 +624,11 @@ public enum SelfBuiltToolAgentTools {
 
     var environment: [String: String] = [
       "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-      "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
-      "TMPDIR": FileManager.default.temporaryDirectory.path,
+      "HOME": runtimeHome.path,
+      "TMPDIR": runtimeTmp.path + "/",
+      "XDG_CONFIG_HOME": runtimeHome.appendingPathComponent(".config").path,
+      "XDG_CACHE_HOME": runtimeHome.appendingPathComponent(".cache").path,
+      "PYTHONNOUSERSITE": "1",
       "LANG": "en_US.UTF-8",
       "LC_ALL": "en_US.UTF-8",
       "AGENTM5N_TOOL_NAME": record.name,
@@ -723,21 +786,20 @@ public enum SelfBuiltToolAgentTools {
     return [:]
   }
 
-  private static func currentWorkspaceURL() -> URL {
-    do {
-      let data = try Data(contentsOf: AppPaths.configurationFile)
-      let configuration = try JSONDecoder().decode(AppConfiguration.self, from: data)
-      let expanded = NSString(string: configuration.workspacePath).expandingTildeInPath
-      var isDirectory: ObjCBool = false
-      if FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory),
-        isDirectory.boolValue
-      {
-        return URL(fileURLWithPath: expanded, isDirectory: true)
-      }
-    } catch {
-      // Fall through to a safe existing directory.
+  private static func currentWorkspaceURL() throws -> URL {
+    let data = try Data(contentsOf: AppPaths.configurationFile)
+    let configuration = try JSONDecoder().decode(AppConfiguration.self, from: data)
+    let expanded = NSString(string: configuration.workspacePath).expandingTildeInPath
+    let resolved = URL(fileURLWithPath: expanded, isDirectory: true)
+      .standardizedFileURL
+      .resolvingSymlinksInPath()
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      throw AgentRuntimeError.invalidWorkspace(configuration.workspacePath)
     }
-    return FileManager.default.homeDirectoryForCurrentUser
+    return resolved
   }
 
   private static func environmentName(_ value: String) -> String {
@@ -907,6 +969,13 @@ public enum SelfBuiltToolAgentTools {
   private static func stringSchema(_ description: String) -> JSONValue {
     .object([
       "type": .string("string"),
+      "description": .string(description),
+    ])
+  }
+
+  private static func boolSchema(_ description: String) -> JSONValue {
+    .object([
+      "type": .string("boolean"),
       "description": .string(description),
     ])
   }
