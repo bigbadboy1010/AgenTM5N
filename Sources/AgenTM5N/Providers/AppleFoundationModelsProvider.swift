@@ -69,7 +69,9 @@ public actor AppleFoundationModelsProvider {
 
     let temporalContext = AgentRuntimeContext.currentTemporalContext()
     let selection = Self.toolSelection(for: messages)
-    let capabilityScope = Self.capabilityScope(from: configuration.systemPrompt)
+    let promptCapabilityScope = Self.capabilityScope(from: configuration.systemPrompt)
+    let capabilityScope = AgentCapabilityExecutionContext.allowedCapabilities
+      ?? promptCapabilityScope
 
     if selection.focused != nil, !configuration.agentEnabled {
       throw AppleFoundationModelsProviderError.toolsDisabled
@@ -229,6 +231,7 @@ public actor AppleFoundationModelsProvider {
     case reminders
     case delegation
     case workflows
+    case toolsmith
     case updates
     case git
     case workspaceRead
@@ -284,6 +287,8 @@ public actor AppleFoundationModelsProvider {
       AppleRoutedPlatformExpansionTools.makeDelegationTools()
     case .workflows:
       AppleRoutedPlatformExpansionTools.makeWorkflowTools()
+    case .toolsmith:
+      AppleRoutedToolsmithTools.makeTools()
     case .updates:
       AppleRoutedPlatformExpansionTools.makeUpdateTools()
     case .git:
@@ -321,6 +326,15 @@ public actor AppleFoundationModelsProvider {
       .map(\.content)
       .joined(separator: "\n")
       .lowercased()
+
+    if text.hasPrefix("custom_") || containsAny(text, [
+      "toolsmith", "toolsmith_create", "toolsmith_run", "toolsmith_list",
+      "toolsmith_get", "toolsmith_delete", "eigenes tool", "eigenes werkzeug",
+      "tool erstellen", "tool bauen", "tool generieren", "runtime-tool", "runtime tool",
+      "selbst gebautes tool", "selbst erstelltes tool", "custom_",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .toolsmith)
+    }
 
     if containsAny(text, [
       "browser_batch",
@@ -630,6 +644,7 @@ public actor AppleFoundationModelsProvider {
     case .reminders: .reminders
     case .delegation: .agents
     case .workflows: .workflows
+    case .toolsmith: .terminal
     case .updates: .updates
     case .git: .git
     case .workspaceRead, .workspaceEdit: .workspace
@@ -676,9 +691,9 @@ public actor AppleFoundationModelsProvider {
       lines.append("For writes, inspect important targets first. edge_write_file creates a backup by default and preserves mode/ownership when possible. Never invent Edge hostnames, paths, container names, service names, or file contents.")
     case .browser:
       lines.append("This is Microsoft Edge Browser Control mode. AgenTM5N controls a visible persistent Microsoft Edge automation profile through the local DevTools Protocol.")
-      lines.append("Use browser_open for navigation, browser_read to inspect the actual page and obtain temporary element refs, and browser_action to click, fill, select, check, press keys, scroll, wait, switch/close tabs, or navigate back/forward/reload.")
+      lines.append("Use browser_open for navigation, browser_read to inspect the actual page and obtain temporary element refs, browser_batch for ordered multi-step interactions, and browser_action only when a single action is sufficient.")
       lines.append("When page structure is not already known from a fresh browser_read result, read the page before clicking or filling. Re-read after navigation or major DOM changes because temporary refs may change.")
-      lines.append("When browser_read returns element refs such as b1, b2, or b3, use those refs for browser_action instead of inventing generic CSS selectors. For a follow-up request without an explicit http:// or https:// URL, stay on the currently selected tab and do not navigate to another website.")
+      lines.append("When browser_read returns element refs such as b1, b2, or b3, use those refs instead of inventing generic CSS selectors. For a follow-up request without an explicit http:// or https:// URL, stay on the currently selected tab and do not navigate to another website.")
       lines.append("If the user requests two or more browser interactions, use browser_batch and put every requested action into its steps array in the exact requested order.")
       lines.append("Never skip earlier requested form actions and execute only the final click. For example fill + check + select + click must be four ordered browser_batch steps.")
       lines.append("Set readAfter to true when the user asks for the resulting page state or result text.")
@@ -699,9 +714,13 @@ public actor AppleFoundationModelsProvider {
       lines.append("The authoritative current Mac date/time is: \(temporalContext)")
       lines.append("Use ISO-8601 for reminder due dates and preserve the user's local wall-clock intent.")
     case .delegation:
-      lines.append("Delegate only a bounded subtask to the requested saved specialist. Saved specialists inherit the full centrally authorized AgenTM5N tool set by default. Capability restrictions apply only when the saved profile explicitly defines a sandbox.")
+      lines.append("Delegate only a bounded subtask to the requested saved specialist. Saved specialists inherit the full centrally authorized AgenTM5N tool set by default. Capability restrictions are technical execution boundaries when the saved profile explicitly defines a sandbox.")
     case .workflows:
-      lines.append("Workflows store tool names and arguments. Never put secret values into workflow steps; use secret_ref labels only.")
+      lines.append("Workflows store tool names and arguments. Never put secret values into workflow steps; use secret_ref labels only. Workflow steps remain subject to delegated capability boundaries.")
+    case .toolsmith:
+      lines.append("This is AgenTM5N Toolsmith mode. Use the toolsmith adapter to list, inspect, create, delete, or run persistent custom runtime tools.")
+      lines.append("Never place passwords, tokens, API keys, private keys, passphrases, cookies, or other credentials in generated source. Self-built code is execute-risk and remains subject to AgenTM5N approval policy.")
+      lines.append("For create, provide complete zsh or python3 source and structured parameter JSON. For run, pass only the custom tool name and non-secret arguments.")
     case .updates:
       lines.append("Update checks are read-only checks against a user-provided HTTPS manifest and never install automatically.")
     case .workspaceEdit:
@@ -729,7 +748,7 @@ public actor AppleFoundationModelsProvider {
       """
       TOOL RULES — mandatory:
       - Only report that a native action failed when the corresponding tool actually returns an error.
-      - Tool execution remains subject to AgenTM5N permission approval, audit records, workspace boundaries, and macOS security controls.
+      - Tool execution remains subject to AgenTM5N permission approval, audit records, workspace boundaries, capability scopes, and macOS security controls.
       """
     ]
 
