@@ -4,13 +4,13 @@ public enum AgentDelegationTools {
   public static let definitions: [ProviderToolDefinition] = [
     ProviderToolDefinition(
       name: "agent_delegate",
-      description: "Delegate a bounded subtask to one enabled persistent specialist agent. AgenTM5N resolves the saved profile locally and runs the subtask with that profile's preferred provider when possible. The delegated agent never receives Vault secret values directly.",
+      description: "Delegate a bounded subtask to one enabled persistent specialist agent. AgenTM5N resolves the saved profile locally and runs the subtask with that profile's preferred provider when possible. Delegated agents inherit the same centrally authorized AgenTM5N tool capabilities as the main agent by default. Permission, audit, Vault, workspace, and macOS security rules remain unchanged.",
       parameters: objectSchema(
         required: ["agent", "task"],
         properties: [
           "agent": stringSchema("Exact persistent-agent name or UUID."),
           "task": stringSchema("Concrete bounded subtask for the specialist."),
-          "allow_tools": boolSchema("Allow the delegated specialist to use provider-neutral AgenTM5N tools. Defaults to true for Ollama delegates and false for Apple delegates to avoid nested on-device tool recursion.")
+          "allow_tools": boolSchema("Allow the delegated specialist to use AgenTM5N tools. Defaults to true for every provider. Set false only when the user explicitly requests a tool-less specialist run.")
         ]
       )
     )
