@@ -57,6 +57,10 @@ extension AppState {
   func executePlatformExpansionTool(
     _ call: ProviderToolCall
   ) async -> ToolExecutionResult {
+    if EdgeAgentTools.handles(call) {
+      return await executeEdgeTool(call)
+    }
+
     switch call.function.name {
     case "secret_list":
       guard vaultUnlocked else {
@@ -535,7 +539,8 @@ extension AppState {
   private func executeStandaloneWorkflowStep(
     _ call: ProviderToolCall
   ) async -> ToolExecutionResult {
-    if PlatformExpansionAgentTools.handles(call)
+    if EdgeAgentTools.handles(call)
+      || PlatformExpansionAgentTools.handles(call)
       || RemindersAgentTools.handles(call)
       || AgentDelegationTools.handles(call)
     {
