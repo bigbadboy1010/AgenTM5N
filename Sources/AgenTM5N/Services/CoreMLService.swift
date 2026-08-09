@@ -225,7 +225,11 @@ public actor CoreMLService {
 
   private static func loadCompiledModel(at url: URL) async throws -> MLModel {
     let configuration = MLModelConfiguration()
-    configuration.computeUnits = .cpuAndNeuralEngine
+    // Allow Core ML to schedule each operator across CPU, GPU and ANE. Some
+    // large stateful transformer graphs cannot build an execution plan when
+    // GPU is excluded by `.cpuAndNeuralEngine`, while `.all` succeeds and
+    // still keeps the Neural Engine available for supported operators.
+    configuration.computeUnits = .all
     return try await MLModel.load(contentsOf: url, configuration: configuration)
   }
 
@@ -329,9 +333,9 @@ public actor CoreMLService {
 
   private static var computePolicyDescription: String {
     L10n.text(
-      de: "CPU + Apple Neural Engine (angefordert)",
-      en: "CPU + Apple Neural Engine (requested)",
-      fr: "CPU + Apple Neural Engine (demandé)"
+      de: "Alle verfügbaren Core-ML-Recheneinheiten (CPU + GPU + Neural Engine)",
+      en: "All available Core ML compute units (CPU + GPU + Neural Engine)",
+      fr: "Toutes les unités de calcul Core ML disponibles (CPU + GPU + Neural Engine)"
     )
   }
 
