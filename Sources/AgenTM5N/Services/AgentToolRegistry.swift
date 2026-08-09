@@ -87,7 +87,7 @@ public enum AgentToolRegistry {
     ).union(
       capabilities.contains(.terminal)
         ? Set(SelfBuiltToolLibrary.shared.records.filter(\.isEnabled).map(\.name))
-        : []
+        : Set<String>()
     )
     return allDefinitions.filter { names.contains($0.function.name) }
   }
@@ -197,6 +197,7 @@ public enum AgentToolRegistry {
     .init(name: "toolsmith_list", capability: .terminal, risk: .read),
     .init(name: "toolsmith_get", capability: .terminal, risk: .read),
     .init(name: "toolsmith_create", capability: .terminal, risk: .write),
+    .init(name: "toolsmith_set_enabled", capability: .terminal, risk: .write),
     .init(name: "toolsmith_delete", capability: .terminal, risk: .write),
     .init(name: "toolsmith_run", capability: .terminal, risk: .execute),
 
