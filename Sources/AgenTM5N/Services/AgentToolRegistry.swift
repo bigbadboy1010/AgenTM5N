@@ -256,9 +256,10 @@ public enum AgentToolRegistry {
       || name == "app_check_update"
   }
 
-  /// Central Workspace Trusted policy. Working-directory placement is not a
-  /// sandbox for shell/runtime/external actions, so those actions must remain
-  /// explicitly approved even when ordinary workspace writes are trusted.
+  /// Central Workspace Trusted policy. Only ordinary bounded workspace-style
+  /// data operations may bypass approval. Shell/runtime/external actions,
+  /// personal data mutations, visible system mutations and persistent agent or
+  /// workflow mutations remain explicitly approved.
   public static func requiresWorkspaceTrustedApproval(
     _ name: String,
     risk: ToolRisk
@@ -272,8 +273,11 @@ public enum AgentToolRegistry {
     }
 
     if let capability = entry(named: name)?.capability {
-      if capability == .macPersonal || capability == .reminders {
+      switch capability {
+      case .macPersonal, .reminders, .system, .agents, .workflows:
         return risk != .read
+      default:
+        break
       }
     }
 
