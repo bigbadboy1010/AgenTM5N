@@ -54,7 +54,7 @@ public enum CoreMLEmbeddingRunner {
 
     return try await Task.detached(priority: .userInitiated) {
       let configuration = MLModelConfiguration()
-      configuration.computeUnits = .cpuAndNeuralEngine
+      configuration.computeUnits = .all
       let model = try await MLModel.load(
         contentsOf: compiledURL,
         configuration: configuration
