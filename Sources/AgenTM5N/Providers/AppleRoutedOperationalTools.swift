@@ -29,20 +29,20 @@ public enum AppleRoutedOperationalTools {
 private struct RoutedListDirectoryTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "list_directory"
-  let description = "List files and directories in the configured AgenTM5N workspace. Use an empty path for the workspace root."
+  let description = "List files and directories in the configured AgenTM5N workspace. Omit path for the workspace root."
 
   @Generable
   struct Arguments {
-    @Guide(description: "Relative or absolute directory path; empty string means workspace root")
-    var path: String
+    @Guide(description: "Optional relative or absolute directory path")
+    var path: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await routeOperational(
-      bridge: bridge,
-      name: name,
-      arguments: arguments.path.isEmpty ? [:] : ["path": .string(arguments.path)]
-    )
+    var values: [String: JSONValue] = [:]
+    if let path = normalizedOperational(arguments.path) {
+      values["path"] = .string(path)
+    }
+    return await routeOperational(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -56,19 +56,21 @@ private struct RoutedGlobFilesTool: Tool {
     @Guide(description: "Glob pattern")
     var pattern: String
 
-    @Guide(description: "Optional path below the workspace; empty string means workspace root")
-    var path: String
+    @Guide(description: "Optional path below the workspace")
+    var path: String? = nil
 
-    @Guide(description: "Whether hidden files and directories should be included")
-    var includeHidden: Bool
+    @Guide(description: "Optional. Include hidden files and directories. Defaults to false.")
+    var includeHidden: Bool? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    var values: [String: JSONValue] = [
-      "pattern": .string(arguments.pattern),
-      "include_hidden": .bool(arguments.includeHidden),
-    ]
-    if !arguments.path.isEmpty { values["path"] = .string(arguments.path) }
+    var values: [String: JSONValue] = ["pattern": .string(arguments.pattern)]
+    if let path = normalizedOperational(arguments.path) {
+      values["path"] = .string(path)
+    }
+    if let includeHidden = arguments.includeHidden {
+      values["include_hidden"] = .bool(includeHidden)
+    }
     return await routeOperational(bridge: bridge, name: name, arguments: values)
   }
 }
@@ -83,27 +85,33 @@ private struct RoutedSearchTextTool: Tool {
     @Guide(description: "Single-line text fragment to search for")
     var query: String
 
-    @Guide(description: "Optional path below the workspace; empty string means workspace root")
-    var path: String
+    @Guide(description: "Optional path below the workspace")
+    var path: String? = nil
 
-    @Guide(description: "Optional glob filter such as *.swift; empty string means no filter")
-    var glob: String
+    @Guide(description: "Optional glob filter such as *.swift")
+    var glob: String? = nil
 
-    @Guide(description: "Use case-sensitive matching")
-    var caseSensitive: Bool
+    @Guide(description: "Optional case-sensitive matching. Defaults to false.")
+    var caseSensitive: Bool? = nil
 
-    @Guide(description: "Include hidden files and directories")
-    var includeHidden: Bool
+    @Guide(description: "Optional hidden-file inclusion. Defaults to false.")
+    var includeHidden: Bool? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    var values: [String: JSONValue] = [
-      "query": .string(arguments.query),
-      "case_sensitive": .bool(arguments.caseSensitive),
-      "include_hidden": .bool(arguments.includeHidden),
-    ]
-    if !arguments.path.isEmpty { values["path"] = .string(arguments.path) }
-    if !arguments.glob.isEmpty { values["glob"] = .string(arguments.glob) }
+    var values: [String: JSONValue] = ["query": .string(arguments.query)]
+    if let path = normalizedOperational(arguments.path) {
+      values["path"] = .string(path)
+    }
+    if let glob = normalizedOperational(arguments.glob) {
+      values["glob"] = .string(glob)
+    }
+    if let caseSensitive = arguments.caseSensitive {
+      values["case_sensitive"] = .bool(caseSensitive)
+    }
+    if let includeHidden = arguments.includeHidden {
+      values["include_hidden"] = .bool(includeHidden)
+    }
     return await routeOperational(bridge: bridge, name: name, arguments: values)
   }
 }
@@ -171,27 +179,26 @@ private struct RoutedWriteFileTool: Tool {
     @Guide(description: "Complete UTF-8 file content")
     var content: String
 
-    @Guide(description: "Create missing parent directories")
-    var createDirectories: Bool
+    @Guide(description: "Optional. Create missing parent directories. Defaults to true.")
+    var createDirectories: Bool? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await routeOperational(
-      bridge: bridge,
-      name: name,
-      arguments: [
-        "path": .string(arguments.path),
-        "content": .string(arguments.content),
-        "create_directories": .bool(arguments.createDirectories),
-      ]
-    )
+    var values: [String: JSONValue] = [
+      "path": .string(arguments.path),
+      "content": .string(arguments.content),
+    ]
+    if let createDirectories = arguments.createDirectories {
+      values["create_directories"] = .bool(createDirectories)
+    }
+    return await routeOperational(bridge: bridge, name: name, arguments: values)
   }
 }
 
 private struct RoutedRunCommandTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "run_command"
-  let description = "Run a non-interactive local zsh command in the configured AgenTM5N workspace and return stdout, stderr and exit status."
+  let description = "Run a non-interactive local zsh command in the configured AgenTM5N workspace and return stdout, stderr and exit status. Workspace Trusted requires execution approval."
 
   @Generable
   struct Arguments {
@@ -215,17 +222,21 @@ private struct RoutedTerminalOpenTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Optional initial command; empty string means none")
-    var command: String
+    @Guide(description: "Optional initial command")
+    var command: String? = nil
 
-    @Guide(description: "Optional terminal title; empty string uses the default")
-    var title: String
+    @Guide(description: "Optional terminal title")
+    var title: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
     var values: [String: JSONValue] = [:]
-    if !arguments.command.isEmpty { values["command"] = .string(arguments.command) }
-    if !arguments.title.isEmpty { values["title"] = .string(arguments.title) }
+    if let command = normalizedOperational(arguments.command, preserveWhitespace: true) {
+      values["command"] = .string(command)
+    }
+    if let title = normalizedOperational(arguments.title) {
+      values["title"] = .string(title)
+    }
     return await routeOperational(bridge: bridge, name: name, arguments: values)
   }
 }
@@ -237,8 +248,8 @@ private struct RoutedSSHListHostsTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Use the literal value all")
-    var query: String
+    @Guide(description: "Optional. Omit this value or use all.")
+    var query: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -282,13 +293,15 @@ private struct RoutedSSHOpenTerminalTool: Tool {
     @Guide(description: "Configured SSH profile name, hostname or UUID")
     var host: String
 
-    @Guide(description: "Optional remote command to start; empty string means interactive shell")
-    var command: String
+    @Guide(description: "Optional remote command to start")
+    var command: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
     var values: [String: JSONValue] = ["host": .string(arguments.host)]
-    if !arguments.command.isEmpty { values["command"] = .string(arguments.command) }
+    if let command = normalizedOperational(arguments.command, preserveWhitespace: true) {
+      values["command"] = .string(command)
+    }
     return await routeOperational(bridge: bridge, name: name, arguments: values)
   }
 }
@@ -300,8 +313,8 @@ private struct RoutedGitStatusTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Use the literal value current")
-    var query: String
+    @Guide(description: "Optional. Omit this value or use current.")
+    var query: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -316,16 +329,16 @@ private struct RoutedGitDiffTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Return staged diff when true; working-tree diff when false")
-    var staged: Bool
+    @Guide(description: "Optional. Return staged diff when true. Defaults to false.")
+    var staged: Bool? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await routeOperational(
-      bridge: bridge,
-      name: name,
-      arguments: ["staged": .bool(arguments.staged)]
-    )
+    var values: [String: JSONValue] = [:]
+    if let staged = arguments.staged {
+      values["staged"] = .bool(staged)
+    }
+    return await routeOperational(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -336,8 +349,8 @@ private struct RoutedGitBranchesTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Use the literal value local")
-    var query: String
+    @Guide(description: "Optional. Omit this value or use local.")
+    var query: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -355,19 +368,16 @@ private struct RoutedGitCheckoutTool: Tool {
     @Guide(description: "Valid local Git branch name")
     var branch: String
 
-    @Guide(description: "Create the branch from current HEAD before switching")
-    var create: Bool
+    @Guide(description: "Optional. Create the branch from current HEAD before switching. Defaults to false.")
+    var create: Bool? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await routeOperational(
-      bridge: bridge,
-      name: name,
-      arguments: [
-        "branch": .string(arguments.branch),
-        "create": .bool(arguments.create),
-      ]
-    )
+    var values: [String: JSONValue] = ["branch": .string(arguments.branch)]
+    if let create = arguments.create {
+      values["create"] = .bool(create)
+    }
+    return await routeOperational(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -395,6 +405,18 @@ private struct RoutedGitCommitTool: Tool {
       ]
     )
   }
+}
+
+private func normalizedOperational(
+  _ value: String?,
+  preserveWhitespace: Bool = false
+) -> String? {
+  guard let value else { return nil }
+  if preserveWhitespace {
+    return value.isEmpty ? nil : value
+  }
+  let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  return normalized.isEmpty ? nil : normalized
 }
 
 private func routeOperational(
