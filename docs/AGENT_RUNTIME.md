@@ -1,137 +1,171 @@
 # Agent Runtime
 
-AgenTM5N 0.2.x provides a multi-turn tool-calling runtime for Ollama Local and
-Ollama Cloud. Apple Foundation Models remains a chat-only provider in this
-milestone.
+AgenTM5N 1.1.1 provides multi-turn tool calling for Ollama Local, Ollama Cloud
+and Apple Foundation Models. Apple uses focused compile-time Swift `Tool`
+adapters; all providers route into the same provider-neutral native tool model.
 
-## Agent loop
+## Main agent loop
 
-1. AgenTM5N sends the current conversation and tool schemas to `/api/chat`.
-2. Streamed `content`, `thinking` and `tool_calls` fields are accumulated.
-3. The assistant turn, including its tool calls, is appended to the provider
-   conversation.
-4. Each requested tool is evaluated by the permission policy.
-5. Approved tools are executed and recorded in the local chat audit.
-6. Tool results are appended as `role: tool` messages with `tool_name`.
-7. The loop continues until the model returns no tool calls or the configured
+1. AgenTM5N builds provider messages and the allowed tool catalog.
+2. The provider plans a response and may request one or more tools.
+3. AgenTM5N resolves the provider-neutral tool capability, risk and sanitized
+   approval summary.
+4. A delegated specialist capability sandbox is checked when active.
+5. The current permission mode decides whether explicit user approval is needed.
+6. Approved calls execute in native Swift services.
+7. Tool results are bounded, secret-redacted, audited and returned to the model.
+8. The provider loop continues until no tool call remains or the configured
    iteration limit is reached.
 
-## Built-in tools
+Apple Foundation Models uses the same AppState executor through
+`AgentToolExecutionBridge`. Focused packs keep the Apple tool context small and
+avoid exposing irrelevant schemas to the on-device model.
 
-### Workspace inspection and editing
+## Tool families
 
-| Tool | Risk | Purpose |
-|---|---|---|
-| `list_directory` | read | List up to 500 visible directory entries |
-| `glob_files` | read | Recursively find up to 500 matching files |
-| `search_text` | read | Search UTF-8 files and return up to 200 locations |
-| `read_file` | read | Read UTF-8 text up to 512 KiB |
-| `apply_patch` | write | Replace exactly one known text block |
-| `write_file` | write | Atomically create or replace UTF-8 text up to 1 MiB |
-| `run_command` | execute | Run a Zsh command in the workspace |
-| `terminal_open` | execute | Open the visible local terminal |
+The provider-neutral `AgentToolRegistry` currently covers:
 
-### Git
+- workspace listing/glob/search/read/write/patch
+- local command and visible terminal
+- Git status/diff/branches/checkout/commit
+- SSH list/run/terminal/upload/download/tail/batch
+- Edge infrastructure list/read/write/control
+- Microsoft Edge browser session/tabs/open/read/action/batch
+- Calendar, Contacts and Apple Mail read/mutations
+- Reminders
+- Clipboard, Notifications, Shortcuts, Finder and system diagnostics
+- Secret metadata and HTTP(S)
+- Core ML and Workspace Memory
+- Unified Context, Knowledge Library and attachments
+- persistent specialist agents and delegation
+- reusable workflows
+- Toolsmith and dynamic `custom_*` runtime tools
+- generated documents
+- version/update checks
 
-| Tool | Risk | Purpose |
-|---|---|---|
-| `git_status` | read | Run `git status --short --branch` |
-| `git_diff` | read | Return working-tree or staged Git diff |
-| `git_branches` | read | Return current and local branches |
-| `git_checkout` | write | Create or switch a branch on a clean worktree |
-| `git_commit` | write | Commit only explicit paths without push |
-
-### SSH
-
-| Tool | Risk | Purpose |
-|---|---|---|
-| `ssh_list_hosts` | read | Return non-secret saved host metadata |
-| `ssh_run` | execute | Run a bounded remote command through a saved profile |
-| `ssh_open_terminal` | execute | Open a saved profile in the visible terminal |
-
-Command output is limited to 256 KiB per stream and structured command
-execution is terminated after 120 seconds.
+The Tools Center displays the fixed system catalog and persistent self-built tools.
 
 ## Permission modes
 
 ### Confirm
 
-- Read tools within the workspace execute automatically.
-- Write, Git mutation, terminal and execute tools require visible one-time
-  approval.
-- File tools remain restricted to the configured workspace.
-- A small set of destructive local system-command patterns remains blocked.
-- Remote SSH execution requires approval.
+- read-risk calls may execute automatically;
+- write and execute-risk calls require explicit approval;
+- normal workspace file boundaries remain active;
+- tool calls are audited.
 
 ### Workspace Trusted
 
-- Local read, write, Git and execute tools run automatically.
-- File tools remain restricted to the configured workspace.
-- Destructive local system-command patterns remain blocked.
-- `ssh_run` and `ssh_open_terminal` still require approval.
+Bounded normal workspace file/Git mutations can run without repeated prompts, but
+operations capable of escaping a simple working-directory boundary remain
+approval-gated. This includes:
+
+- `run_command` and `terminal_open`
+- SSH/Edge execution and transfers
+- browser navigation/mutations and `browser_batch`
+- HTTP/API execution
+- `shortcuts_run`
+- Toolsmith management/execution and dynamic `custom_*` code
+- Calendar/Contacts/Mail/Reminders mutations
+- delegated-agent execution
+- `workflow_run`
+
+The working directory alone is not treated as a security sandbox for a shell.
 
 ### Full Access
 
-- Tool calls run automatically.
-- Absolute file paths outside the workspace are accepted where the tool supports
-  them.
-- The workspace remains the current directory for local shell commands.
-- Local command-pattern blocking is disabled.
-- Remote SSH tools may run automatically.
-- Every tool call remains visible in the conversation audit.
+- explicit trusted-user mode;
+- tool calls run automatically;
+- supported file tools may accept paths outside the workspace;
+- local command-pattern blocking is relaxed according to the existing runtime;
+- remote/browser/Toolsmith actions may run automatically;
+- capability scopes for explicitly sandboxed delegated specialists and secret
+  redaction remain enforced.
+
+## Capability sandboxes
+
+A persistent specialist has either:
+
+- unrestricted inherited AgenTM5N capabilities; or
+- an explicit set such as `workspace,memory`.
+
+For an explicit sandbox, provider definitions are filtered before inference and
+native delegated execution checks the same TaskLocal scope again. A workspace-only
+specialist therefore cannot call SSH, browser or Toolsmith and cannot regain those
+capabilities through a stored workflow.
+
+## Workflows
+
+A workflow stores 1–20 ordered provider-neutral tool calls. Nested workflow
+management is prohibited and obvious secret-bearing argument keys are rejected.
+Known unlocked Vault values are also rejected from workflow definitions.
+
+`workflow_run` is a composite execute-risk action. Outside Full Access, the user
+receives one approval for the complete stored workflow. The approval summary
+expands each stored step into a sanitized concrete operation/risk summary before
+execution. Steps run sequentially, stop on failure and remain inside a delegated
+specialist capability scope when one is active.
+
+## Toolsmith
+
+Toolsmith creates persistent zsh/Python tools with typed parameters. Enabled tools
+appear directly in Ollama provider definitions; Apple Foundation Models uses the
+focused static Toolsmith adapter.
+
+Every custom source execution is execute-risk. Child processes receive a temporary
+HOME/TMP/XDG environment, a minimal PATH, structured argument files and no
+inherited Vault/provider/SSH-agent environment. Runtime is capped at 60 seconds
+and output is bounded/redacted. Toolsmith is not a kernel-level sandbox, so it
+remains approval-gated outside Full Access.
 
 ## Workspace boundary
 
-Relative paths resolve against the configured workspace. Existing paths are
-standardized and symlinks are resolved before the boundary check. For new files,
-the parent directory is resolved before the destination filename is appended.
+Relative file paths resolve against the configured workspace. Existing paths are
+standardized and symlinks are resolved before boundary checks. For destinations,
+the resolved parent is checked before the new filename is appended.
 
-Full Access explicitly disables this boundary check for file operations. Git
-operations always remain scoped to the configured repository workspace.
+Full Access explicitly allows supported file operations outside this boundary.
+Git operations remain tied to the configured workspace repository.
 
-## Targeted editing
+## Local command execution
 
-`apply_patch` is the preferred tool for existing files. It requires an exact
-`old_text` block and applies the change only when that block appears exactly
-once. A missing or ambiguous block fails without writing the file.
+Structured `run_command` uses non-interactive zsh with bounded stdout/stderr and
+a timeout. A small blocklist rejects obvious destructive host-level commands
+outside Full Access, and a repetition ledger rejects a third equivalent local
+AgentRuntime call inside a short time window.
 
-The recommended editing sequence is:
+These checks are defense in depth, not a shell sandbox; the permission policy is
+the primary boundary for arbitrary shell source.
 
-1. find files with `glob_files`
-2. locate code with `search_text`
-3. inspect context with `read_file`
-4. modify with `apply_patch`
-5. verify with `git_diff`
-6. build or test with `run_command`
-7. commit explicit paths with `git_commit`
+## Browser execution
 
-## Repetition protection
+`browser_batch` is one provider-neutral execute-risk tool containing 1–12 declared
+ordered interactions. After the single central approval, the native browser service
+executes only those declared steps and can optionally perform a final page read.
+Page refs are temporary and should be refreshed after navigation or major DOM
+changes.
 
-Local AgentRuntime calls are canonicalized by tool name and sorted arguments.
-A third equivalent call within 90 seconds is rejected. This permits an initial
-execution and one verification execution while stopping simple tool loops.
+## Audit and telemetry
 
-## Audit records
-
-Each tool execution stores:
+Each main tool execution records:
 
 - tool name
-- redacted argument summary for file and patch content
-- risk category
-- status: running, succeeded, failed or denied
-- bounded output
-- start and end timestamps
+- sanitized argument summary
+- risk
+- running/succeeded/failed/denied status
+- bounded/redacted output
+- timestamps
 
-These records are persisted with the chat history. Passwords, private keys,
-passphrases and other Vault values are never returned to the model.
+Telemetry additionally records provider, capability, duration, output byte count
+and cache-hit state without persisting raw tool arguments or secret values.
 
-## Current limitations
+## Current deliberate limitations
 
-- Tool calls are executed sequentially even when the model requests them in
-  parallel.
-- The repetition guard currently applies to local AgentRuntime tools; remote SSH
-  actions rely on their explicit approval policy.
-- Git tools create local state only and do not push.
-- Dedicated audit export and workspace-specific tool presets are not yet
-  implemented.
-- Apple Foundation Models does not receive tool schemas yet.
+- provider-requested tool calls are executed sequentially;
+- Git tools create local state but do not push;
+- Toolsmith is approval-controlled native runtime code rather than a dedicated
+  kernel-sandboxed XPC helper;
+- Apple Foundation Models requires static adapter types, so dynamic `custom_*`
+  functions are executed through the Toolsmith meta-adapter on Apple;
+- release readiness still requires the target-Mac automated gate plus the manual
+  runtime matrix in `VALIDATION.md`.
