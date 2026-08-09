@@ -8,6 +8,7 @@ struct MacAccessCenterView: View {
   @Environment(\.dismiss) private var dismiss
 
   @State private var calendarStatus = ""
+  @State private var remindersStatus = ""
   @State private var contactsStatus = ""
 
   private var auditRecords: [ToolExecutionRecord] {
@@ -62,6 +63,13 @@ struct MacAccessCenterView: View {
           )
           Divider()
           permissionRow(
+            systemImage: "checklist",
+            title: "Erinnerungen",
+            status: remindersStatus,
+            settingsAnchor: "Privacy_Reminders"
+          )
+          Divider()
+          permissionRow(
             systemImage: "person.crop.circle",
             title: "Kontakte",
             status: contactsStatus,
@@ -99,7 +107,7 @@ struct MacAccessCenterView: View {
       Spacer()
     }
     .padding(24)
-    .frame(minWidth: 760, minHeight: 560)
+    .frame(minWidth: 760, minHeight: 600)
     .onAppear(perform: refresh)
   }
 
@@ -141,6 +149,7 @@ struct MacAccessCenterView: View {
 
   private func refresh() {
     calendarStatus = Self.calendarAuthorizationDescription()
+    remindersStatus = Self.remindersAuthorizationDescription()
     contactsStatus = Self.contactsAuthorizationDescription()
   }
 
@@ -151,6 +160,18 @@ struct MacAccessCenterView: View {
     case .notDetermined: "Noch nicht angefragt"
     case .denied: "Abgelehnt"
     case .restricted: "Eingeschränkt"
+    @unknown default: "Unbekannt"
+    }
+  }
+
+  private static func remindersAuthorizationDescription() -> String {
+    switch EKEventStore.authorizationStatus(for: .reminder) {
+    case .fullAccess: "Vollzugriff erlaubt"
+    case .authorized: "Erlaubt"
+    case .notDetermined: "Noch nicht angefragt"
+    case .denied: "Abgelehnt"
+    case .restricted: "Eingeschränkt"
+    case .writeOnly: "Nur Schreibzugriff"
     @unknown default: "Unbekannt"
     }
   }
