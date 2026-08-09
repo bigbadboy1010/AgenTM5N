@@ -3,11 +3,60 @@ import XCTest
 
 final class SecurityPolicyTests: XCTestCase {
   func testWorkspaceTrustedSensitiveExecutorsAreApprovalClassified() {
-    XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("run_command"))
-    XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("terminal_open"))
-    XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("shortcuts_run"))
-    XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("toolsmith_create"))
-    XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("toolsmith_run"))
+    XCTAssertTrue(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "run_command",
+        risk: .execute
+      )
+    )
+    XCTAssertTrue(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "terminal_open",
+        risk: .execute
+      )
+    )
+    XCTAssertTrue(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "shortcuts_run",
+        risk: .execute
+      )
+    )
+    XCTAssertTrue(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "toolsmith_create",
+        risk: .write
+      )
+    )
+    XCTAssertTrue(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "toolsmith_run",
+        risk: .execute
+      )
+    )
+    XCTAssertTrue(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "agent_delegate",
+        risk: .execute
+      )
+    )
+    XCTAssertTrue(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "browser_open",
+        risk: .execute
+      )
+    )
+    XCTAssertFalse(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "browser_read",
+        risk: .read
+      )
+    )
+    XCTAssertFalse(
+      AgentToolRegistry.requiresWorkspaceTrustedApproval(
+        "list_directory",
+        risk: .read
+      )
+    )
   }
 
   func testBrowserBatchIsProviderNeutralExecuteTool() {
@@ -25,6 +74,7 @@ final class SecurityPolicyTests: XCTestCase {
   func testCapabilitySandboxFiltersToolsTechnically() {
     let workspaceOnly: Set<AgentToolCapability> = [.workspace]
     XCTAssertTrue(AgentToolRegistry.isAllowed("read_file", within: workspaceOnly))
+    XCTAssertFalse(AgentToolRegistry.isAllowed("run_command", within: workspaceOnly))
     XCTAssertFalse(AgentToolRegistry.isAllowed("ssh_run", within: workspaceOnly))
     XCTAssertFalse(AgentToolRegistry.isAllowed("browser_open", within: workspaceOnly))
     XCTAssertFalse(AgentToolRegistry.isAllowed("toolsmith_run", within: workspaceOnly))
@@ -32,6 +82,95 @@ final class SecurityPolicyTests: XCTestCase {
     let terminalOnly: Set<AgentToolCapability> = [.terminal]
     XCTAssertTrue(AgentToolRegistry.isAllowed("run_command", within: terminalOnly))
     XCTAssertTrue(AgentToolRegistry.isAllowed("toolsmith_set_enabled", within: terminalOnly))
+    XCTAssertFalse(AgentToolRegistry.isAllowed("browser_open", within: terminalOnly))
+  }
+
+  func testDelegatedScopeCanOnlyReduceParentCapabilities() {
+    let parent: Set<AgentToolCapability> = [.workspace, .agents]
+
+    XCTAssertEqual(
+      AgentCapabilityExecutionContext.delegatedScope(
+        parent: parent,
+        profile: nil
+      ),
+      parent
+    )
+
+    XCTAssertEqual(
+      AgentCapabilityExecutionContext.delegatedScope(
+        parent: parent,
+        profile: [.workspace, .browser]
+      ),
+      [.workspace]
+    )
+
+    XCTAssertEqual(
+      AgentCapabilityExecutionContext.delegatedScope(
+        parent: nil,
+        profile: [.workspace]
+      ),
+      [.workspace]
+    )
+  }
+
+  func testBridgePersistsAndIntersectsCapabilityScopes() async {
+    let bridge = AgentToolExecutionBridge()
+    let sessionID = UUID()
+    await bridge.install(sessionID: sessionID) { call in
+      "EXECUTED:\(call.function.name)"
+    }
+
+    let outer = await bridge.pushCapabilityScope([.workspace, .browser])
+
+    let allowedWorkspace = await bridge.execute(
+      ProviderToolCall(
+        function: .init(name: "list_directory", arguments: [:])
+      )
+    )
+    XCTAssertEqual(allowedWorkspace, "EXECUTED:list_directory")
+
+    let deniedTerminal = await bridge.execute(
+      ProviderToolCall(
+        function: .init(
+          name: "run_command",
+          arguments: ["command": .string("whoami")]
+        )
+      )
+    )
+    XCTAssertTrue(deniedTerminal.contains("CAPABILITY_DENIED"))
+
+    let inner = await bridge.pushCapabilityScope([.browser, .terminal])
+
+    let deniedWorkspaceInsideIntersection = await bridge.execute(
+      ProviderToolCall(
+        function: .init(name: "list_directory", arguments: [:])
+      )
+    )
+    XCTAssertTrue(deniedWorkspaceInsideIntersection.contains("CAPABILITY_DENIED"))
+
+    let allowedBrowser = await bridge.execute(
+      ProviderToolCall(
+        function: .init(
+          name: "browser_open",
+          arguments: ["url": .string("https://example.com")]
+        )
+      )
+    )
+    XCTAssertEqual(allowedBrowser, "EXECUTED:browser_open")
+
+    let stillDeniedTerminal = await bridge.execute(
+      ProviderToolCall(
+        function: .init(
+          name: "run_command",
+          arguments: ["command": .string("whoami")]
+        )
+      )
+    )
+    XCTAssertTrue(stillDeniedTerminal.contains("CAPABILITY_DENIED"))
+
+    await bridge.popCapabilityScope(inner)
+    await bridge.popCapabilityScope(outer)
+    await bridge.clear(sessionID: sessionID)
   }
 
   func testToolsmithNormalizesNamesAndRejectsCredentialSource() throws {
@@ -84,5 +223,6 @@ final class SecurityPolicyTests: XCTestCase {
     XCTAssertTrue(names.contains("toolsmith_set_enabled"))
     XCTAssertTrue(names.contains("toolsmith_run"))
     XCTAssertFalse(names.contains("ssh_run"))
+    XCTAssertFalse(names.contains("browser_open"))
   }
 }
