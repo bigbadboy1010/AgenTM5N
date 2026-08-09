@@ -131,6 +131,18 @@ extension AppState {
     let entry = AgentToolRegistry.entry(named: call.function.name)
     let ttl = ToolResultCache.shared.ttl(for: call.function.name)
 
+    if let denial = capabilityDenialResult(for: call) {
+      let sanitized = sanitizeToolResult(denial)
+      recordTelemetry(
+        call: call,
+        risk: risk,
+        result: sanitized,
+        startedAt: startedAt,
+        cacheHit: false
+      )
+      return sanitized
+    }
+
     if risk == .read, entry?.cacheable == true,
       let cached = await ToolResultCache.shared.result(for: call)
     {
@@ -168,24 +180,10 @@ extension AppState {
     call: ProviderToolCall,
     risk: ToolRisk
   ) -> Bool {
-    if BrowserAgentTools.handles(call) || BrowserBatchAgentTools.handles(call) {
-      return risk != .read
-    }
-    if AgentToolRegistry.isRemoteOrExternal(call.function.name) {
-      return true
-    }
-    if MacNativeMutationAgentTools.handles(call) {
-      return true
-    }
-    if RemindersAgentTools.handles(call), risk != .read {
-      return true
-    }
-    if call.function.name == "agent_delegate"
-      || call.function.name == "workflow_run"
-    {
-      return true
-    }
-    return false
+    AgentToolRegistry.requiresWorkspaceTrustedApproval(
+      call.function.name,
+      risk: risk
+    )
   }
 
   func isPlatformExpansionCall(_ call: ProviderToolCall) -> Bool {
