@@ -129,7 +129,8 @@ public final class AgentWorkflowLibrary: ObservableObject {
     }), let index = workflows.firstIndex(where: { $0.id == existing.id }) {
       workflows[index].purpose = normalizedPurpose
       workflows[index].steps = steps
-      workflows[index].isEnabled = true
+      // Replacing workflow content must not silently re-enable a workflow that
+      // the user deliberately disabled earlier.
       workflows[index].updatedAt = Date()
       let result = workflows[index]
       sort()
@@ -247,7 +248,7 @@ public enum WorkflowAgentTools {
     ),
     ProviderToolDefinition(
       name: "workflow_create",
-      description: "Create or replace a reusable AgenTM5N workflow composed of provider-neutral tool steps. Store only secret_ref labels, never secret values.",
+      description: "Create or replace a reusable AgenTM5N workflow composed of provider-neutral tool steps. Store only secret_ref labels, never secret values. Replacing an existing workflow preserves its enabled/disabled state.",
       parameters: objectSchema(
         required: ["name", "purpose", "steps"],
         properties: [
