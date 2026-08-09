@@ -24,7 +24,7 @@ public enum SecureSecretBrokerError: LocalizedError {
     case .unsupportedScheme(let value):
       return "Nicht unterstütztes URL-Schema: \(value). Erlaubt sind http und https."
     case .insecureSecretTransport(let host):
-      return "Ein Secret wird nicht über unverschlüsseltes HTTP an \(host) gesendet. Verwende HTTPS oder einen lokalen Host."
+      return "Ein Secret wird nicht über unverschlüsseltes HTTP an \(host) gesendet. Verwende HTTPS; HTTP mit Secrets ist nur für Loopback (localhost/127.0.0.0/8/::1) erlaubt."
     case .invalidHeaderName(let name):
       return "Ungültiger HTTP-Headername: \(name)"
     case .sensitiveHeaderBlocked(let name):
@@ -167,7 +167,7 @@ public struct SecureHTTPClient: Sendable {
     guard scheme == "https" || scheme == "http" else {
       throw SecureSecretBrokerError.unsupportedScheme(scheme)
     }
-    if secret != nil, scheme != "https", !Self.isLocalHost(host) {
+    if secret != nil, scheme != "https", !Self.isLoopbackHost(host) {
       throw SecureSecretBrokerError.insecureSecretTransport(host)
     }
 
@@ -288,25 +288,11 @@ public struct SecureHTTPClient: Sendable {
     )
   }
 
-  fileprivate static func isLocalHost(_ host: String) -> Bool {
+  fileprivate static func isLoopbackHost(_ host: String) -> Bool {
     let normalized = host.lowercased()
-    if normalized == "localhost" || normalized == "::1" || normalized.hasSuffix(".local") {
-      return true
-    }
-    if normalized.hasPrefix("127.")
-      || normalized.hasPrefix("10.")
-      || normalized.hasPrefix("192.168.")
-    {
-      return true
-    }
-    if normalized.hasPrefix("172."),
-      let second = normalized.split(separator: ".").dropFirst().first,
-      let value = Int(second),
-      (16...31).contains(value)
-    {
-      return true
-    }
-    return false
+    return normalized == "localhost"
+      || normalized == "::1"
+      || normalized.hasPrefix("127.")
   }
 
   private static func validateHeaderName(_ name: String) throws {
@@ -352,9 +338,9 @@ private final class SecureHTTPRedirectDelegate: NSObject, URLSessionTaskDelegate
       return
     }
 
-    let encryptedOrLocal = scheme == "https"
-      || (scheme == "http" && SecureHTTPClient.isLocalHost(host))
-    guard encryptedOrLocal, host == originalHost else {
+    let encryptedOrLoopback = scheme == "https"
+      || (scheme == "http" && SecureHTTPClient.isLoopbackHost(host))
+    guard encryptedOrLoopback, host == originalHost else {
       completionHandler(nil)
       return
     }
