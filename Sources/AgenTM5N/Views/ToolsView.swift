@@ -345,8 +345,10 @@ struct ToolsView: View {
       VStack(alignment: .leading, spacing: 7) {
         Label("Ausführung erfolgt im konfigurierten AgenTM5N-Workspace.", systemImage: "folder.badge.gearshape")
         Label("Toolsmith-Code wird immer als Execute-Risiko behandelt.", systemImage: "checkmark.shield")
-        Label("Vault-Secrets und Provider-Tokens werden nicht automatisch an das Tool übergeben.", systemImage: "key.horizontal")
-        Label("Laufzeitlimit: 60 Sekunden", systemImage: "timer")
+        Label("In Workspace Trusted ist jede Toolsmith-Ausführung bestätigungspflichtig.", systemImage: "hand.raised")
+        Label("Vault-Secrets, Provider-Tokens und SSH-Agent-Umgebung werden nicht automatisch übergeben.", systemImage: "key.horizontal")
+        Label("Jeder Lauf erhält ein temporäres isoliertes HOME/TMP-Verzeichnis.", systemImage: "house.and.flag")
+        Label("Laufzeitlimit: 60 Sekunden; Ausgabe ist begrenzt und wird zentral redigiert.", systemImage: "timer")
 
         Divider()
 
@@ -373,11 +375,21 @@ struct ToolsView: View {
           Label("Im Chat testen", systemImage: "play.fill")
         }
         .buttonStyle(.borderedProminent)
+        .disabled(!tool.isEnabled)
 
         Button {
           editWithAgent(tool)
         } label: {
           Label("Mit Agent überarbeiten", systemImage: "wand.and.stars")
+        }
+
+        Button {
+          toggleEnabled(tool)
+        } label: {
+          Label(
+            tool.isEnabled ? "Deaktivieren" : "Aktivieren",
+            systemImage: tool.isEnabled ? "pause.circle" : "checkmark.circle"
+          )
         }
 
         Spacer()
@@ -462,6 +474,18 @@ struct ToolsView: View {
       """
     appState.selectedSection = .chat
     dismiss()
+  }
+
+  private func toggleEnabled(_ tool: SelfBuiltToolRecord) {
+    do {
+      _ = try SelfBuiltToolLibrary.shared.setEnabled(
+        !tool.isEnabled,
+        query: tool.id.uuidString
+      )
+      refresh()
+    } catch {
+      errorText = error.localizedDescription
+    }
   }
 
   private func delete(_ tool: SelfBuiltToolRecord) {
