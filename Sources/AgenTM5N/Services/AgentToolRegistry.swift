@@ -5,6 +5,7 @@ public enum AgentToolCapability: String, Codable, CaseIterable, Hashable, Sendab
   case terminal
   case ssh
   case edge
+  case browser
   case git
   case macPersonal
   case secrets
@@ -64,6 +65,7 @@ public enum AgentToolRegistry {
         + PersistentAgentTools.definitions
         + PlatformExpansionAgentTools.definitions
         + EdgeAgentTools.definitions
+        + BrowserAgentTools.definitions
         + AgentDelegationTools.definitions
         + WorkflowAgentTools.definitions
     )
@@ -107,6 +109,12 @@ public enum AgentToolRegistry {
     .init(name: "edge_read_file", capability: .edge, risk: .read, secretAware: true),
     .init(name: "edge_write_file", capability: .edge, risk: .write, secretAware: true),
     .init(name: "edge_control", capability: .edge, risk: .execute, secretAware: true),
+
+    .init(name: "browser_session", capability: .browser, risk: .execute),
+    .init(name: "browser_tabs", capability: .browser, risk: .read),
+    .init(name: "browser_open", capability: .browser, risk: .execute),
+    .init(name: "browser_read", capability: .browser, risk: .read),
+    .init(name: "browser_action", capability: .browser, risk: .execute),
 
     .init(name: "git_status", capability: .git, risk: .read, cacheable: true),
     .init(name: "git_diff", capability: .git, risk: .read),
@@ -194,6 +202,7 @@ public enum AgentToolRegistry {
   public static func isRemoteOrExternal(_ name: String) -> Bool {
     entry(named: name)?.capability == .ssh
       || entry(named: name)?.capability == .edge
+      || entry(named: name)?.capability == .browser
       || entry(named: name)?.capability == .http
       || name == "app_check_update"
   }
