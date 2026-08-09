@@ -29,7 +29,7 @@ public enum PersistentAgentTools {
             "instructions": stringSchema("Complete specialist system instructions. Be operational and specific; do not include secrets. Maximum 12000 characters."),
             "provider": stringSchema("Provider preference: current, apple_on_device, ollama_local, or ollama_cloud."),
             "symbol": stringSchema("SF Symbols name for the Agenten UI, or an empty string for the default symbol."),
-            "capabilities": stringSchema("Use all by default for full main-agent tool parity. Only when explicitly requested, use a comma-separated restricted set: workspace, terminal, ssh, edge, browser, git, macPersonal, secrets, http, system, reminders, coreML, memory, knowledge, attachments, documents, agents, workflows, customTools, updates.")
+            "capabilities": stringSchema("Use all by default for full main-agent tool parity. Only when explicitly requested, use a comma-separated restricted set: workspace, terminal (includes Toolsmith/self-built tools), ssh, edge, browser, git, macPersonal, secrets, http, system, reminders, coreML, memory, knowledge, attachments, documents, agents, workflows, updates.")
           ]
         )
       ),
@@ -46,7 +46,7 @@ public enum PersistentAgentTools {
             "provider": stringSchema("New provider preference, or empty string to keep unchanged."),
             "symbol": stringSchema("New SF Symbols name, or empty string to keep unchanged."),
             "enabled_mode": stringSchema("Use unchanged, true, or false."),
-            "capabilities": stringSchema("Use unchanged, all, or comma-separated capability names including browser and customTools.")
+            "capabilities": stringSchema("Use unchanged, all, or comma-separated capability names. terminal includes Toolsmith/self-built runtime tools.")
           ]
         )
       ),
@@ -266,6 +266,9 @@ public enum PersistentAgentTools {
       .replacingOccurrences(of: "_", with: "")
       .replacingOccurrences(of: "-", with: "")
       .lowercased()
+    if normalized == "customtools" || normalized == "toolsmith" {
+      return .terminal
+    }
     return AgentToolCapability.allCases.first {
       $0.rawValue
         .replacingOccurrences(of: "_", with: "")
