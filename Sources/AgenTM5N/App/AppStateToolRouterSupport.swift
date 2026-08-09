@@ -189,7 +189,9 @@ extension AppState {
   }
 
   func isPlatformExpansionCall(_ call: ProviderToolCall) -> Bool {
-    EdgeAgentTools.handles(call)
+    BrowserBatchAgentTools.handles(call)
+      || SelfBuiltToolAgentTools.handles(call)
+      || EdgeAgentTools.handles(call)
       || PlatformExpansionAgentTools.handles(call)
       || RemindersAgentTools.handles(call)
       || AgentDelegationTools.handles(call)
