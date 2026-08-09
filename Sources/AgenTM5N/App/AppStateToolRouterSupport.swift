@@ -5,6 +5,12 @@ extension AppState {
   func registryRiskAndSummary(
     for call: ProviderToolCall
   ) async -> (risk: ToolRisk, summary: String) {
+    if BrowserAgentTools.handles(call) {
+      return (
+        BrowserAgentTools.risk(for: call),
+        BrowserAgentTools.summary(for: call)
+      )
+    }
     if EdgeAgentTools.handles(call) {
       return (
         EdgeAgentTools.risk(for: call),
