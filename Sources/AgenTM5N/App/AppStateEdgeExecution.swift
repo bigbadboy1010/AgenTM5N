@@ -94,12 +94,18 @@ extension AppState {
 
   private func edgeWriteFile(_ call: ProviderToolCall) async -> ToolExecutionResult {
     var localStagingURL: URL?
+    defer {
+      if let localStagingURL {
+        try? FileManager.default.removeItem(at: localStagingURL)
+      }
+    }
+
     var remoteStagingPath: String?
-    var hostQueryForCleanup: String?
+    var cleanupHostQuery: String?
 
     do {
       let hostQuery = try edgeRequiredString("host", in: call)
-      hostQueryForCleanup = hostQuery
+      cleanupHostQuery = hostQuery
       let host = try edgeResolveSSHHost(hostQuery)
       let path = try edgeAbsoluteRemotePath(
         try edgeRequiredString("path", in: call)
@@ -177,27 +183,25 @@ extension AppState {
       )
       if result.success {
         remoteStagingPath = nil
+      } else {
+        _ = await edgeRunSSH(
+          hostQuery: hostQuery,
+          command: "rm -f -- \(staged)"
+        )
+        remoteStagingPath = nil
       }
       return result
     } catch {
+      if let remoteStagingPath, let cleanupHostQuery {
+        _ = await edgeRunSSH(
+          hostQuery: cleanupHostQuery,
+          command: "rm -f -- \(ShellEscaping.singleQuoted(remoteStagingPath))"
+        )
+      }
       return .init(
         success: false,
         output: SecureSecretBroker.redact(error.localizedDescription, secrets: secrets)
       )
-    }
-
-    defer {
-      if let localStagingURL {
-        try? FileManager.default.removeItem(at: localStagingURL)
-      }
-      if let remoteStagingPath, let hostQueryForCleanup {
-        Task { @MainActor in
-          _ = await edgeRunSSH(
-            hostQuery: hostQueryForCleanup,
-            command: "rm -f -- \(ShellEscaping.singleQuoted(remoteStagingPath))"
-          )
-        }
-      }
     }
   }
 
