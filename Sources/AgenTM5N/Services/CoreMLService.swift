@@ -101,9 +101,10 @@ public actor CoreMLService {
     }
     try saveRegistry()
 
-    if let activeID = registry.activeModelID {
-      _ = try await model(for: activeID)
-    }
+    // Keep application startup fast. Large Core ML graphs can require tens of
+    // seconds to build their execution plan. Registered models are therefore
+    // validated and loaded lazily when activated, predicted with, or used by a
+    // semantic workflow instead of blocking the main application bootstrap.
     return snapshot()
   }
 
