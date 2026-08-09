@@ -26,7 +26,10 @@ public enum CoreMLPredictionRunner {
       }
 
       let configuration = MLModelConfiguration()
-      configuration.computeUnits = .cpuAndNeuralEngine
+      // `.all` keeps CPU, GPU and ANE available. This matters for large
+      // stateful transformer graphs that cannot build an execution plan when
+      // GPU is excluded by `.cpuAndNeuralEngine` on current macOS runtimes.
+      configuration.computeUnits = .all
       let model = try await MLModel.load(
         contentsOf: compiledURL,
         configuration: configuration
