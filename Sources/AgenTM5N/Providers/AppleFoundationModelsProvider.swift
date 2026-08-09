@@ -106,7 +106,12 @@ public actor AppleFoundationModelsProvider {
 
     var tools: [any Tool] = []
     if let focused = selection.focused {
-      tools.append(contentsOf: Self.focusedTools(focused))
+      tools.append(
+        contentsOf: Self.focusedTools(
+          focused,
+          latestUserPrompt: Self.latestUserPrompt(messages: messages)
+        )
+      )
     } else {
       tools.append(SystemCurrentDateTimeTool())
       if configuration.agentEnabled {
@@ -188,6 +193,15 @@ public actor AppleFoundationModelsProvider {
         )
       }
 
+      switch model.availability {
+      case .available:
+        break
+      case .unavailable(let reason):
+        throw AppleFoundationModelsProviderError.unavailable(
+          String(describing: reason)
+        )
+      }
+
       throw AppleFoundationModelsProviderError.generationFailure(
         Self.describeFoundationModelError(error)
       )
@@ -234,12 +248,17 @@ public actor AppleFoundationModelsProvider {
     var focused: FocusedToolPack?
   }
 
-  private static func focusedTools(_ pack: FocusedToolPack) -> [any Tool] {
+  private static func focusedTools(
+    _ pack: FocusedToolPack,
+    latestUserPrompt: String
+  ) -> [any Tool] {
     switch pack {
     case .edge:
       AppleRoutedEdgeTools.makeTools()
     case .browser:
-      AppleRoutedBrowserTools.makeTools()
+      containsExplicitWebURL(latestUserPrompt)
+        ? AppleRoutedBrowserTools.makeTools()
+        : AppleRoutedBrowserTools.makeExistingPageTools()
     case .ssh(let mode):
       switch mode {
       case .list: AppleRoutedSSHTools.makeListHostsTools()
@@ -296,6 +315,28 @@ public actor AppleFoundationModelsProvider {
       .content
       .lowercased() ?? ""
 
+    let recentUserText = messages
+      .filter { $0.role == .user }
+      .suffix(6)
+      .map(\.content)
+      .joined(separator: "\n")
+      .lowercased()
+
+    if containsAny(text, [
+      "browser_batch",
+      "browser_action",
+      "browser_read",
+      "browser_open",
+      "browser_tabs",
+      "browser_session",
+    ]) {
+      return .init(
+        macNative: false,
+        persistentAgents: false,
+        focused: .browser
+      )
+    }
+
     if containsAny(text, [
       "document studio", "dokument erstellen", "dokument generieren", "dokument erzeugen",
       "datei erstellen", "datei generieren", "datei erzeugen", "zum download",
@@ -306,7 +347,48 @@ public actor AppleFoundationModelsProvider {
       return .init(macNative: false, persistentAgents: false, focused: .documents)
     }
 
-    if containsAny(text, [
+    let browserFollowUp = containsAny(
+      recentUserText,
+      [
+        "microsoft edge",
+        "edge browser",
+        "edge-browser",
+        "browser_open",
+        "browser_read",
+        "browser_action",
+        "browser_batch",
+        "browser_tabs",
+      ]
+    ) && containsAny(
+      text,
+      [
+        "trage",
+        "eingeben",
+        "eingabe",
+        "fülle",
+        "fuelle",
+        "klicke",
+        "wähle",
+        "waehle",
+        "aktiviere",
+        "deaktiviere",
+        "checkbox",
+        "feld",
+        "button",
+        "speichern",
+        "scroll",
+        "lies",
+        "lese",
+        "zurück",
+        "zurueck",
+        "vorwärts",
+        "vorwaerts",
+        "neu laden",
+        "reload",
+      ]
+    )
+
+    if browserFollowUp || containsAny(text, [
       "microsoft edge", "edge browser", "edge-browser", "im browser", "in meinem browser",
       "browser öffnen", "browser oeffnen", "browser steuern", "browser automatisieren",
       "browser automation", "webseite öffnen", "webseite oeffnen", "website öffnen",
@@ -476,7 +558,7 @@ public actor AppleFoundationModelsProvider {
     let macNative = macTerms.contains { text.contains($0) }
     let persistentAgents = agentTerms.contains { text.contains($0) }
     if !macNative && !persistentAgents {
-      return .init(macNative: true, persistentAgents: true, focused: nil)
+      return .init(macNative: false, persistentAgents: false, focused: nil)
     }
     return .init(
       macNative: macNative,
@@ -572,7 +654,6 @@ public actor AppleFoundationModelsProvider {
     if case .documents = focused { return true }
     if case .clipboardRead = focused { return true }
     if case .edge = focused { return true }
-    if case .browser = focused { return true }
     return false
   }
 
@@ -597,6 +678,10 @@ public actor AppleFoundationModelsProvider {
       lines.append("This is Microsoft Edge Browser Control mode. AgenTM5N controls a visible persistent Microsoft Edge automation profile through the local DevTools Protocol.")
       lines.append("Use browser_open for navigation, browser_read to inspect the actual page and obtain temporary element refs, and browser_action to click, fill, select, check, press keys, scroll, wait, switch/close tabs, or navigate back/forward/reload.")
       lines.append("When page structure is not already known from a fresh browser_read result, read the page before clicking or filling. Re-read after navigation or major DOM changes because temporary refs may change.")
+      lines.append("When browser_read returns element refs such as b1, b2, or b3, use those refs for browser_action instead of inventing generic CSS selectors. For a follow-up request without an explicit http:// or https:// URL, stay on the currently selected tab and do not navigate to another website.")
+      lines.append("If the user requests two or more browser interactions, use browser_batch and put every requested action into its steps array in the exact requested order.")
+      lines.append("Never skip earlier requested form actions and execute only the final click. For example fill + check + select + click must be four ordered browser_batch steps.")
+      lines.append("Set readAfter to true when the user asks for the resulting page state or result text.")
       lines.append("Never claim that browser access is unavailable while these tools are present. Never request or expose cookies, localStorage, sessionStorage, authentication tokens, or saved browser passwords. Do not invent page text or interaction results.")
     case .ssh(let mode):
       lines.append("AgenTM5N resolves SSH credentials internally from saved profiles and the encrypted Vault.")
@@ -675,6 +760,12 @@ public actor AppleFoundationModelsProvider {
     return sections.joined(separator: "\n\n")
   }
 
+  private static func containsExplicitWebURL(_ text: String) -> Bool {
+    let normalized = text.lowercased()
+    return normalized.contains("http://")
+      || normalized.contains("https://")
+  }
+
   private static func containsAny(_ text: String, _ terms: [String]) -> Bool {
     terms.contains { text.contains($0) }
   }
@@ -747,7 +838,8 @@ private struct SystemCurrentDateTimeTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Use current") var query: String
+    @Guide(description: "Optional. Omit this value or use current.")
+    var query: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {

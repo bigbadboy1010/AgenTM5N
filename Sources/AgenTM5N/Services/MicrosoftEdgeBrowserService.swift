@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 public struct ManagedBrowserStatus: Codable, Sendable {
   public let running: Bool
@@ -27,6 +28,7 @@ public struct BrowserInteractiveElement: Codable, Sendable {
   public let disabled: Bool
   public let checked: Bool?
   public let selectedText: String?
+  public let value: String?
 }
 
 public struct ManagedBrowserSnapshot: Codable, Sendable {
@@ -461,6 +463,14 @@ public actor MicrosoftEdgeBrowserService {
           const selectedText = tag === 'select' && el.selectedOptions && el.selectedOptions.length
             ? clean(el.selectedOptions[0].textContent)
             : null;
+
+          const safeValue =
+            (tag === 'input' || tag === 'textarea') &&
+            inputType !== 'password' &&
+            inputType !== 'file'
+              ? clean(el.value || '', 500)
+              : null;
+
           return {
             ref,
             tag,
@@ -472,7 +482,8 @@ public actor MicrosoftEdgeBrowserService {
             href: tag === 'a' ? el.href : null,
             disabled: Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true'),
             checked: typeof el.checked === 'boolean' ? Boolean(el.checked) : null,
-            selectedText
+            selectedText,
+            value: safeValue
           };
         });
         const bodyText = clean(document.body ? document.body.innerText : '', MAX_CHARS);
@@ -504,7 +515,8 @@ public actor MicrosoftEdgeBrowserService {
         href: element.href.map { sanitizedDisplayURL($0) },
         disabled: element.disabled,
         checked: element.checked,
-        selectedText: element.selectedText.map { boundedDisplayText($0, limit: 300) }
+        selectedText: element.selectedText.map { boundedDisplayText($0, limit: 300) },
+        value: element.value.map { boundedDisplayText($0, limit: 500) }
       )
     }
     return ManagedBrowserSnapshot(
@@ -783,6 +795,7 @@ public actor MicrosoftEdgeBrowserService {
     launchedProcess.arguments = [
       "--remote-debugging-port=0",
       "--remote-debugging-address=127.0.0.1",
+      "--remote-allow-origins=http://127.0.0.1",
       "--user-data-dir=\(profileDirectory.path)",
       "--no-first-run",
       "--no-default-browser-check",
@@ -1153,13 +1166,31 @@ public actor MicrosoftEdgeBrowserService {
             if (el.tagName.toLowerCase() !== 'select') {
               return result(false, 'Zielelement ist kein Select-Feld.');
             }
-            const needle = VALUE.toLocaleLowerCase();
-            const option = Array.from(el.options).find((item) =>
-              String(item.value).toLocaleLowerCase() === needle ||
-              String(item.textContent || '').trim().toLocaleLowerCase() === needle
-            );
-            if (!option) return result(false, 'Select-Option wurde nicht gefunden.');
+            const needle = VALUE.trim().toLocaleLowerCase();
+
+            const options = Array.from(el.options);
+
+            const option =
+              options.find((item) =>
+                String(item.value || '').trim().toLocaleLowerCase() === needle
+              ) ||
+              options.find((item) =>
+                String(item.textContent || '').trim().toLocaleLowerCase() === needle
+              ) ||
+              options.find((item) =>
+                String(item.textContent || '').trim().toLocaleLowerCase().includes(needle)
+              );
+
+            if (!option) {
+              return result(
+                false,
+                'Select-Option wurde nicht gefunden. Verfügbar: ' +
+                options.map((item) => String(item.textContent || '').trim()).join(', ')
+              );
+            }
+
             el.value = option.value;
+            option.selected = true;
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
             return result(true, 'Option ausgewählt.');
@@ -1265,48 +1296,239 @@ public actor MicrosoftEdgeBrowserService {
     resultType: Result.Type
   ) async throws -> Result {
     let validatedURL = try validatedCDPWebSocketURL(websocketURL)
+
     let id = nextCommandID
     nextCommandID += 1
-    let command = CDPCommand(id: id, method: method, params: params)
-    let data = try JSONEncoder().encode(command)
-    let task = session.webSocketTask(with: validatedURL)
-    task.resume()
+
+    let command = CDPCommand(
+      id: id,
+      method: method,
+      params: params
+    )
+
+    let requestData = try JSONEncoder().encode(command)
+
+    let connection = try makeCDPWebSocketConnection(
+      url: validatedURL
+    )
+
     defer {
-      task.cancel(with: .normalClosure, reason: nil)
+      connection.cancel()
     }
 
-    try await task.send(.data(data))
-    while true {
-      try Task.checkCancellation()
-      let message = try await task.receive()
-      let responseData: Data
-      switch message {
-      case .data(let data):
-        responseData = data
-      case .string(let string):
-        responseData = Data(string.utf8)
-      @unknown default:
+    try await waitForCDPConnectionReady(connection)
+
+    try await sendCDPTextMessage(
+      requestData,
+      on: connection
+    )
+
+    for _ in 0..<256 {
+      let responseData = try await receiveCDPMessage(
+        on: connection
+      )
+
+      guard let header = try? JSONDecoder().decode(
+        CDPHeader.self,
+        from: responseData
+      ) else {
         continue
       }
-      let header = try JSONDecoder().decode(CDPHeader.self, from: responseData)
+
       guard header.id == id else {
         continue
       }
+
       let envelope = try JSONDecoder().decode(
         CDPEnvelope<Result>.self,
         from: responseData
       )
+
       if let error = envelope.error {
         throw MicrosoftEdgeBrowserError.protocolFailure(
           "\(error.code): \(error.message)"
         )
       }
+
       guard let result = envelope.result else {
         throw MicrosoftEdgeBrowserError.protocolFailure(
           "CDP-Antwort enthält kein result für \(method)."
         )
       }
+
       return result
+    }
+
+    throw MicrosoftEdgeBrowserError.protocolFailure(
+      "Keine passende CDP-Antwort für Request \(id)."
+    )
+  }
+
+  private func makeCDPWebSocketConnection(
+    url: URL
+  ) throws -> NWConnection {
+    let websocketOptions = NWProtocolWebSocket.Options(.version13)
+
+    websocketOptions.autoReplyPing = true
+    websocketOptions.maximumMessageSize = 4 * 1024 * 1024
+
+    websocketOptions.setAdditionalHeaders([
+      (
+        name: "Origin",
+        value: "http://127.0.0.1"
+      )
+    ])
+
+    let parameters: NWParameters
+
+    if url.scheme?.lowercased() == "wss" {
+      parameters = .tls
+    } else {
+      parameters = .tcp
+    }
+
+    parameters.defaultProtocolStack.applicationProtocols.insert(
+      websocketOptions,
+      at: 0
+    )
+
+    return NWConnection(
+      to: .url(url),
+      using: parameters
+    )
+  }
+
+  private func waitForCDPConnectionReady(
+    _ connection: NWConnection
+  ) async throws {
+    let queue = DispatchQueue(
+      label: "AgenTM5N.CDP.WebSocket.\(UUID().uuidString)"
+    )
+
+    try await withTaskCancellationHandler(
+      operation: {
+        try await withCheckedThrowingContinuation {
+          (continuation: CheckedContinuation<Void, Error>) in
+
+          connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+              connection.stateUpdateHandler = nil
+              continuation.resume(returning: ())
+
+            case .failed(let error):
+              connection.stateUpdateHandler = nil
+              continuation.resume(
+                throwing:
+                  MicrosoftEdgeBrowserError.protocolFailure(
+                    "Network.framework WebSocket: \(error)"
+                  )
+              )
+
+            case .cancelled:
+              connection.stateUpdateHandler = nil
+              continuation.resume(
+                throwing: CancellationError()
+              )
+
+            default:
+              break
+            }
+          }
+
+          connection.start(queue: queue)
+        }
+      },
+      onCancel: {
+        connection.cancel()
+      }
+    )
+  }
+
+  private func sendCDPTextMessage(
+    _ data: Data,
+    on connection: NWConnection
+  ) async throws {
+    let metadata = NWProtocolWebSocket.Metadata(
+      opcode: .text
+    )
+
+    let context = NWConnection.ContentContext(
+      identifier: "agentm5n-cdp-send",
+      metadata: [metadata]
+    )
+
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Void, Error>) in
+
+      connection.send(
+        content: data,
+        contentContext: context,
+        isComplete: true,
+        completion: .contentProcessed { error in
+          if let error {
+            continuation.resume(
+              throwing:
+                MicrosoftEdgeBrowserError.protocolFailure(
+                  "CDP WebSocket send: \(error)"
+                )
+            )
+          } else {
+            continuation.resume(returning: ())
+          }
+        }
+      )
+    }
+  }
+
+  private func receiveCDPMessage(
+    on connection: NWConnection
+  ) async throws -> Data {
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Data, Error>) in
+
+      connection.receiveMessage {
+        data,
+        context,
+        _,
+        error in
+
+        if let error {
+          continuation.resume(
+            throwing:
+              MicrosoftEdgeBrowserError.protocolFailure(
+                "CDP WebSocket receive: \(error)"
+              )
+          )
+          return
+        }
+
+        if let metadata = context?.protocolMetadata(
+          definition: NWProtocolWebSocket.definition
+        ) as? NWProtocolWebSocket.Metadata,
+          metadata.opcode == .close
+        {
+          continuation.resume(
+            throwing:
+              MicrosoftEdgeBrowserError.protocolFailure(
+                "Microsoft Edge hat die CDP-WebSocket-Verbindung geschlossen."
+              )
+          )
+          return
+        }
+
+        guard let data, !data.isEmpty else {
+          continuation.resume(
+            throwing:
+              MicrosoftEdgeBrowserError.protocolFailure(
+                "Leere CDP-WebSocket-Antwort."
+              )
+          )
+          return
+        }
+
+        continuation.resume(returning: data)
+      }
     }
   }
 
