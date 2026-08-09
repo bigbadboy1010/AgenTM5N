@@ -55,7 +55,7 @@ public struct SavedAgentProfile: Codable, Identifiable, Equatable, Sendable {
   /// Nil means the specialist inherits the full centrally registered AgenTM5N
   /// tool catalog on every supported provider. A non-empty list is an explicit
   /// sandbox that restricts delegated specialists to the selected capability packs.
-  /// Existing V1 profiles decode with nil and therefore keep full tool parity.
+  /// An empty list is also explicit and means the specialist receives no tools.
   public var allowedCapabilities: [AgentToolCapability]?
   public let createdAt: Date
   public var updatedAt: Date
@@ -94,7 +94,7 @@ public struct SavedAgentProfile: Codable, Identifiable, Equatable, Sendable {
     PERSISTENT SPECIALIST AGENT ACTIVE:
     - Name: \(name)
     - Purpose: \(purpose)
-    - Tool capabilities: \(capabilityText)
+    - Tool capabilities: \(capabilityText.isEmpty ? "none" : capabilityText)
 
     Specialist instructions:
     \(instructions)
@@ -190,7 +190,7 @@ public final class PersistentAgentLibrary: ObservableObject {
         instructions: normalizedInstructions,
         providerPreference: providerPreference,
         symbolName: normalizedSymbol,
-        enabled: true,
+        enabled: nil,
         allowedCapabilities: normalizedCapabilities,
         replaceCapabilities: allowedCapabilities != nil
       )
