@@ -66,11 +66,11 @@ public enum AgentPermissionMode: String, Codable, CaseIterable, Identifiable, Se
   public var explanation: String {
     switch self {
     case .confirm:
-      "Lesezugriffe im Workspace laufen direkt. Schreib- und Shell-Aktionen benötigen eine Freigabe."
+      "Lesezugriffe laufen direkt. Schreib-, Ausführungs- und andere verändernde Aktionen benötigen eine Freigabe."
     case .workspaceTrusted:
-      "Werkzeuge dürfen innerhalb des Workspace automatisch lesen, schreiben und Befehle ausführen."
+      "Normale begrenzte Workspace-Dateioperationen dürfen automatisch laufen. Shell/Terminal, Remote/Browser/HTTP, Toolsmith, persönliche macOS-Daten sowie System-, Agenten- und Workflow-Mutationen bleiben freigabepflichtig."
     case .fullAccess:
-      "Werkzeuge dürfen auch außerhalb des Workspace arbeiten. Kritische Systemkommandos bleiben auditierbar."
+      "Lokale und Remote-Werkzeuge dürfen automatisch arbeiten und unterstützte Dateitools außerhalb des Workspace zugreifen. Explizite Agenten-Sandboxes, Audit und Secret-Schutz bleiben aktiv."
     }
   }
 }
