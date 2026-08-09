@@ -6,8 +6,8 @@ final class SecurityPolicyTests: XCTestCase {
     XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("run_command"))
     XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("terminal_open"))
     XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("shortcuts_run"))
+    XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("toolsmith_create"))
     XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("toolsmith_run"))
-    XCTAssertTrue(AgentToolRegistry.isRemoteOrExternal("custom_example"))
   }
 
   func testBrowserBatchIsProviderNeutralExecuteTool() {
