@@ -69,10 +69,12 @@ public actor AppleFoundationModelsProvider {
 
     let instructions: String
     if let focused = selection.focused {
-      instructions = Self.focusedInstructions(
-        focused,
-        temporalContext: temporalContext
-      )
+      instructions = configuration.systemPrompt
+        + "\n\n"
+        + Self.focusedInstructions(
+          focused,
+          temporalContext: temporalContext
+        )
     } else {
       instructions = configuration.systemPrompt
         + "\n\n"
@@ -182,6 +184,7 @@ public actor AppleFoundationModelsProvider {
   }
 
   private enum FocusedToolPack {
+    case edge
     case ssh(SSHMode)
     case http
     case system
@@ -211,6 +214,8 @@ public actor AppleFoundationModelsProvider {
 
   private static func focusedTools(_ pack: FocusedToolPack) -> [any Tool] {
     switch pack {
+    case .edge:
+      AppleRoutedEdgeTools.makeTools()
     case .ssh(let mode):
       switch mode {
       case .list: AppleRoutedSSHTools.makeListHostsTools()
@@ -266,6 +271,15 @@ public actor AppleFoundationModelsProvider {
       .last(where: { $0.role == .user })?
       .content
       .lowercased() ?? ""
+
+    if containsAny(text, [
+      "/data/edge", " edge ", "edge-", "edge host", "edge-host", "edge node",
+      "edge-node", "edge system", "edge-system", "edge umgebung", "edge-umgebung",
+      "edge server", "edge-server", "edge lesen", "edge schreiben", "edge steuern",
+      "edge control", "edge read", "edge write",
+    ]) || text.hasPrefix("edge ") {
+      return .init(macNative: false, persistentAgents: false, focused: .edge)
+    }
 
     let sshTerms = [
       "ssh", "server", "remote", "docker", "container", "systemctl", "journalctl",
@@ -462,6 +476,7 @@ public actor AppleFoundationModelsProvider {
     guard let focused = selection.focused else { return false }
     if case .documents = focused { return true }
     if case .clipboardRead = focused { return true }
+    if case .edge = focused { return true }
     return false
   }
 
@@ -478,6 +493,11 @@ public actor AppleFoundationModelsProvider {
     ]
 
     switch pack {
+    case .edge:
+      lines.append("This is AgenTM5N Edge Control mode. Edge access uses the existing saved SSH profiles and encrypted Vault credentials; do not ask the user for SSH passwords or keys when a saved profile exists.")
+      lines.append("Use ssh_run or ssh_run_batch to inspect and control Edge hosts, including /data/edge, Docker containers, systemd services, filesystem state, configuration, and diagnostics. Use ssh_tail_log for logs and ssh_upload/ssh_download for file transfer.")
+      lines.append("For remote file reads, use bounded commands such as sed, head, tail, cat only when the expected file is reasonably small. For remote file writes, inspect the target first, preserve ownership/permissions when relevant, create a backup before replacing important configuration, and then write through an explicit shell command or upload a prepared workspace file.")
+      lines.append("Never invent Edge hostnames, paths, container names, service names, or file contents. Derive them from saved SSH profiles and actual tool output.")
     case .ssh(let mode):
       lines.append("AgenTM5N resolves SSH credentials internally from saved profiles and the encrypted Vault.")
       if mode == .run {
@@ -494,7 +514,7 @@ public actor AppleFoundationModelsProvider {
       lines.append("The authoritative current Mac date/time is: \(temporalContext)")
       lines.append("Use ISO-8601 for reminder due dates and preserve the user's local wall-clock intent.")
     case .delegation:
-      lines.append("Delegate only a bounded subtask to the requested saved specialist. Keep the main conversation responsible for the final synthesis.")
+      lines.append("Delegate only a bounded subtask to the requested saved specialist. Saved specialists inherit the full centrally authorized AgenTM5N tool set by default. Capability restrictions apply only when the saved profile explicitly defines a sandbox.")
     case .workflows:
       lines.append("Workflows store tool names and arguments. Never put secret values into workflow steps; use secret_ref labels only.")
     case .updates:
@@ -546,6 +566,7 @@ public actor AppleFoundationModelsProvider {
         """
         PERSISTENT AGENT RULES:
         - Use agent_* tools when the user explicitly asks to create, save, update, list, inspect, or delete a reusable specialist agent.
+        - New saved agents inherit the full centrally authorized AgenTM5N tool set by default. Use a restricted capability list only when the user explicitly asks for a sandbox.
         - Never place passwords, API keys, tokens, private keys, or other secrets inside saved agent instructions.
         """
       )
