@@ -143,6 +143,14 @@ public actor AppleFoundationModelsProvider {
         + temporalContext
     }
 
+    let bridgeCapabilityScopeToken: UUID?
+    if let capabilityScope {
+      bridgeCapabilityScopeToken = await AgentToolExecutionBridge.shared
+        .pushCapabilityScope(capabilityScope)
+    } else {
+      bridgeCapabilityScopeToken = nil
+    }
+
     let clock = ContinuousClock()
     let startedAt = clock.now
 
@@ -159,6 +167,12 @@ public actor AppleFoundationModelsProvider {
         responseContent = response.content
       }
 
+      if let bridgeCapabilityScopeToken {
+        await AgentToolExecutionBridge.shared.popCapabilityScope(
+          bridgeCapabilityScopeToken
+        )
+      }
+
       let duration = startedAt.duration(to: clock.now)
       return ProviderStreamEvent(
         contentDelta: responseContent,
@@ -172,6 +186,11 @@ public actor AppleFoundationModelsProvider {
       if Self.requiresToolCall(selection),
         let toolOutput = AppleRequiredDocumentTools.completionOutput(from: error)
       {
+        if let bridgeCapabilityScopeToken {
+          await AgentToolExecutionBridge.shared.popCapabilityScope(
+            bridgeCapabilityScopeToken
+          )
+        }
         let duration = startedAt.duration(to: clock.now)
         let succeeded = toolOutput.contains("ready-for-save")
         let content = succeeded
@@ -192,6 +211,12 @@ public actor AppleFoundationModelsProvider {
           metrics: ChatMetrics(
             totalDurationNanoseconds: Self.nanoseconds(from: duration)
           )
+        )
+      }
+
+      if let bridgeCapabilityScopeToken {
+        await AgentToolExecutionBridge.shared.popCapabilityScope(
+          bridgeCapabilityScopeToken
         )
       }
 
@@ -326,6 +351,24 @@ public actor AppleFoundationModelsProvider {
       .map(\.content)
       .joined(separator: "\n")
       .lowercased()
+
+    // Delegation intent must win before inspecting the delegated task itself.
+    // Otherwise a request such as "Delegiere ... öffne Microsoft Edge" would
+    // incorrectly expose the browser pack to the main agent instead of calling
+    // agent_delegate and enforcing the saved specialist's capability sandbox.
+    if containsAny(text, [
+      "agent_delegate",
+      "delegiere",
+      "delegieren",
+      "delegate",
+      "übertrage an den agent",
+      "uebertrage an den agent",
+      "lass den agent",
+      "spezialist übernehmen",
+      "spezialist uebernehmen",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .delegation)
+    }
 
     if text.hasPrefix("custom_") || containsAny(text, [
       "toolsmith", "toolsmith_create", "toolsmith_run", "toolsmith_list",
@@ -715,6 +758,7 @@ public actor AppleFoundationModelsProvider {
       lines.append("Use ISO-8601 for reminder due dates and preserve the user's local wall-clock intent.")
     case .delegation:
       lines.append("Delegate only a bounded subtask to the requested saved specialist. Saved specialists inherit the full centrally authorized AgenTM5N tool set by default. Capability restrictions are technical execution boundaries when the saved profile explicitly defines a sandbox.")
+      lines.append("The delegated task may mention browser, terminal, SSH, Edge, HTTP, Toolsmith, or other tools. Do not execute those tools as the main agent; call agent_delegate and let the specialist's capability sandbox decide what is allowed.")
     case .workflows:
       lines.append("Workflows store tool names and arguments. Never put secret values into workflow steps; use secret_ref labels only. Workflow steps remain subject to delegated capability boundaries.")
     case .toolsmith:
