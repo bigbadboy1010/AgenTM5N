@@ -19,6 +19,7 @@ public enum AgentToolCapability: String, Codable, CaseIterable, Hashable, Sendab
   case documents
   case agents
   case workflows
+  case customTools
   case updates
 }
 
@@ -78,11 +79,16 @@ public enum AgentToolRegistry {
   public static func definitions(
     capabilities: Set<AgentToolCapability>
   ) -> [ProviderToolDefinition] {
-    let names = Set(
+    var names = Set(
       catalog
         .filter { capabilities.contains($0.capability) }
         .map(\.name)
     )
+    if capabilities.contains(.customTools) {
+      for tool in SelfBuiltToolLibrary.shared.records where tool.isEnabled {
+        names.insert(tool.name)
+      }
+    }
     return allDefinitions.filter { names.contains($0.function.name) }
   }
 
@@ -187,6 +193,12 @@ public enum AgentToolRegistry {
     .init(name: "workflow_delete", capability: .workflows, risk: .write),
     .init(name: "workflow_run", capability: .workflows, risk: .execute),
 
+    .init(name: "toolsmith_list", capability: .customTools, risk: .read),
+    .init(name: "toolsmith_get", capability: .customTools, risk: .read),
+    .init(name: "toolsmith_create", capability: .customTools, risk: .write),
+    .init(name: "toolsmith_delete", capability: .customTools, risk: .write),
+    .init(name: "toolsmith_run", capability: .customTools, risk: .execute),
+
     .init(name: "document_generate", capability: .documents, risk: .write),
     .init(name: "document_list_generated", capability: .documents, risk: .read, cacheable: true),
     .init(name: "document_delete_generated", capability: .documents, risk: .write),
@@ -196,14 +208,30 @@ public enum AgentToolRegistry {
   ]
 
   public static func entry(named name: String) -> AgentToolCatalogEntry? {
-    catalog.first { $0.name == name }
+    if let existing = catalog.first(where: { $0.name == name }) {
+      return existing
+    }
+    if SelfBuiltToolAgentTools.isDynamicToolName(name) {
+      return AgentToolCatalogEntry(
+        name: name,
+        capability: .customTools,
+        risk: .execute,
+        cacheable: false,
+        secretAware: false
+      )
+    }
+    return nil
   }
 
   public static func isRemoteOrExternal(_ name: String) -> Bool {
-    entry(named: name)?.capability == .ssh
-      || entry(named: name)?.capability == .edge
-      || entry(named: name)?.capability == .browser
-      || entry(named: name)?.capability == .http
+    guard let capability = entry(named: name)?.capability else {
+      return name == "app_check_update"
+    }
+    return capability == .ssh
+      || capability == .edge
+      || capability == .browser
+      || capability == .http
+      || capability == .customTools
       || name == "app_check_update"
   }
 
