@@ -67,6 +67,11 @@ public enum BrowserAgentTools {
     switch call.function.name {
     case "browser_tabs", "browser_read":
       return .read
+    case "browser_session":
+      let operation = call.function.arguments["operation"]?.stringValue?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased() ?? ""
+      return operation == "status" ? .read : .execute
     default:
       return .execute
     }
@@ -78,12 +83,27 @@ public enum BrowserAgentTools {
       if key == "text" {
         return "text: <\(value.compactDescription.utf8.count) Bytes>"
       }
+      if key == "url", let rawURL = value.stringValue {
+        return "url: \(safeURLSummary(rawURL))"
+      }
       let rendered = value.compactDescription
       return "\(key): \(rendered.count > 180 ? String(rendered.prefix(180)) + "…" : rendered)"
     }
     return values.isEmpty
       ? call.function.name
       : "\(call.function.name) — \(values.joined(separator: ", "))"
+  }
+
+  private static func safeURLSummary(_ value: String) -> String {
+    guard var components = URLComponents(string: value) else {
+      return "<browser-url>"
+    }
+    components.user = nil
+    components.password = nil
+    components.query = nil
+    components.fragment = nil
+    let rendered = components.string ?? "<browser-url>"
+    return rendered.count > 220 ? String(rendered.prefix(220)) + "…" : rendered
   }
 
   private static func objectSchema(
