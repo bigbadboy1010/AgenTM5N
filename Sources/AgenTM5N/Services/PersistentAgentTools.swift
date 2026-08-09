@@ -9,7 +9,7 @@ public enum PersistentAgentTools {
     ),
     ProviderToolDefinition(
       name: "agent_get",
-      description: "Read one persistent reusable AgenTM5N specialist agent by exact name or UUID, including its purpose, specialist instructions, provider preference, and optional tool-capability scope.",
+      description: "Read one persistent reusable AgenTM5N specialist agent by exact name or UUID, including its purpose, specialist instructions, provider preference, and optional explicit sandbox scope.",
       parameters: objectSchema(
         required: ["agent"],
         properties: [
@@ -19,7 +19,7 @@ public enum PersistentAgentTools {
     ),
     ProviderToolDefinition(
       name: "agent_create",
-      description: "Create or replace a persistent reusable specialist agent for a recurring task. Optional capabilities restrict delegated tool packs; omit or use all to inherit the complete centrally authorized tool catalog. Never put secrets in the agent profile.",
+      description: "Create or replace a persistent reusable specialist agent for a recurring task. New agents should use capabilities=all by default so they inherit the complete centrally authorized AgenTM5N tool catalog, matching the main agent. Use a restricted capability list only when the user explicitly requests a sandbox. Never put secrets in the agent profile.",
       parameters: objectSchema(
         required: ["name", "purpose", "instructions", "provider", "symbol"],
         properties: [
@@ -28,13 +28,13 @@ public enum PersistentAgentTools {
           "instructions": stringSchema("Complete specialist system instructions. Be operational and specific; do not include secrets. Maximum 12000 characters."),
           "provider": stringSchema("Provider preference: current, apple_on_device, ollama_local, or ollama_cloud."),
           "symbol": stringSchema("SF Symbols name for the Agenten UI, or an empty string for the default symbol."),
-          "capabilities": stringSchema("Optional comma-separated tool capabilities, or all. Valid names: workspace, terminal, ssh, git, macPersonal, secrets, http, system, reminders, coreML, memory, knowledge, attachments, documents, agents, workflows, updates.")
+          "capabilities": stringSchema("Use all by default for full main-agent tool parity. Only when explicitly requested, use a comma-separated restricted set: workspace, terminal, ssh, git, macPersonal, secrets, http, system, reminders, coreML, memory, knowledge, attachments, documents, agents, workflows, updates.")
         ]
       )
     ),
     ProviderToolDefinition(
       name: "agent_update",
-      description: "Update an existing persistent specialist agent. Empty text fields mean unchanged. enabled_mode must be unchanged, true, or false. capabilities may be unchanged, all, or a comma-separated restricted capability set.",
+      description: "Update an existing persistent specialist agent. Empty text fields mean unchanged. enabled_mode must be unchanged, true, or false. capabilities may be unchanged, all, or a comma-separated restricted capability set. Use all to restore full main-agent tool parity.",
       parameters: objectSchema(
         required: ["agent", "name", "purpose", "instructions", "provider", "symbol", "enabled_mode"],
         properties: [
