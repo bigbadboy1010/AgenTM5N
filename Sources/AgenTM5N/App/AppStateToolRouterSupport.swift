@@ -66,6 +66,10 @@ extension AppState {
     for call: ProviderToolCall,
     explicitScope: Set<AgentToolCapability>? = nil
   ) -> ToolExecutionResult? {
+    if let denial = SelfBuiltToolReplacementPolicy.denial(for: call) {
+      return denial
+    }
+
     let scope = explicitScope ?? AgentCapabilityExecutionContext.allowedCapabilities
     guard let scope else { return nil }
     guard AgentToolRegistry.isAllowed(call.function.name, within: scope) else {
