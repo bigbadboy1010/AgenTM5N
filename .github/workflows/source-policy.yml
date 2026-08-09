@@ -1,0 +1,118 @@
+name: AgenTM5N source policy
+
+on:
+  push:
+    branches:
+      - main
+      - agent/v1.1.0-platform-expansion
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  source-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate shell syntax
+        run: |
+          bash -n scripts/build-app.sh
+          bash -n scripts/verify.sh
+          bash -n scripts/check-release.sh
+          bash -n scripts/release-macos.sh
+          bash -n scripts/verify-release-dmg.sh
+
+      - name: Validate Build 28 metadata consistency
+        shell: python
+        run: |
+          from pathlib import Path
+
+          expected = {
+              "scripts/build-app.sh": [
+                  'VERSION="${AGENTM5N_VERSION:-1.1.2}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-28}"',
+              ],
+              "scripts/release-macos.sh": [
+                  'VERSION="${AGENTM5N_VERSION:-1.1.2}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-28}"',
+              ],
+              "scripts/check-release.sh": [
+                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.1.2}"',
+                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-28}"',
+              ],
+              "scripts/verify-release-dmg.sh": [
+                  'VERSION="${AGENTM5N_VERSION:-1.1.2}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-28}"',
+              ],
+              "README.md": [
+                  "1.1.2 Build 28 release candidate",
+                  "AgenTM5N-1.1.2-build28.dmg",
+              ],
+              "VALIDATION.md": [
+                  "1.1.2 Build 28 release candidate",
+                  "AgenTM5N-1.1.2-build28.dmg",
+              ],
+          }
+
+          failures = []
+          for filename, needles in expected.items():
+              text = Path(filename).read_text()
+              for needle in needles:
+                  if needle not in text:
+                      failures.append(f"{filename}: missing {needle!r}")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Validate security invariants are represented in source
+        shell: python
+        run: |
+          from pathlib import Path
+
+          checks = {
+              "Sources/AgenTM5N/Services/AgentToolRegistry.swift": [
+                  "requiresWorkspaceTrustedApproval",
+                  "case .macPersonal, .reminders, .system, .agents, .workflows",
+              ],
+              "Sources/AgenTM5N/Services/SecureSecretBroker.swift": [
+                  "validateSecretHostBinding",
+                  "secretHostMismatch",
+              ],
+              "Sources/AgenTM5N/Services/AgentToolExecutionBridge.swift": [
+                  "acquireExecutionPermit",
+                  "capabilities.intersection(requested)",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLManagedStorage.swift": [
+                  "SHA256",
+                  "model-\\(contentHash)",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLPredictionRunner.swift": [
+                  "loadedModels",
+                  "configuration.computeUnits = .all",
+              ],
+              "Tests/AgenTM5NTests/SecurityPolicyTests.swift": [
+                  "testSecretHostBindingRejectsDifferentHTTPSHost",
+                  "testPersistentAgentResolveIntersectsRestrictedParentScope",
+                  "testCoreMLManagedStorageDeduplicatesIdenticalContentAcrossDifferentNames",
+              ],
+          }
+
+          failures = []
+          for filename, needles in checks.items():
+              text = Path(filename).read_text()
+              for needle in needles:
+                  if needle not in text:
+                      failures.append(f"{filename}: security/source invariant missing {needle!r}")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Note target-Mac gate
+        run: |
+          echo "Static source policy passed."
+          echo "Full Swift/Xcode/FoundationModels/CoreML verification remains mandatory on the target Apple Silicon Mac via scripts/verify.sh."
