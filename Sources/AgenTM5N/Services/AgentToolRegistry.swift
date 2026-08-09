@@ -66,8 +66,10 @@ public enum AgentToolRegistry {
         + PlatformExpansionAgentTools.definitions
         + EdgeAgentTools.definitions
         + BrowserAgentTools.definitions
+        + BrowserBatchAgentTools.definitions
         + AgentDelegationTools.definitions
         + WorkflowAgentTools.definitions
+        + SelfBuiltToolAgentTools.definitions
     )
   }
 
@@ -78,16 +80,15 @@ public enum AgentToolRegistry {
   public static func definitions(
     capabilities: Set<AgentToolCapability>
   ) -> [ProviderToolDefinition] {
-    var names = Set(
+    let names = Set(
       catalog
         .filter { capabilities.contains($0.capability) }
         .map(\.name)
+    ).union(
+      capabilities.contains(.terminal)
+        ? Set(SelfBuiltToolLibrary.shared.records.filter(\.isEnabled).map(\.name))
+        : []
     )
-    if capabilities.contains(.terminal) {
-      for tool in SelfBuiltToolLibrary.shared.records where tool.isEnabled {
-        names.insert(tool.name)
-      }
-    }
     return allDefinitions.filter { names.contains($0.function.name) }
   }
 
@@ -120,6 +121,7 @@ public enum AgentToolRegistry {
     .init(name: "browser_open", capability: .browser, risk: .execute),
     .init(name: "browser_read", capability: .browser, risk: .read),
     .init(name: "browser_action", capability: .browser, risk: .execute),
+    .init(name: "browser_batch", capability: .browser, risk: .execute),
 
     .init(name: "git_status", capability: .git, risk: .read, cacheable: true),
     .init(name: "git_diff", capability: .git, risk: .read),
@@ -222,9 +224,24 @@ public enum AgentToolRegistry {
     return nil
   }
 
+  public static func isAllowed(
+    _ name: String,
+    within capabilities: Set<AgentToolCapability>?
+  ) -> Bool {
+    guard let capabilities else { return true }
+    guard let entry = entry(named: name) else { return false }
+    return capabilities.contains(entry.capability)
+  }
+
   public static func isRemoteOrExternal(_ name: String) -> Bool {
     if SelfBuiltToolAgentTools.managementNames.contains(name)
       || SelfBuiltToolAgentTools.isDynamicToolName(name)
+    {
+      return true
+    }
+    if name == "run_command"
+      || name == "terminal_open"
+      || name == "shortcuts_run"
     {
       return true
     }
