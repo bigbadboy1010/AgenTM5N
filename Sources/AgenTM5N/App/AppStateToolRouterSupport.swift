@@ -50,7 +50,7 @@ extension AppState {
     if WorkflowAgentTools.handles(call) {
       return (
         WorkflowAgentTools.risk(for: call),
-        WorkflowAgentTools.summary(for: call)
+        workflowApprovalSummary(for: call)
       )
     }
     if MacNativeAgentTools.handles(call) {
@@ -196,6 +196,22 @@ extension AppState {
       || RemindersAgentTools.handles(call)
       || AgentDelegationTools.handles(call)
       || WorkflowAgentTools.handles(call)
+  }
+
+  private func workflowApprovalSummary(for call: ProviderToolCall) -> String {
+    let base = WorkflowAgentTools.summary(for: call)
+    guard call.function.name == "workflow_run",
+      let query = call.function.arguments["workflow"]?.stringValue,
+      let workflow = try? AgentWorkflowLibrary.shared.resolve(query)
+    else {
+      return base
+    }
+
+    let steps = workflow.steps.prefix(20).map { step -> String in
+      let risk = AgentToolRegistry.entry(named: step.toolName)?.risk.displayName ?? "Execute"
+      return "\(step.toolName)[\(risk)]"
+    }
+    return "\(base) — \(workflow.steps.count) Schritte: \(steps.joined(separator: " → "))"
   }
 
   private func sanitizeToolResult(_ result: ToolExecutionResult) -> ToolExecutionResult {
