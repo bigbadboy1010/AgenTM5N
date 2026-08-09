@@ -23,6 +23,7 @@ Build 28 is the post-review hardening candidate. It is intentionally not conside
 - Neural Engine UI distinguishes registered state from execution-plan loading
 - regression tests and static source-policy CI expanded
 - release metadata standardized on 1.1.2 Build 28
+- notarized DMGs are archived as GitHub Release assets with a SHA-256 sidecar instead of being committed into Git history
 
 ## Target-Mac validation
 
@@ -60,3 +61,28 @@ dist/AgenTM5N-1.1.2-build28.dmg
 ```
 
 `release-macos.sh` must complete Developer ID signing, source/test gate, app validation, notarization, stapling, mounted-DMG validation and Gatekeeper assessment before reporting `RELEASE READY`.
+
+## GitHub binary archive
+
+After the release is merged to `main` and `release-macos.sh` has reported `RELEASE READY`, publish the verified DMG to the matching GitHub Release:
+
+```bash
+git switch main
+git pull --ff-only origin main
+bash scripts/publish-github-release.sh
+```
+
+The default tag for this build is:
+
+```text
+v1.1.2-build28
+```
+
+The GitHub Release receives:
+
+```text
+AgenTM5N-1.1.2-build28.dmg
+AgenTM5N-1.1.2-build28.dmg.sha256
+```
+
+Repository-side archive policy and historical-release rules are documented in `release-archive/README.md`. Old DMGs should only be archived when the exact source commit/tag used to create that binary is known.
