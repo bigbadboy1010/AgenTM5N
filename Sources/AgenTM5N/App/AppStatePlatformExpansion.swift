@@ -675,6 +675,13 @@ extension AppState {
     _ call: ProviderToolCall
   ) async -> ToolExecutionResult {
     do {
+      guard AgentDelegationContext.depth < AgentDelegationContext.maximumDepth else {
+        return .init(
+          success: false,
+          output: "Agent-Delegationstiefe erreicht. Maximal \(AgentDelegationContext.maximumDepth) verschachtelte Delegationsebenen sind erlaubt."
+        )
+      }
+
       let library = PersistentAgentLibrary.shared
       let profile = try library.resolve(
         try expansionRequiredString("agent", in: call)
@@ -686,38 +693,43 @@ extension AppState {
       let requestedTools = call.function.arguments["allow_tools"]?.boolValue
       let selectedProvider = profile.providerPreference.providerKind
         ?? configuration.providerKind
+      let nextDepth = AgentDelegationContext.depth + 1
 
       let response: String
       switch selectedProvider {
       case .appleOnDevice:
-        var delegateConfiguration = configuration
-        delegateConfiguration.providerKind = .appleOnDevice
-        delegateConfiguration.model = "Apple System Language Model"
-        delegateConfiguration.agentEnabled = false
-        delegateConfiguration.systemPrompt = configuration.systemPrompt
-          + "\n\n" + profile.systemInstruction
-        let event = try await AppleFoundationModelsProvider().complete(
-          configuration: delegateConfiguration,
-          messages: [ChatMessage(role: .user, content: task)]
-        )
-        response = event.contentDelta
+        response = try await AgentDelegationContext.$depth.withValue(nextDepth) {
+          var delegateConfiguration = configuration
+          delegateConfiguration.providerKind = .appleOnDevice
+          delegateConfiguration.model = "Apple System Language Model"
+          delegateConfiguration.agentEnabled = requestedTools ?? true
+          delegateConfiguration.systemPrompt = configuration.systemPrompt
+            + "\n\n" + profile.systemInstruction
+          let event = try await AppleFoundationModelsProvider().complete(
+            configuration: delegateConfiguration,
+            messages: [ChatMessage(role: .user, content: task)]
+          )
+          return event.contentDelta
+        }
 
       case .ollamaLocal, .ollamaCloud:
-        var delegateConfiguration = configuration
-        delegateConfiguration.providerKind = selectedProvider
-        if profile.providerPreference != .current {
-          delegateConfiguration.baseURL = selectedProvider.defaultBaseURL
-          delegateConfiguration.model = selectedProvider == .ollamaLocal
-            ? "qwen3:8b"
-            : "glm-5.2"
+        response = try await AgentDelegationContext.$depth.withValue(nextDepth) {
+          var delegateConfiguration = configuration
+          delegateConfiguration.providerKind = selectedProvider
+          if profile.providerPreference != .current {
+            delegateConfiguration.baseURL = selectedProvider.defaultBaseURL
+            delegateConfiguration.model = selectedProvider == .ollamaLocal
+              ? "qwen3:8b"
+              : "glm-5.2"
+          }
+          delegateConfiguration.systemPrompt = configuration.systemPrompt
+            + "\n\n" + profile.systemInstruction
+          return try await runDelegatedOllama(
+            configuration: delegateConfiguration,
+            task: task,
+            useTools: requestedTools ?? true
+          )
         }
-        delegateConfiguration.systemPrompt = configuration.systemPrompt
-          + "\n\n" + profile.systemInstruction
-        response = try await runDelegatedOllama(
-          configuration: delegateConfiguration,
-          task: task,
-          useTools: requestedTools ?? true
-        )
       }
 
       try library.markUsed(id: profile.id)
@@ -758,15 +770,11 @@ extension AppState {
       ProviderMessage(role: .system, content: delegateConfiguration.systemPrompt),
       ProviderMessage(role: .user, content: task),
     ]
-    let tools = useTools
-      ? AgentToolRegistry.ollamaDefinitions.filter {
-        $0.function.name != "agent_delegate"
-          && $0.function.name != "workflow_run"
-      }
-      : []
+    let tools = useTools ? AgentToolRegistry.ollamaDefinitions : []
+    let maximumRounds = max(1, min(delegateConfiguration.maxToolIterations, 12))
 
     var finalContent = ""
-    for _ in 0..<4 {
+    for _ in 0..<maximumRounds {
       try Task.checkCancellation()
       var turnContent = ""
       var turnThinking = ""
