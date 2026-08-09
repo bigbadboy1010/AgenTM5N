@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
-VERSION="${AGENTM5N_VERSION:-1.1.0}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-24}"
+VERSION="${AGENTM5N_VERSION:-1.1.1}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-25}"
 NOTARY_PROFILE="${AGENTM5N_NOTARY_PROFILE:-AgenTM5NNotary}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:-}"
 DIST_DIR="$ROOT_DIR/dist"
@@ -87,7 +87,7 @@ export AGENTM5N_VERSION="$VERSION"
 export AGENTM5N_BUILD_NUMBER="$BUILD_NUMBER"
 export AGENTM5N_SIGNING_IDENTITY="$SIGNING_IDENTITY"
 
-printf '\n=== Source-/Debug-Gate ===\n'
+printf '\n=== Source-/Debug-/Test-Gate ===\n'
 bash "$ROOT_DIR/scripts/verify.sh"
 
 printf '\n=== Developer-ID-App bauen ===\n'
