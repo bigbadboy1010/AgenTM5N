@@ -14,31 +14,31 @@ public enum EdgeAgentTools {
         required: ["host", "path"],
         properties: [
           "host": stringSchema("Saved SSH profile name, hostname, or UUID."),
-          "path": stringSchema("Remote directory path."),
+          "path": stringSchema("Absolute remote directory path."),
           "depth": integerSchema("Directory depth from 1 to 4. Defaults to 2.", minimum: 1, maximum: 4)
         ]
       )
     ),
     ProviderToolDefinition(
       name: "edge_read_file",
-      description: "Read bounded text content from a file on an Edge node through its saved SSH profile.",
+      description: "Read bounded text content from an absolute file path on an Edge node through its saved SSH profile.",
       parameters: objectSchema(
         required: ["host", "path"],
         properties: [
           "host": stringSchema("Saved SSH profile name, hostname, or UUID."),
-          "path": stringSchema("Remote file path."),
+          "path": stringSchema("Absolute remote file path."),
           "max_bytes": integerSchema("Maximum bytes to read from 1 to 524288. Defaults to 65536.", minimum: 1, maximum: 524288)
         ]
       )
     ),
     ProviderToolDefinition(
       name: "edge_write_file",
-      description: "Write UTF-8 text to a file on an Edge node using an atomic temporary file. By default AgenTM5N backs up an existing target before replacement and preserves its mode/ownership when possible.",
+      description: "Write UTF-8 text to an absolute file path on an Edge node using an atomic temporary file. By default AgenTM5N backs up an existing target before replacement and preserves its mode/ownership when possible.",
       parameters: objectSchema(
         required: ["host", "path", "content"],
         properties: [
           "host": stringSchema("Saved SSH profile name, hostname, or UUID."),
-          "path": stringSchema("Remote destination file path."),
+          "path": stringSchema("Absolute remote destination file path."),
           "content": stringSchema("UTF-8 file content. Maximum 524288 bytes."),
           "create_parent": boolSchema("Create missing parent directories. Defaults to false."),
           "backup": boolSchema("Back up an existing target before replacing it. Defaults to true.")
@@ -56,7 +56,7 @@ public enum EdgeAgentTools {
           "command": stringSchema("Remote shell command for operation=run."),
           "target": stringSchema("Container or systemd service name for container/service operations."),
           "action": stringSchema("Container: status/start/stop/restart/logs. Service: status/start/stop/restart."),
-          "path": stringSchema("Remote log path for operation=tail."),
+          "path": stringSchema("Absolute remote log path for operation=tail."),
           "lines": integerSchema("Log lines from 1 to 2000. Defaults to 200.", minimum: 1, maximum: 2000)
         ]
       )
@@ -83,10 +83,10 @@ public enum EdgeAgentTools {
       if operation == "status" || operation == "tail" {
         return .read
       }
-      if operation == "container", action == "status" || action == "logs" {
+      if operation == "container" && (action == "status" || action == "logs") {
         return .read
       }
-      if operation == "service", action == "status" {
+      if operation == "service" && action == "status" {
         return .read
       }
       return .execute
