@@ -5,6 +5,12 @@ extension AppState {
   func registryRiskAndSummary(
     for call: ProviderToolCall
   ) async -> (risk: ToolRisk, summary: String) {
+    if EdgeAgentTools.handles(call) {
+      return (
+        EdgeAgentTools.risk(for: call),
+        EdgeAgentTools.summary(for: call)
+      )
+    }
     if PlatformExpansionAgentTools.handles(call) {
       return (
         PlatformExpansionAgentTools.risk(for: call),
@@ -145,7 +151,8 @@ extension AppState {
   }
 
   func isPlatformExpansionCall(_ call: ProviderToolCall) -> Bool {
-    PlatformExpansionAgentTools.handles(call)
+    EdgeAgentTools.handles(call)
+      || PlatformExpansionAgentTools.handles(call)
       || RemindersAgentTools.handles(call)
       || AgentDelegationTools.handles(call)
       || WorkflowAgentTools.handles(call)
