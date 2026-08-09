@@ -52,11 +52,31 @@ private struct ExpansionCoreMLPredictionDescriptor: Encodable {
   let values: [String: String]
 }
 
+private enum PlatformExpansionSecurityError: LocalizedError {
+  case capabilityDenied(tool: String, capability: String)
+
+  var errorDescription: String? {
+    switch self {
+    case .capabilityDenied(let tool, let capability):
+      return "Capability-Sandbox verweigert \(tool) (benötigt \(capability))."
+    }
+  }
+}
+
 @MainActor
 extension AppState {
   func executePlatformExpansionTool(
     _ call: ProviderToolCall
   ) async -> ToolExecutionResult {
+    if let denial = capabilityDenialResult(for: call) {
+      return denial
+    }
+    if BrowserBatchAgentTools.handles(call) {
+      return await BrowserBatchAgentTools.execute(call: call)
+    }
+    if SelfBuiltToolAgentTools.handles(call) {
+      return SelfBuiltToolAgentTools.execute(call: call)
+    }
     if EdgeAgentTools.handles(call) {
       return await executeEdgeTool(call)
     }
@@ -474,6 +494,7 @@ extension AppState {
 
       case "workflow_create":
         let steps = try WorkflowAgentTools.parseSteps(call.function.arguments["steps"])
+        try validateWorkflowCapabilities(steps)
         try rejectEmbeddedSecrets(in: call)
         let workflow = try library.create(
           name: try expansionRequiredString("name", in: call),
@@ -536,9 +557,32 @@ extension AppState {
     }
   }
 
+  private func validateWorkflowCapabilities(_ steps: [AgentWorkflowStep]) throws {
+    guard let scope = AgentCapabilityExecutionContext.allowedCapabilities else { return }
+    for step in steps {
+      guard AgentToolRegistry.isAllowed(step.toolName, within: scope) else {
+        let capability = AgentToolRegistry.entry(named: step.toolName)?.capability.rawValue
+          ?? "unknown"
+        throw PlatformExpansionSecurityError.capabilityDenied(
+          tool: step.toolName,
+          capability: capability
+        )
+      }
+    }
+  }
+
   private func executeStandaloneWorkflowStep(
     _ call: ProviderToolCall
   ) async -> ToolExecutionResult {
+    if let denial = capabilityDenialResult(for: call) {
+      return denial
+    }
+    if BrowserBatchAgentTools.handles(call) {
+      return await BrowserBatchAgentTools.execute(call: call)
+    }
+    if SelfBuiltToolAgentTools.handles(call) {
+      return SelfBuiltToolAgentTools.execute(call: call)
+    }
     if EdgeAgentTools.handles(call)
       || PlatformExpansionAgentTools.handles(call)
       || RemindersAgentTools.handles(call)
@@ -699,42 +743,49 @@ extension AppState {
       let selectedProvider = profile.providerPreference.providerKind
         ?? configuration.providerKind
       let nextDepth = AgentDelegationContext.depth + 1
+      let delegatedScope = profile.allowedCapabilities.map(Set.init)
 
       let response: String
       switch selectedProvider {
       case .appleOnDevice:
-        response = try await AgentDelegationContext.$depth.withValue(nextDepth) {
-          var delegateConfiguration = configuration
-          delegateConfiguration.providerKind = .appleOnDevice
-          delegateConfiguration.model = "Apple System Language Model"
-          delegateConfiguration.agentEnabled = requestedTools ?? true
-          delegateConfiguration.systemPrompt = configuration.systemPrompt
-            + "\n\n" + profile.systemInstruction
-          let event = try await AppleFoundationModelsProvider().complete(
-            configuration: delegateConfiguration,
-            messages: [ChatMessage(role: .user, content: task)]
-          )
-          return event.contentDelta
-        }
+        response = try await AgentCapabilityExecutionContext.$allowedCapabilities
+          .withValue(delegatedScope) {
+            try await AgentDelegationContext.$depth.withValue(nextDepth) {
+              var delegateConfiguration = configuration
+              delegateConfiguration.providerKind = .appleOnDevice
+              delegateConfiguration.model = "Apple System Language Model"
+              delegateConfiguration.agentEnabled = requestedTools ?? true
+              delegateConfiguration.systemPrompt = configuration.systemPrompt
+                + "\n\n" + profile.systemInstruction
+              let event = try await AppleFoundationModelsProvider().complete(
+                configuration: delegateConfiguration,
+                messages: [ChatMessage(role: .user, content: task)]
+              )
+              return event.contentDelta
+            }
+          }
 
       case .ollamaLocal, .ollamaCloud:
-        response = try await AgentDelegationContext.$depth.withValue(nextDepth) {
-          var delegateConfiguration = configuration
-          delegateConfiguration.providerKind = selectedProvider
-          if profile.providerPreference != .current {
-            delegateConfiguration.baseURL = selectedProvider.defaultBaseURL
-            delegateConfiguration.model = selectedProvider == .ollamaLocal
-              ? "qwen3:8b"
-              : "glm-5.2"
+        response = try await AgentCapabilityExecutionContext.$allowedCapabilities
+          .withValue(delegatedScope) {
+            try await AgentDelegationContext.$depth.withValue(nextDepth) {
+              var delegateConfiguration = configuration
+              delegateConfiguration.providerKind = selectedProvider
+              if profile.providerPreference != .current {
+                delegateConfiguration.baseURL = selectedProvider.defaultBaseURL
+                delegateConfiguration.model = selectedProvider == .ollamaLocal
+                  ? "qwen3:8b"
+                  : "glm-5.2"
+              }
+              delegateConfiguration.systemPrompt = configuration.systemPrompt
+                + "\n\n" + profile.systemInstruction
+              return try await runDelegatedOllama(
+                configuration: delegateConfiguration,
+                task: task,
+                useTools: requestedTools ?? true
+              )
+            }
           }
-          delegateConfiguration.systemPrompt = configuration.systemPrompt
-            + "\n\n" + profile.systemInstruction
-          return try await runDelegatedOllama(
-            configuration: delegateConfiguration,
-            task: task,
-            useTools: requestedTools ?? true
-          )
-        }
       }
 
       try library.markUsed(id: profile.id)
@@ -775,7 +826,16 @@ extension AppState {
       ProviderMessage(role: .system, content: delegateConfiguration.systemPrompt),
       ProviderMessage(role: .user, content: task),
     ]
-    let tools = useTools ? AgentToolRegistry.ollamaDefinitions : []
+    let tools: [ProviderToolDefinition]
+    if useTools {
+      if let scope = AgentCapabilityExecutionContext.allowedCapabilities {
+        tools = AgentToolRegistry.definitions(capabilities: scope)
+      } else {
+        tools = AgentToolRegistry.ollamaDefinitions
+      }
+    } else {
+      tools = []
+    }
     let maximumRounds = max(1, min(delegateConfiguration.maxToolIterations, 12))
 
     var finalContent = ""
@@ -1009,9 +1069,9 @@ extension AppState {
     AppVersionDescriptor(
       version: Bundle.main.object(
         forInfoDictionaryKey: "CFBundleShortVersionString"
-      ) as? String ?? "1.1.0",
+      ) as? String ?? "1.1.1",
       build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        ?? "24",
+        ?? "25",
       bundleIdentifier: Bundle.main.bundleIdentifier ?? AppPaths.bundleIdentifier
     )
   }
