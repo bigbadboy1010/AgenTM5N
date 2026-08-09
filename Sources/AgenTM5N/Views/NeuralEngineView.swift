@@ -97,9 +97,9 @@ struct NeuralEngineView: View {
           .foregroundStyle(.secondary)
           Text(
             L10n.text(
-              de: "CPU + Apple Neural Engine",
-              en: "CPU + Apple Neural Engine",
-              fr: "CPU + Apple Neural Engine"
+              de: "CPU + GPU + Apple Neural Engine (Core ML entscheidet)",
+              en: "CPU + GPU + Apple Neural Engine (Core ML decides)",
+              fr: "CPU + GPU + Apple Neural Engine (Core ML décide)"
             )
           )
         }
@@ -149,9 +149,9 @@ struct NeuralEngineView: View {
   private var coreMLCard: some View {
     GroupBox(
       L10n.text(
-        de: "Core ML – expliziter Neural-Engine-Pfad",
-        en: "Core ML – explicit Neural Engine path",
-        fr: "Core ML – chemin Neural Engine explicite"
+        de: "Core ML – adaptive Hardware-Verteilung",
+        en: "Core ML – adaptive hardware scheduling",
+        fr: "Core ML – répartition matérielle adaptative"
       )
     ) {
       VStack(alignment: .leading, spacing: 14) {
@@ -176,9 +176,9 @@ struct NeuralEngineView: View {
           if let descriptor = appState.coreMLDescriptor {
             Label(
               L10n.text(
-                de: "Geladen",
-                en: "Loaded",
-                fr: "Chargé"
+                de: "Registriert",
+                en: "Registered",
+                fr: "Enregistré"
               ),
               systemImage: "checkmark.circle.fill"
             )
@@ -193,6 +193,16 @@ struct NeuralEngineView: View {
         }
 
         if let descriptor = appState.coreMLDescriptor {
+          Text(
+            L10n.text(
+              de: "Das Modell ist persistent registriert. Der Core-ML-Execution-Plan wird absichtlich erst bei Aktivierung oder Vorhersage aufgebaut und anschließend für weitere Vorhersagen im Prozess wiederverwendet.",
+              en: "The model is persistently registered. Its Core ML execution plan is intentionally built only when activated or predicted with, then reused for later predictions in the same process.",
+              fr: "Le modèle est enregistré de façon persistante. Son plan d’exécution Core ML n’est construit qu’à l’activation ou à la prédiction, puis réutilisé pour les prédictions suivantes du même processus."
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
           modelDetails(descriptor)
           predictionEditor
         } else {
@@ -211,9 +221,9 @@ struct NeuralEngineView: View {
 
             Text(
               L10n.text(
-                de: "Das ausgewählte Modell wird in den geschützten AgenTM5N-Anwendungsordner kopiert, bei Bedarf kompiliert und mit der Rechenrichtlinie CPU + Apple Neural Engine geladen. Diese Richtlinie fordert den Neural-Engine-Pfad an; Core ML entscheidet weiterhin pro Operator über die tatsächliche Ausführung.",
-                en: "The selected model is copied into AgenTM5N’s protected application directory, compiled when required, and loaded with the CPU + Apple Neural Engine compute policy. This policy requests the Neural Engine path; Core ML still decides the actual placement per operator.",
-                fr: "Le modèle sélectionné est copié dans le dossier d’application protégé d’AgenTM5N, compilé si nécessaire, puis chargé avec la politique CPU + Apple Neural Engine. Cette politique demande le chemin Neural Engine ; Core ML décide toujours de l’exécution réelle pour chaque opérateur."
+                de: "Das ausgewählte Modell wird transaktional in den geschützten AgenTM5N-Anwendungsordner übernommen, bei Bedarf kompiliert und vor der Registrierung validiert. Identische Modellinhalte werden wiederverwendet statt mehrfach gespeichert. CPU, GPU und Apple Neural Engine bleiben verfügbar; Core ML entscheidet pro Operator, welche Hardware tatsächlich verwendet wird.",
+                en: "The selected model is transactionally imported into AgenTM5N’s protected application directory, compiled when required, and validated before registration. Identical model content is reused instead of being stored repeatedly. CPU, GPU, and Apple Neural Engine remain available; Core ML decides the actual hardware placement per operator.",
+                fr: "Le modèle sélectionné est importé de façon transactionnelle dans le dossier protégé d’AgenTM5N, compilé si nécessaire et validé avant enregistrement. Un contenu de modèle identique est réutilisé au lieu d’être dupliqué. Le CPU, le GPU et l’Apple Neural Engine restent disponibles ; Core ML décide du matériel utilisé pour chaque opérateur."
               )
             )
             .foregroundStyle(.secondary)
@@ -233,7 +243,11 @@ struct NeuralEngineView: View {
           en: "Compute Policy",
           fr: "Politique de calcul"
         ),
-        value: descriptor.computeUnits
+        value: L10n.text(
+          de: "Alle verfügbar (CPU + GPU + Neural Engine)",
+          en: "All available (CPU + GPU + Neural Engine)",
+          fr: "Toutes disponibles (CPU + GPU + Neural Engine)"
+        )
       )
 
       VStack(alignment: .leading, spacing: 5) {
@@ -312,18 +326,18 @@ struct NeuralEngineView: View {
     VStack(alignment: .leading, spacing: 10) {
       Text(
         L10n.text(
-          de: "Skalare Eingaben als JSON",
-          en: "Scalar Inputs as JSON",
-          fr: "Entrées scalaires en JSON"
+          de: "Eingaben als JSON",
+          en: "Inputs as JSON",
+          fr: "Entrées JSON"
         )
       )
       .font(.headline)
 
       Text(
         L10n.text(
-          de: "Der generische Runner unterstützt aktuell Zahlen, Ganzzahlen und Text. Bild-, MultiArray-, Sequenz- oder State-Modelle können geladen und analysiert werden, benötigen für Vorhersagen jedoch einen typgerechten Adapter.",
-          en: "The generic runner currently supports numbers, integers, and text. Image, MultiArray, sequence, or state models can be loaded and inspected, but prediction requires a type-specific adapter.",
-          fr: "L’exécuteur générique prend actuellement en charge les nombres, les entiers et le texte. Les modèles Image, MultiArray, séquence ou état peuvent être chargés et inspectés, mais la prédiction nécessite un adaptateur spécifique."
+          de: "Der generische Runner unterstützt Zahlen, Ganzzahlen und Text sowie verschachtelte numerische JSON-Arrays für MultiArray-Inputs und lokale Bildpfade für Image-Inputs. Sequence- und State-Modelle können registriert und analysiert werden, benötigen für ihre Vorhersage gegebenenfalls einen typgerechten Adapter.",
+          en: "The generic runner supports numbers, integers and text, nested numeric JSON arrays for MultiArray inputs, and local image paths for Image inputs. Sequence and state models can be registered and inspected but may require a type-specific prediction adapter.",
+          fr: "L’exécuteur générique prend en charge les nombres, les entiers et le texte, les tableaux JSON numériques imbriqués pour les entrées MultiArray et les chemins d’images locaux pour les entrées Image. Les modèles Sequence et State peuvent être enregistrés et inspectés, mais peuvent nécessiter un adaptateur de prédiction spécifique."
         )
       )
       .foregroundStyle(.secondary)

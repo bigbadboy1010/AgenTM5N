@@ -16,4 +16,7 @@ swift package resolve
 swift package dump-package >/dev/null
 swift build -c debug --arch arm64
 
-printf '\nAgenTM5N Debug-Build erfolgreich.\n'
+printf '\n=== AgenTM5N Security Regression Tests ===\n'
+swift test --arch arm64
+
+printf '\nAgenTM5N Debug-Build und Tests erfolgreich.\n'

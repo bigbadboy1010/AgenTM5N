@@ -194,6 +194,7 @@ public final class OllamaProvider: @unchecked Sendable {
             throw OllamaProviderError.emptyModel
           }
 
+          let effectiveTools = scopedTools(tools, messages: messages)
           let url = try endpointURL(baseURL: configuration.baseURL, path: "/api/chat")
           var request = URLRequest(url: url)
           request.httpMethod = "POST"
@@ -205,7 +206,7 @@ public final class OllamaProvider: @unchecked Sendable {
           let providerMessages = enrichedMessages(
             messages,
             configuration: configuration,
-            tools: tools
+            tools: effectiveTools
           )
           let requestMessages = try providerMessages.map(
             OllamaRequestMessage.init
@@ -213,7 +214,7 @@ public final class OllamaProvider: @unchecked Sendable {
           let body = ChatRequestBody(
             model: configuration.model,
             messages: requestMessages,
-            tools: tools.isEmpty ? nil : tools,
+            tools: effectiveTools.isEmpty ? nil : effectiveTools,
             stream: true,
             think: configuration.thinkingEnabled
           )
@@ -282,7 +283,7 @@ public final class OllamaProvider: @unchecked Sendable {
             )
           }
 
-          if !tools.isEmpty,
+          if !effectiveTools.isEmpty,
             !receivedToolCalls,
             looksLikeCapabilityDenial(generatedContent)
           {
@@ -324,6 +325,59 @@ public final class OllamaProvider: @unchecked Sendable {
       continuation.onTermination = { _ in
         task.cancel()
       }
+    }
+  }
+
+  private func scopedTools(
+    _ tools: [ProviderToolDefinition],
+    messages: [ProviderMessage]
+  ) -> [ProviderToolDefinition] {
+    guard !tools.isEmpty,
+      let systemContent = messages.first(where: { $0.role == .system })?.content,
+      let capabilityLine = systemContent
+        .split(whereSeparator: { $0.isNewline })
+        .map(String.init)
+        .first(where: {
+          $0.trimmingCharacters(in: .whitespaces)
+            .hasPrefix("- Tool capabilities:")
+        })
+    else {
+      return tools
+    }
+
+    let marker = "- Tool capabilities:"
+    guard let markerRange = capabilityLine.range(of: marker) else {
+      return tools
+    }
+    let raw = String(capabilityLine[markerRange.upperBound...])
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if raw.isEmpty
+      || raw.caseInsensitiveCompare("inherit all centrally authorized capabilities") == .orderedSame
+      || raw.caseInsensitiveCompare("all") == .orderedSame
+    {
+      return tools
+    }
+
+    let requestedNames = raw
+      .split(separator: ",")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    let allowed = Set(
+      requestedNames.compactMap { value in
+        AgentToolCapability.allCases.first {
+          $0.rawValue.caseInsensitiveCompare(value) == .orderedSame
+        }
+      }
+    )
+    guard !allowed.isEmpty else {
+      return []
+    }
+
+    return tools.filter { definition in
+      guard let entry = AgentToolRegistry.entry(named: definition.function.name) else {
+        return false
+      }
+      return allowed.contains(entry.capability)
     }
   }
 

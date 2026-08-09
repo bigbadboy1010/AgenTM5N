@@ -3,15 +3,90 @@ import SwiftUI
 struct RootView: View {
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
+  @ObservedObject private var agentLibrary = PersistentAgentLibrary.shared
+  @ObservedObject private var workflowLibrary = AgentWorkflowLibrary.shared
+  @ObservedObject private var documentDelivery = GeneratedDocumentDeliveryCenter.shared
   @State private var isImportingPromptFiles = false
   @State private var showingAttachmentCenter = false
   @State private var showingKnowledgeLibrary = false
+  @State private var showingDocumentStudio = false
+  @State private var showingMacAccessCenter = false
+  @State private var showingAgents = false
+  @State private var showingTools = false
+  @State private var showingWorkflows = false
+  @State private var showingActivity = false
 
   var body: some View {
     NavigationSplitView {
-      List(AppSection.allCases, selection: $appState.selectedSection) { section in
-        Label(sectionTitle(section), systemImage: section.systemImage)
-          .tag(section)
+      List(selection: $appState.selectedSection) {
+        ForEach(AppSection.allCases) { section in
+          Label(sectionTitle(section), systemImage: section.systemImage)
+            .tag(section)
+        }
+
+        Section {
+          Button {
+            showingAgents = true
+          } label: {
+            HStack {
+              Label(
+                L10n.text(de: "Agenten", en: "Agents", fr: "Agents"),
+                systemImage: "person.3.sequence"
+              )
+              Spacer()
+              if !agentLibrary.profiles.isEmpty {
+                Text("\(agentLibrary.profiles.count)")
+                  .font(.caption.monospacedDigit())
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .buttonStyle(.plain)
+
+          Button {
+            showingTools = true
+          } label: {
+            HStack {
+              Label(
+                L10n.text(de: "Tools", en: "Tools", fr: "Outils"),
+                systemImage: "wrench.and.screwdriver"
+              )
+              Spacer()
+              let toolCount = SelfBuiltToolLibrary.shared.records.count
+              if toolCount > 0 {
+                Text("\(toolCount)")
+                  .font(.caption.monospacedDigit())
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .buttonStyle(.plain)
+
+          Button {
+            showingWorkflows = true
+          } label: {
+            HStack {
+              Label("Workflows", systemImage: "point.3.connected.trianglepath.dotted")
+              Spacer()
+              if !workflowLibrary.workflows.isEmpty {
+                Text("\(workflowLibrary.workflows.count)")
+                  .font(.caption.monospacedDigit())
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .buttonStyle(.plain)
+
+          Button {
+            showingActivity = true
+          } label: {
+            Label(
+              L10n.text(de: "Aktivität", en: "Activity", fr: "Activité"),
+              systemImage: "waveform.path.ecg"
+            )
+          }
+          .buttonStyle(.plain)
+        }
       }
       .navigationTitle("AgenTM5N")
       .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 260)
@@ -111,11 +186,95 @@ struct RootView: View {
                 fr: "Gérer, importer et rechercher des collections persistantes."
               )
             )
+
+            Button {
+              showingDocumentStudio = true
+            } label: {
+              Label(
+                L10n.text(
+                  de: "Document Studio",
+                  en: "Document Studio",
+                  fr: "Document Studio"
+                ),
+                systemImage: "doc.badge.plus"
+              )
+            }
+            .help(
+              L10n.text(
+                de: "DOCX-, PDF-, XLSX- und PPTX-Dokumente lokal erzeugen und exportieren.",
+                en: "Generate and export DOCX, PDF, XLSX, and PPTX documents locally.",
+                fr: "Générer et exporter localement des documents DOCX, PDF, XLSX et PPTX."
+              )
+            )
+
+            Button {
+              showingMacAccessCenter = true
+            } label: {
+              Label(
+                L10n.text(
+                  de: "Mac Access Center",
+                  en: "Mac Access Center",
+                  fr: "Centre d’accès Mac"
+                ),
+                systemImage: "lock.shield"
+              )
+            }
+            .help(
+              L10n.text(
+                de: "macOS-Berechtigungen, gemeinsamen Tool-Router und Audit-Status prüfen.",
+                en: "Inspect macOS permissions, the shared tool router, and audit status.",
+                fr: "Vérifier les autorisations macOS, le routeur d’outils partagé et l’audit."
+              )
+            )
           }
         }
       }
     }
     .navigationSplitViewStyle(.balanced)
+    .overlay(alignment: .bottomTrailing) {
+      if let document = documentDelivery.pendingDocument {
+        HStack(spacing: 10) {
+          Image(systemName: "doc.badge.arrow.up")
+          VStack(alignment: .leading, spacing: 2) {
+            Text(
+              L10n.text(
+                de: "Dokument bereit",
+                en: "Document Ready",
+                fr: "Document prêt"
+              )
+            )
+            .font(.headline)
+            Text("\(document.fileName) · \(document.format.rawValue.uppercased())")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
+
+          Button {
+            Task { await documentDelivery.presentPending() }
+          } label: {
+            Label(
+              L10n.text(de: "Speichern…", en: "Save…", fr: "Enregistrer…"),
+              systemImage: "square.and.arrow.down"
+            )
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(documentDelivery.isPresenting)
+
+          Button {
+            documentDelivery.dismissPending()
+          } label: {
+            Image(systemName: "xmark")
+          }
+          .buttonStyle(.plain)
+          .disabled(documentDelivery.isPresenting)
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .shadow(radius: 8)
+        .padding(16)
+      }
+    }
     .sheet(isPresented: $showingAttachmentCenter) {
       AttachmentCenterView()
         .environmentObject(appState)
@@ -124,6 +283,33 @@ struct RootView: View {
     .sheet(isPresented: $showingKnowledgeLibrary) {
       KnowledgeLibraryView()
         .frame(minWidth: 1_050, minHeight: 700)
+    }
+    .sheet(isPresented: $showingDocumentStudio) {
+      DocumentStudioView()
+        .frame(minWidth: 1_050, minHeight: 700)
+    }
+    .sheet(isPresented: $showingMacAccessCenter) {
+      MacAccessCenterView()
+        .environmentObject(appState)
+    }
+    .sheet(isPresented: $showingAgents) {
+      AgentsView()
+        .environmentObject(appState)
+    }
+    .sheet(isPresented: $showingTools) {
+      ToolsView()
+        .environmentObject(appState)
+    }
+    .sheet(isPresented: $showingWorkflows) {
+      WorkflowsView()
+        .environmentObject(appState)
+    }
+    .sheet(isPresented: $showingActivity) {
+      ActivityView()
+    }
+    .onChange(of: documentDelivery.pendingDocument?.id) { _, documentID in
+      guard documentID != nil, !documentDelivery.isPresenting else { return }
+      Task { await documentDelivery.presentPending() }
     }
     .alert(
       L10n.text(de: "Fehler", en: "Error", fr: "Erreur"),

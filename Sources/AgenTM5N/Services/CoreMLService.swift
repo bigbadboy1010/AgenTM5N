@@ -99,11 +99,45 @@ public actor CoreMLService {
     if registry.activeModelID == nil {
       registry.activeModelID = registry.models.first?.id
     }
+
+    let validIDs = Set(registry.models.map(\.id))
+    loadedModels = loadedModels.filter { validIDs.contains($0.key) }
     try saveRegistry()
 
-    if let activeID = registry.activeModelID {
-      _ = try await model(for: activeID)
+    // The CoreML Sources/Compiled folders are private managed stores. Remove
+    // abandoned copies left by an interrupted or previously failed import, but
+    // never touch model paths outside those managed directories.
+    let sourceReferences = registry.models.map(\.sourceURL).filter {
+      CoreMLManagedStorage.isManaged($0, inside: AppPaths.coreMLSourcesDirectory)
     }
+    let compiledReferences = registry.models.flatMap { record -> [URL] in
+      var values = [record.compiledURL]
+      if CoreMLManagedStorage.isManaged(
+        record.sourceURL,
+        inside: AppPaths.coreMLCompiledDirectory
+      ) {
+        values.append(record.sourceURL)
+      }
+      return values
+    }
+    do {
+      try CoreMLManagedStorage.removeOrphans(
+        in: AppPaths.coreMLSourcesDirectory,
+        referencedURLs: sourceReferences
+      )
+      try CoreMLManagedStorage.removeOrphans(
+        in: AppPaths.coreMLCompiledDirectory,
+        referencedURLs: compiledReferences
+      )
+    } catch {
+      AppLogger.app.error(
+        "Core ML orphan cleanup failed: \(error.localizedDescription, privacy: .public)"
+      )
+    }
+
+    // Keep application startup fast. Large Core ML graphs can require tens of
+    // seconds to build their execution plan. Registered models are loaded lazily
+    // when activated, predicted with, or used by a semantic workflow.
     return snapshot()
   }
 
@@ -120,51 +154,92 @@ public actor CoreMLService {
 
     try AppPaths.ensureDirectories()
 
-    let importedSourceURL: URL
-    let compiledURL: URL
-    if sourceExtension == "mlmodelc" {
-      importedSourceURL = try persistentCopy(
-        of: sourceURL,
-        in: AppPaths.coreMLCompiledDirectory,
-        preferredExtension: "mlmodelc"
-      )
-      compiledURL = importedSourceURL
-    } else {
-      importedSourceURL = try persistentCopy(
-        of: sourceURL,
-        in: AppPaths.coreMLSourcesDirectory,
-        preferredExtension: sourceExtension
-      )
-      let temporaryCompiledURL = try await compileModel(at: importedSourceURL)
-      compiledURL = try persistentCopy(
-        of: temporaryCompiledURL,
-        in: AppPaths.coreMLCompiledDirectory,
-        preferredExtension: "mlmodelc"
-      )
+    let sourceDigest = try CoreMLManagedStorage.contentDigest(at: sourceURL)
+    if let existing = try existingModel(matchingSourceDigest: sourceDigest) {
+      registry.activeModelID = existing.id
+      try saveRegistry()
+      return existing
     }
 
-    let loadedModel = try await Self.loadCompiledModel(at: compiledURL)
-    let record = CoreMLRegisteredModel(
-      name: uniqueModelName(sourceURL.deletingPathExtension().lastPathComponent),
-      sourceURL: importedSourceURL,
-      compiledURL: compiledURL,
-      inputs: Self.featureDescriptions(
-        loadedModel.modelDescription.inputDescriptionsByName
-      ),
-      outputs: Self.featureDescriptions(
-        loadedModel.modelDescription.outputDescriptionsByName
-      ),
-      computeUnits: Self.computePolicyDescription
-    )
+    let previousRegistry = registry
+    var createdManagedURLs: [URL] = []
+    var temporaryCompiledURL: URL?
 
-    registry.models.append(record)
-    registry.models.sort {
-      $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+    do {
+      let compiledCandidate: URL
+      if sourceExtension == "mlmodelc" {
+        compiledCandidate = sourceURL
+      } else {
+        let temporary = try await compileModel(at: sourceURL)
+        temporaryCompiledURL = temporary
+        compiledCandidate = temporary
+      }
+      defer {
+        if let temporaryCompiledURL {
+          try? FileManager.default.removeItem(at: temporaryCompiledURL)
+        }
+      }
+
+      let compiledDigest = try CoreMLManagedStorage.contentDigest(at: compiledCandidate)
+      let compiledCopy = try CoreMLManagedStorage.persistentCopy(
+        of: compiledCandidate,
+        in: AppPaths.coreMLCompiledDirectory,
+        preferredExtension: "mlmodelc",
+        digest: compiledDigest
+      )
+      if compiledCopy.created {
+        createdManagedURLs.append(compiledCopy.url)
+      }
+
+      // Validate the final persistent artifact before changing the registry.
+      // If Core ML cannot build an execution plan, the transaction rolls back
+      // and the copied multi-gigabyte artifact is deleted immediately.
+      let loadedModel = try await Self.loadCompiledModel(at: compiledCopy.url)
+
+      let importedSourceURL: URL
+      if sourceExtension == "mlmodelc" {
+        importedSourceURL = compiledCopy.url
+      } else {
+        let sourceCopy = try CoreMLManagedStorage.persistentCopy(
+          of: sourceURL,
+          in: AppPaths.coreMLSourcesDirectory,
+          preferredExtension: sourceExtension,
+          digest: sourceDigest
+        )
+        importedSourceURL = sourceCopy.url
+        if sourceCopy.created {
+          createdManagedURLs.append(sourceCopy.url)
+        }
+      }
+
+      let record = CoreMLRegisteredModel(
+        name: uniqueModelName(sourceURL.deletingPathExtension().lastPathComponent),
+        sourceURL: importedSourceURL,
+        compiledURL: compiledCopy.url,
+        inputs: Self.featureDescriptions(
+          loadedModel.modelDescription.inputDescriptionsByName
+        ),
+        outputs: Self.featureDescriptions(
+          loadedModel.modelDescription.outputDescriptionsByName
+        ),
+        computeUnits: Self.computePolicyDescription
+      )
+
+      registry.models.append(record)
+      registry.models.sort {
+        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+      }
+      registry.activeModelID = record.id
+      try saveRegistry()
+      loadedModels[record.id] = loadedModel
+      return record
+    } catch {
+      registry = previousRegistry
+      for url in createdManagedURLs.reversed() {
+        try? FileManager.default.removeItem(at: url)
+      }
+      throw error
     }
-    registry.activeModelID = record.id
-    loadedModels[record.id] = loadedModel
-    try saveRegistry()
-    return record
   }
 
   public func listModels() -> [CoreMLRegisteredModel] {
@@ -201,7 +276,7 @@ public actor CoreMLService {
     }
 
     let record = try resolveRecord(query: modelQuery)
-    let result = try await CoreMLPredictionRunner.predict(
+    let result = try await CoreMLPredictionRunner.shared.predict(
       compiledURL: record.compiledURL,
       jsonInput: jsonInput
     )
@@ -225,8 +300,36 @@ public actor CoreMLService {
 
   private static func loadCompiledModel(at url: URL) async throws -> MLModel {
     let configuration = MLModelConfiguration()
-    configuration.computeUnits = .cpuAndNeuralEngine
+    // Allow Core ML to schedule each operator across CPU, GPU and ANE. Some
+    // large stateful transformer graphs cannot build an execution plan when
+    // GPU is excluded by `.cpuAndNeuralEngine`, while `.all` succeeds and
+    // still keeps the Neural Engine available for supported operators.
+    configuration.computeUnits = .all
     return try await MLModel.load(contentsOf: url, configuration: configuration)
+  }
+
+  private func existingModel(
+    matchingSourceDigest sourceDigest: String
+  ) throws -> CoreMLRegisteredModel? {
+    for record in registry.models {
+      guard FileManager.default.fileExists(atPath: record.sourceURL.path) else {
+        continue
+      }
+      let fileName = record.sourceURL.lastPathComponent.lowercased()
+      if fileName.contains(sourceDigest.lowercased()) {
+        return record
+      }
+      do {
+        if try CoreMLManagedStorage.contentDigest(at: record.sourceURL) == sourceDigest {
+          return record
+        }
+      } catch {
+        AppLogger.app.error(
+          "Core ML duplicate check skipped unreadable source: \(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
+    return nil
   }
 
   private func resolveRecord(query: String?) throws -> CoreMLRegisteredModel {
@@ -299,6 +402,10 @@ public actor CoreMLService {
       throw CoreMLServiceError.registryEncodingFailed
     }
     try data.write(to: AppPaths.coreMLRegistryFile, options: [.atomic])
+    try? FileManager.default.setAttributes(
+      [.posixPermissions: 0o600],
+      ofItemAtPath: AppPaths.coreMLRegistryFile.path
+    )
   }
 
   private func compileModel(at sourceURL: URL) async throws -> URL {
@@ -309,43 +416,12 @@ public actor CoreMLService {
     }
   }
 
-  private func persistentCopy(
-    of sourceURL: URL,
-    in directory: URL,
-    preferredExtension: String
-  ) throws -> URL {
-    let manager = FileManager.default
-    let baseName = Self.sanitizedBaseName(
-      sourceURL.deletingPathExtension().lastPathComponent
-    )
-    let suffix = String(UUID().uuidString.prefix(8)).lowercased()
-    let destination = directory.appendingPathComponent(
-      "\(baseName)-\(suffix).\(preferredExtension)",
-      isDirectory: preferredExtension == "mlpackage" || preferredExtension == "mlmodelc"
-    )
-    try manager.copyItem(at: sourceURL, to: destination)
-    return destination
-  }
-
   private static var computePolicyDescription: String {
     L10n.text(
-      de: "CPU + Apple Neural Engine (angefordert)",
-      en: "CPU + Apple Neural Engine (requested)",
-      fr: "CPU + Apple Neural Engine (demandé)"
+      de: "Alle verfügbaren Core-ML-Recheneinheiten (CPU + GPU + Neural Engine)",
+      en: "All available Core ML compute units (CPU + GPU + Neural Engine)",
+      fr: "Toutes les unités de calcul Core ML disponibles (CPU + GPU + Neural Engine)"
     )
-  }
-
-  private static func sanitizedBaseName(_ value: String) -> String {
-    let allowed = CharacterSet.alphanumerics.union(
-      CharacterSet(charactersIn: "-_")
-    )
-    let scalars = value.unicodeScalars.map {
-      allowed.contains($0) ? Character(String($0)) : "-"
-    }
-    let result = String(scalars).trimmingCharacters(
-      in: CharacterSet(charactersIn: "-")
-    )
-    return result.isEmpty ? "CoreMLModel" : result
   }
 
   private static func featureDescriptions(

@@ -1,64 +1,115 @@
 import CoreML
 import Foundation
 
-/// Executes one Core ML prediction without transferring `MLModel` or
-/// `MLFeatureProvider` instances across the `CoreMLService` actor boundary.
+/// Serial Core ML prediction engine with an in-process model cache.
 ///
-/// Xcode 27 exposes prediction as an `@concurrent` async operation. Loading the
-/// model and creating the feature provider inside the detached task keeps all
-/// non-Sendable Core ML objects in one isolated execution region. Only the
-/// compiled model URL, JSON text and the Sendable result cross boundaries.
-public enum CoreMLPredictionRunner {
-  public static func predict(
+/// Xcode 27 exposes async Core ML entry points with strict Sendability rules,
+/// while `MLModel`, `MLFeatureValue`, and `MLFeatureProvider` remain reference
+/// types that should not be transferred between concurrency regions. AgenTM5N
+/// therefore keeps loading, the cache, feature construction, and synchronous
+/// prediction on one dedicated background queue. Only URLs/JSON input and the
+/// Sendable `CoreMLPredictionResult` cross the async boundary.
+public final class CoreMLPredictionRunner: @unchecked Sendable {
+  public static let shared = CoreMLPredictionRunner()
+
+  private let queue = DispatchQueue(
+    label: "AgenTM5N.CoreMLPredictionRunner",
+    qos: .userInitiated
+  )
+  private var loadedModels: [String: MLModel] = [:]
+
+  public init() {}
+
+  public func predict(
     compiledURL: URL,
     jsonInput: String
   ) async throws -> CoreMLPredictionResult {
-    try await Task.detached(priority: .userInitiated) {
-      guard let data = jsonInput.data(using: .utf8) else {
-        throw CoreMLServiceError.invalidJSON
+    try await withCheckedThrowingContinuation { continuation in
+      queue.async { [self] in
+        do {
+          continuation.resume(
+            returning: try predictOnQueue(
+              compiledURL: compiledURL,
+              jsonInput: jsonInput
+            )
+          )
+        } catch {
+          continuation.resume(throwing: error)
+        }
       }
+    }
+  }
 
-      let values: [String: JSONValue]
-      do {
-        values = try JSONDecoder().decode([String: JSONValue].self, from: data)
-      } catch {
-        throw CoreMLServiceError.invalidJSON
+  public func clearCache() async {
+    await withCheckedContinuation { continuation in
+      queue.async { [self] in
+        loadedModels.removeAll(keepingCapacity: false)
+        continuation.resume()
       }
+    }
+  }
 
-      let configuration = MLModelConfiguration()
-      configuration.computeUnits = .cpuAndNeuralEngine
-      let model = try await MLModel.load(
-        contentsOf: compiledURL,
-        configuration: configuration
+  private func predictOnQueue(
+    compiledURL: URL,
+    jsonInput: String
+  ) throws -> CoreMLPredictionResult {
+    dispatchPrecondition(condition: .onQueue(queue))
+
+    guard let data = jsonInput.data(using: .utf8) else {
+      throw CoreMLServiceError.invalidJSON
+    }
+
+    let values: [String: JSONValue]
+    do {
+      values = try JSONDecoder().decode([String: JSONValue].self, from: data)
+    } catch {
+      throw CoreMLServiceError.invalidJSON
+    }
+
+    let model = try cachedModelOnQueue(at: compiledURL)
+
+    var featureValues: [String: MLFeatureValue] = [:]
+    for (name, description) in model.modelDescription.inputDescriptionsByName {
+      guard let value = values[name] else { continue }
+      featureValues[name] = try Self.makeFeatureValue(
+        value,
+        name: name,
+        description: description
       )
+    }
 
-      var featureValues: [String: MLFeatureValue] = [:]
-      for (name, description) in model.modelDescription.inputDescriptionsByName {
-        guard let value = values[name] else { continue }
-        featureValues[name] = try makeFeatureValue(
-          value,
-          name: name,
-          description: description
-        )
-      }
+    let input = PredictionFeatureProvider(values: featureValues)
+    let startedAt = ContinuousClock().now
+    let output = try model.prediction(from: input)
+    let elapsed = startedAt.duration(to: ContinuousClock().now)
 
-      let input = PredictionFeatureProvider(values: featureValues)
-      let clock = ContinuousClock()
-      let startedAt = clock.now
-      let output = try await model.prediction(from: input)
-      let elapsed = startedAt.duration(to: clock.now)
+    var resultValues: [String: String] = [:]
+    for name in output.featureNames.sorted() {
+      guard let value = output.featureValue(for: name) else { continue }
+      resultValues[name] = Self.describe(value)
+    }
 
-      var resultValues: [String: String] = [:]
-      for name in output.featureNames.sorted() {
-        guard let value = output.featureValue(for: name) else { continue }
-        resultValues[name] = describe(value)
-      }
+    return CoreMLPredictionResult(
+      values: resultValues,
+      durationMilliseconds: Self.milliseconds(from: elapsed)
+    )
+  }
 
-      return CoreMLPredictionResult(
-        values: resultValues,
-        durationMilliseconds: milliseconds(from: elapsed)
-      )
-    }.value
+  private func cachedModelOnQueue(at url: URL) throws -> MLModel {
+    dispatchPrecondition(condition: .onQueue(queue))
+    let key = url.standardizedFileURL.path
+    if let existing = loadedModels[key] {
+      return existing
+    }
+
+    let configuration = MLModelConfiguration()
+    // `.all` keeps CPU, GPU and ANE available. This matters for large
+    // stateful transformer graphs that cannot build an execution plan when
+    // GPU is excluded by `.cpuAndNeuralEngine` on current macOS runtimes.
+    configuration.computeUnits = .all
+    let model = try MLModel(contentsOf: url, configuration: configuration)
+    loadedModels[key] = model
+    return model
   }
 
   private static func makeFeatureValue(
@@ -73,10 +124,68 @@ public enum CoreMLPredictionRunner {
       return MLFeatureValue(int64: Int64(number))
     case (.string, .string(let text)):
       return MLFeatureValue(string: text)
+
+    case (.multiArray, .array):
+      guard let constraint = description.multiArrayConstraint else {
+        throw CoreMLServiceError.inputTypeNotSupported(name: name, type: "MultiArray")
+      }
+      let numbers = try flattenedNumbers(value, inputName: name)
+      let array = try MLMultiArray(
+        shape: constraint.shape,
+        dataType: constraint.dataType
+      )
+      guard numbers.count == array.count else {
+        throw CoreMLServiceError.inputTypeNotSupported(
+          name: name,
+          type: "MultiArray erwartet \(array.count) Werte, erhalten \(numbers.count)"
+        )
+      }
+      for index in 0..<numbers.count {
+        array[index] = NSNumber(value: numbers[index])
+      }
+      return MLFeatureValue(multiArray: array)
+
+    case (.image, .string(let path)):
+      guard let constraint = description.imageConstraint else {
+        throw CoreMLServiceError.inputTypeNotSupported(name: name, type: "Image")
+      }
+      let expanded = NSString(string: path).expandingTildeInPath
+      let url = URL(fileURLWithPath: expanded)
+      guard FileManager.default.fileExists(atPath: url.path) else {
+        throw CoreMLServiceError.inputTypeNotSupported(
+          name: name,
+          type: "Image-Datei nicht gefunden: \(path)"
+        )
+      }
+      return try MLFeatureValue(
+        imageAt: url,
+        constraint: constraint,
+        options: nil
+      )
+
     default:
       throw CoreMLServiceError.inputTypeNotSupported(
         name: name,
         type: localizedFeatureType(description.type)
+      )
+    }
+  }
+
+  private static func flattenedNumbers(
+    _ value: JSONValue,
+    inputName: String
+  ) throws -> [Double] {
+    switch value {
+    case .number(let number):
+      return [number]
+    case .array(let values):
+      return try values.flatMap {
+        try flattenedNumbers($0, inputName: inputName)
+      }
+    default:
+      throw CoreMLServiceError.inputTypeNotSupported(
+        name: inputName,
+        type: "MultiArray benötigt verschachtelte numerische JSON-Arrays"
       )
     }
   }
@@ -116,7 +225,11 @@ public enum CoreMLPredictionRunner {
       return value.stringValue
     case .multiArray:
       guard let array = value.multiArrayValue else { return "MultiArray(nil)" }
-      return "MultiArray shape=\(array.shape) dataType=\(array.dataType.rawValue)"
+      let previewCount = min(array.count, 16)
+      let preview = (0..<previewCount)
+        .map { String(describing: array[$0]) }
+        .joined(separator: ", ")
+      return "MultiArray shape=\(array.shape) dataType=\(array.dataType.rawValue) values=[\(preview)\(array.count > previewCount ? ", …" : "")]"
     case .dictionary:
       return String(describing: value.dictionaryValue)
     case .image:

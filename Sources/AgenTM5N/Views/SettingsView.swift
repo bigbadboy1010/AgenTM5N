@@ -65,7 +65,6 @@ struct SettingsView: View {
           ),
           isOn: $appState.configuration.agentEnabled
         )
-        .disabled(appState.configuration.providerKind == .appleOnDevice)
 
         Picker(
           L10n.text(de: "Berechtigungsmodus", en: "Permission Mode", fr: "Mode d’autorisation"),
@@ -108,9 +107,9 @@ struct SettingsView: View {
         if appState.configuration.permissionMode == .fullAccess {
           Label(
             L10n.text(
-              de: "Vollzugriff hebt die Arbeitsbereichsbegrenzung auf. Alle Aktionen bleiben im Protokoll sichtbar.",
-              en: "Full Access removes the workspace boundary. All actions remain visible in the audit.",
-              fr: "L’accès complet supprime la limite de l’espace de travail. Toutes les actions restent visibles dans l’audit."
+              de: "Vollzugriff hebt die normale Arbeitsbereichs- und Freigabegrenze auf. Capability-Sandboxes, Audit und Secret-Schutz bleiben aktiv.",
+              en: "Full Access removes the normal workspace and approval boundary. Capability sandboxes, audit, and secret protections remain active.",
+              fr: "L’accès complet supprime les limites normales d’espace de travail et d’autorisation. Les sandboxes de capacités, l’audit et la protection des secrets restent actifs."
             ),
             systemImage: "exclamationmark.triangle.fill"
           )
@@ -120,9 +119,9 @@ struct SettingsView: View {
         if appState.configuration.providerKind == .appleOnDevice {
           Text(
             L10n.text(
-              de: "Apple lokal ist derzeit ein reiner Chat-Anbieter. Strukturierte Werkzeugaufrufe verwenden Ollama.",
-              en: "Apple on-device is currently a chat-only provider. Structured tool calls use Ollama.",
-              fr: "Apple local est actuellement un fournisseur de chat uniquement. Les appels d’outils structurés utilisent Ollama."
+              de: "Apple lokal verwendet bei aktiviertem Agent-Modus den gemeinsamen AgenTM5N-Tool-Router. SSH, macOS-Werkzeuge und weitere freigegebene Tool-Pakete laufen durch dieselbe Berechtigungs- und Audit-Schicht wie Ollama.",
+              en: "With Agent mode enabled, Apple on-device uses the shared AgenTM5N tool router. SSH, macOS tools, and other enabled tool packs use the same permission and audit layer as Ollama.",
+              fr: "Lorsque le mode Agent est activé, Apple local utilise le routeur d’outils AgenTM5N partagé. SSH, les outils macOS et les autres packs activés utilisent la même couche d’autorisation et d’audit qu’Ollama."
             )
           )
           .font(.caption)
@@ -210,21 +209,21 @@ struct SettingsView: View {
     switch mode {
     case .confirm:
       return L10n.text(
-        de: "Lesezugriffe laufen direkt. Ändernde und externe Aktionen benötigen eine Freigabe.",
-        en: "Read actions run directly. Mutating and external actions require approval.",
-        fr: "Les lectures s’exécutent directement. Les actions de modification et externes nécessitent une autorisation."
+        de: "Lesezugriffe laufen direkt. Schreib-, Ausführungs- und andere verändernde Aktionen benötigen eine Freigabe.",
+        en: "Read actions run directly. Write, execution, and other mutating actions require approval.",
+        fr: "Les lectures s’exécutent directement. Les écritures, exécutions et autres actions de modification nécessitent une autorisation."
       )
     case .workspaceTrusted:
       return L10n.text(
-        de: "Lokale Werkzeuge dürfen innerhalb des Arbeitsbereichs automatisch arbeiten. Remote-Aktionen bleiben freigabepflichtig.",
-        en: "Local tools may operate automatically inside the workspace. Remote actions still require approval.",
-        fr: "Les outils locaux peuvent fonctionner automatiquement dans l’espace de travail. Les actions distantes nécessitent toujours une autorisation."
+        de: "Normale, begrenzte Workspace-Dateioperationen dürfen automatisch laufen. Shell/Terminal, Remote/Browser/HTTP, Shortcuts/Toolsmith, persönliche macOS-Daten sowie System-, Agenten- und Workflow-Mutationen bleiben freigabepflichtig.",
+        en: "Normal bounded workspace file operations may run automatically. Shell/terminal, remote/browser/HTTP, Shortcuts/Toolsmith, personal macOS data, and system/agent/workflow mutations still require approval.",
+        fr: "Les opérations de fichiers normales et limitées à l’espace de travail peuvent s’exécuter automatiquement. Le shell/terminal, les actions distantes/navigateur/HTTP, Raccourcis/Toolsmith, les données macOS personnelles ainsi que les mutations système/agent/workflow nécessitent toujours une autorisation."
       )
     case .fullAccess:
       return L10n.text(
-        de: "Lokale und Remote-Werkzeuge dürfen automatisch arbeiten. Jede Aktion bleibt protokolliert.",
-        en: "Local and remote tools may run automatically. Every action remains audited.",
-        fr: "Les outils locaux et distants peuvent s’exécuter automatiquement. Chaque action reste auditée."
+        de: "Lokale und Remote-Werkzeuge dürfen automatisch arbeiten und unterstützte Dateitools dürfen außerhalb des Workspace zugreifen. Explizite Agenten-Sandboxes, Audit und Secret-Schutz bleiben aktiv.",
+        en: "Local and remote tools may run automatically and supported file tools may access paths outside the workspace. Explicit agent sandboxes, audit, and secret protections remain active.",
+        fr: "Les outils locaux et distants peuvent s’exécuter automatiquement et les outils de fichiers pris en charge peuvent accéder hors de l’espace de travail. Les sandboxes explicites des agents, l’audit et la protection des secrets restent actifs."
       )
     }
   }

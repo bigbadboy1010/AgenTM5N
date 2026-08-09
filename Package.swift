@@ -33,13 +33,22 @@ let package = Package(
       path: "Sources/AgenTM5N",
       linkerSettings: [
         .linkedFramework("AppKit"),
+        .linkedFramework("Contacts"),
+        .linkedFramework("CoreGraphics"),
         .linkedFramework("CoreML"),
+        .linkedFramework("CoreText"),
         .linkedFramework("CryptoKit"),
+        .linkedFramework("EventKit"),
         .linkedFramework("FoundationModels"),
         .linkedFramework("OSLog"),
         .linkedFramework("Security"),
         .linkedFramework("Vision"),
       ]
+    ),
+    .testTarget(
+      name: "AgenTM5NTests",
+      dependencies: ["AgenTM5N"],
+      path: "Tests/AgenTM5NTests"
     ),
   ]
 )

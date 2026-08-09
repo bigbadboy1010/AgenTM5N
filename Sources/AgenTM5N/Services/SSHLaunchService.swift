@@ -4,6 +4,7 @@ public enum SSHLaunchServiceError: LocalizedError {
   case missingAuthenticationSecret
   case invalidAuthenticationSecret(SecretKind)
   case emptyRemoteCommand
+  case emptyTransferPath
 
   public var errorDescription: String? {
     switch self {
@@ -13,6 +14,8 @@ public enum SSHLaunchServiceError: LocalizedError {
       "Der ausgewählte Secret-Typ \(kind.displayName) passt nicht zur SSH-Authentifizierung."
     case .emptyRemoteCommand:
       "Für die strukturierte SSH-Ausführung wurde kein Remote-Kommando angegeben."
+    case .emptyTransferPath:
+      "Für den SSH-Dateitransfer fehlen lokale oder entfernte Pfadangaben."
     }
   }
 }
@@ -52,6 +55,107 @@ public struct SSHLaunchService: Sendable {
       remoteCommand: trimmedCommand,
       interactive: false
     )
+  }
+
+  public func makeTransferLaunch(
+    host: SSHHost,
+    authenticationSecret: VaultSecret?,
+    passphraseSecret: VaultSecret?,
+    localPath: String,
+    remotePath: String,
+    upload: Bool
+  ) throws -> TerminalLaunch {
+    let local = localPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    let remote = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !local.isEmpty, !remote.isEmpty else {
+      throw SSHLaunchServiceError.emptyTransferPath
+    }
+
+    let remoteTarget = "\(host.username)@\(host.hostname):\(remote)"
+    var arguments = [
+      "-P", String(host.port),
+      "-o", "ConnectTimeout=20",
+      "-o", "ConnectionAttempts=1",
+      "-o", "ServerAliveInterval=30",
+      "-o", "ServerAliveCountMax=3",
+      "-o", "StrictHostKeyChecking=accept-new",
+    ]
+
+    switch host.authenticationKind {
+    case .systemDefault:
+      return TerminalLaunch(
+        title: host.name,
+        initialCommand: scpCommand(
+          environment: [:],
+          arguments: arguments,
+          localPath: local,
+          remoteTarget: remoteTarget,
+          upload: upload
+        )
+      )
+
+    case .password:
+      guard let authenticationSecret else {
+        throw SSHLaunchServiceError.missingAuthenticationSecret
+      }
+      guard authenticationSecret.kind == .password else {
+        throw SSHLaunchServiceError.invalidAuthenticationSecret(authenticationSecret.kind)
+      }
+      arguments.append(contentsOf: [
+        "-o", "PreferredAuthentications=password,keyboard-interactive",
+        "-o", "PubkeyAuthentication=no",
+        "-o", "NumberOfPasswordPrompts=1",
+      ])
+      return try makeAskPassTransferLaunch(
+        host: host,
+        arguments: arguments,
+        localPath: local,
+        remoteTarget: remoteTarget,
+        upload: upload,
+        secretValue: authenticationSecret.value,
+        privateKey: nil
+      )
+
+    case .privateKey:
+      guard let authenticationSecret else {
+        throw SSHLaunchServiceError.missingAuthenticationSecret
+      }
+      guard authenticationSecret.kind == .sshPrivateKey else {
+        throw SSHLaunchServiceError.invalidAuthenticationSecret(authenticationSecret.kind)
+      }
+      let directory = try makeSecureRuntimeDirectory()
+      let keyFile = directory.appendingPathComponent("identity")
+      try writeSecure(authenticationSecret.value, to: keyFile, permissions: 0o600)
+      arguments.append(contentsOf: [
+        "-i", keyFile.path,
+        "-o", "IdentitiesOnly=yes",
+      ])
+
+      guard let passphrase = passphraseSecret?.value, !passphrase.isEmpty else {
+        return TerminalLaunch(
+          title: host.name,
+          initialCommand: scpCommand(
+            environment: [:],
+            arguments: arguments,
+            localPath: local,
+            remoteTarget: remoteTarget,
+            upload: upload
+          ),
+          cleanupPaths: [directory]
+        )
+      }
+
+      return try makeAskPassTransferLaunch(
+        host: host,
+        arguments: arguments,
+        localPath: local,
+        remoteTarget: remoteTarget,
+        upload: upload,
+        secretValue: passphrase,
+        privateKey: keyFile,
+        existingDirectory: directory
+      )
+    }
   }
 
   private func makeLaunch(
@@ -188,6 +292,45 @@ public struct SSHLaunchService: Sendable {
     )
   }
 
+  private func makeAskPassTransferLaunch(
+    host: SSHHost,
+    arguments: [String],
+    localPath: String,
+    remoteTarget: String,
+    upload: Bool,
+    secretValue: String,
+    privateKey: URL?,
+    existingDirectory: URL? = nil
+  ) throws -> TerminalLaunch {
+    let directory = try existingDirectory ?? makeSecureRuntimeDirectory()
+    let secretFile = directory.appendingPathComponent("askpass-secret.txt")
+    let helperFile = directory.appendingPathComponent("askpass.zsh")
+    try writeSecure(secretValue, to: secretFile, permissions: 0o600)
+    try writeSecure(Self.askPassHelper, to: helperFile, permissions: 0o700)
+
+    var environment = [
+      "AGENTM5N_ASKPASS_SECRET": secretFile.path,
+      "SSH_ASKPASS": helperFile.path,
+      "SSH_ASKPASS_REQUIRE": "force",
+      "DISPLAY": ":0",
+    ]
+    if let privateKey {
+      environment["AGENTM5N_PRIVATE_KEY"] = privateKey.path
+    }
+
+    return TerminalLaunch(
+      title: host.name,
+      initialCommand: scpCommand(
+        environment: environment,
+        arguments: arguments,
+        localPath: localPath,
+        remoteTarget: remoteTarget,
+        upload: upload
+      ),
+      cleanupPaths: [directory]
+    )
+  }
+
   private func sshCommand(
     environment: [String: String],
     arguments: [String],
@@ -204,6 +347,28 @@ public struct SSHLaunchService: Sendable {
     let trimmedRemoteCommand = remoteCommand.trimmingCharacters(in: .whitespacesAndNewlines)
     if !trimmedRemoteCommand.isEmpty {
       parts.append(ShellEscaping.singleQuoted(trimmedRemoteCommand))
+    }
+    return parts.joined(separator: " ")
+  }
+
+  private func scpCommand(
+    environment: [String: String],
+    arguments: [String],
+    localPath: String,
+    remoteTarget: String,
+    upload: Bool
+  ) -> String {
+    var parts: [String] = environment.keys.sorted().map { key in
+      "\(key)=\(ShellEscaping.singleQuoted(environment[key] ?? ""))"
+    }
+    parts.append("/usr/bin/scp")
+    parts.append(contentsOf: arguments.map(ShellEscaping.singleQuoted))
+    if upload {
+      parts.append(ShellEscaping.singleQuoted(localPath))
+      parts.append(ShellEscaping.singleQuoted(remoteTarget))
+    } else {
+      parts.append(ShellEscaping.singleQuoted(remoteTarget))
+      parts.append(ShellEscaping.singleQuoted(localPath))
     }
     return parts.joined(separator: " ")
   }
