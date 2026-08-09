@@ -2,6 +2,73 @@
 
 All notable changes to AgenTM5N are documented in this file.
 
+## [1.1.2] - 2026-08-09 — Build 28 release candidate
+
+### Added
+
+- provider-neutral central tool catalog for workspace, terminal, SSH, Edge, browser,
+  Git, macOS personal data, secrets, HTTP, system, Reminders, Core ML, memory,
+  knowledge, attachments, documents, persistent agents, workflows and updates.
+- Secret Broker with model-invisible `secret_ref` resolution and optional exact
+  host binding for Vault secrets.
+- persistent specialist capability sandboxes with monotonic nested delegation.
+- provider-neutral `browser_batch` multi-action execution.
+- Toolsmith persistent zsh/Python runtime tools with enable/disable controls.
+- workflow persistence, bounded execution and composite approval summaries.
+- local document generation for DOCX, PDF, XLSX and PPTX.
+- tool telemetry, bounded read-result cache and activity UI.
+- transactional, content-addressed Core ML managed storage using SHA-256.
+- regression coverage for capability routing, Workspace Trusted policy, Secret
+  host binding, Toolsmith state handling and Core ML managed storage.
+
+### Security
+
+- Workspace Trusted now keeps shell/terminal, SSH/Edge, browser mutations,
+  HTTP/API, Shortcuts, Toolsmith, personal-data mutations, visible system
+  mutations, persistent agent/workflow mutations, delegation and workflow runs
+  behind explicit approval.
+- AgentToolRegistry is the single risk authority used by the central AppState
+  execution router.
+- nested specialists receive only the intersection of parent and child
+  capability scopes; a child cannot regain removed capabilities.
+- Foundation Models tool execution is serialized before the single visible
+  approval path to prevent concurrent framework tool calls from colliding on a
+  pending approval.
+- a non-empty Vault secret `host` is enforced as an exact normalized HTTP
+  destination binding before secret injection.
+- secret-bearing redirects remain on the original host and secure/loopback
+  transport; direct model Authorization/Cookie injection remains blocked.
+- disabled Toolsmith records fail closed on replacement through the central
+  router until explicitly re-enabled.
+- replacing an existing disabled workflow preserves its disabled state.
+- empty specialist capability lists are displayed as an explicit no-tools
+  sandbox instead of full tool parity.
+
+### Core ML
+
+- compute units use `.all`, leaving CPU, GPU and Apple Neural Engine available
+  while Core ML chooses operator placement.
+- large registered models are restored lazily without building their execution
+  plan during application bootstrap.
+- prediction models are cached in-process after their first runtime load.
+- imported model contents are SHA-256-addressed so identical models converge on
+  the same managed artifact.
+- imports are transactional: compiled artifacts are validated before registry
+  commit and newly created artifacts are removed on failure.
+- bootstrap removes unreferenced managed Core ML top-level artifacts.
+- Neural Engine UI distinguishes a persistent registered model from runtime
+  execution state and documents scalar, MultiArray and image input support.
+
+### Release
+
+- default candidate version is 1.1.2 Build 28 across application build, release
+  checks, DMG verification and notarization scripts.
+- README and VALIDATION now describe the Build 28 security model and final
+  runtime matrix.
+- Build 28 must pass a fresh target-Mac build/test run and full runtime matrix
+  before notarization; the prior Build 27 target-Mac build passed its then-current
+  8-test security suite.
+
 ## [1.0.1] - 2026-08-08
 
 ### Added
@@ -145,26 +212,19 @@ All notable changes to AgenTM5N are documented in this file.
 - `search_text` searches UTF-8 files and returns relative path, line, column and
   a bounded preview without requiring external tools such as ripgrep.
 - `apply_patch` replaces exactly one known text block and fails safely when the
-  old block is missing or ambiguous.
-- `git_branches` reports the current branch and local branch inventory.
-- `git_checkout` switches or creates local branches only when the working tree
-  is clean and never forces or discards changes.
-- `git_commit` stages only explicitly named workspace paths, rejects existing
-  staged changes, creates a local commit and never pushes.
-- Equivalent local tool calls are limited to two executions within a 90-second
-  window to stop accidental agent loops.
+  old text is missing or ambiguous.
+- `git_branches` reports the current branch and local Git branches for the configured workspace.
+- `git_checkout` switches or creates a new branch. The operation is blocked when the working tree is not clean and never forces or discards changes.
+- `git_commit` stages only the explicitly listed workspace paths and creates a local Git commit. Existing staged changes cause the operation to fail. This tool never pushes.
+- Equivalent local tool calls are limited to two executions within a 90-second window to stop accidental agent loops.
 
 ### Security
 
-- Search and glob operations skip symlinks and common generated or sensitive
-  directories such as `.git`, `.build`, `.swiftpm`, `dist` and `node_modules`.
+- Search and glob operations skip symlinks and common generated or sensitive directories such as `.git`, `.build`, `.swiftpm`, `dist` and `node_modules`.
 - Search output is capped at 200 matches and glob output at 500 paths.
-- Patch and write operations retain the existing workspace and file-size
-  boundaries.
-- Git paths are normalized against the active workspace and `git_commit`
-  rejects the broad `.` path.
-- Git checkout is blocked on dirty worktrees; Git commit is blocked when staged
-  changes already exist.
+- Patch and write operations retain the existing workspace and file-size boundaries.
+- Git paths are normalized against the active workspace and `git_commit` rejects the broad `.` path.
+- Git checkout is blocked on dirty worktrees; Git commit is blocked when staged changes already exist.
 
 ### Changed
 
