@@ -1,6 +1,6 @@
 import Foundation
 
-public enum AgentToolCapability: String, Codable, CaseIterable, Sendable {
+public enum AgentToolCapability: String, Codable, CaseIterable, Hashable, Sendable {
   case workspace
   case terminal
   case ssh
