@@ -206,6 +206,7 @@ public actor AppleFoundationModelsProvider {
 
   private enum FocusedToolPack {
     case edge
+    case browser
     case ssh(SSHMode)
     case http
     case system
@@ -237,6 +238,8 @@ public actor AppleFoundationModelsProvider {
     switch pack {
     case .edge:
       AppleRoutedEdgeTools.makeTools()
+    case .browser:
+      AppleRoutedBrowserTools.makeTools()
     case .ssh(let mode):
       switch mode {
       case .list: AppleRoutedSSHTools.makeListHostsTools()
@@ -301,6 +304,17 @@ public actor AppleFoundationModelsProvider {
       "pdf generieren", "generiertes dokument",
     ]) {
       return .init(macNative: false, persistentAgents: false, focused: .documents)
+    }
+
+    if containsAny(text, [
+      "microsoft edge", "edge browser", "edge-browser", "im browser", "in meinem browser",
+      "browser öffnen", "browser oeffnen", "browser steuern", "browser automatisieren",
+      "browser automation", "webseite öffnen", "webseite oeffnen", "website öffnen",
+      "website oeffnen", "im edge", "in edge", "edge öffnen", "edge oeffnen",
+      "klicke im browser", "im browser klicken", "formular im browser", "browser tab",
+      "browser-tab", "browse website", "browse webseite",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .browser)
     }
 
     if containsAny(text, [
@@ -527,6 +541,7 @@ public actor AppleFoundationModelsProvider {
   ) -> AgentToolCapability? {
     switch pack {
     case .edge: .edge
+    case .browser: .browser
     case .ssh: .ssh
     case .http: .http
     case .system, .clipboardRead, .macUtilities: .system
@@ -557,6 +572,7 @@ public actor AppleFoundationModelsProvider {
     if case .documents = focused { return true }
     if case .clipboardRead = focused { return true }
     if case .edge = focused { return true }
+    if case .browser = focused { return true }
     return false
   }
 
@@ -577,6 +593,11 @@ public actor AppleFoundationModelsProvider {
       lines.append("This is AgenTM5N Edge Control mode. Edge access uses the existing saved SSH profiles and encrypted Vault credentials; do not ask the user for SSH passwords or keys when a saved profile exists.")
       lines.append("Use edge_list_nodes to discover saved Edge-capable hosts, edge_list_directory and edge_read_file for bounded remote reads, edge_write_file for explicit atomic text writes, and edge_control for status, commands, Docker containers, systemd services, and logs.")
       lines.append("For writes, inspect important targets first. edge_write_file creates a backup by default and preserves mode/ownership when possible. Never invent Edge hostnames, paths, container names, service names, or file contents.")
+    case .browser:
+      lines.append("This is Microsoft Edge Browser Control mode. AgenTM5N controls a visible persistent Microsoft Edge automation profile through the local DevTools Protocol.")
+      lines.append("Use browser_open for navigation, browser_read to inspect the actual page and obtain temporary element refs, and browser_action to click, fill, select, check, press keys, scroll, wait, switch/close tabs, or navigate back/forward/reload.")
+      lines.append("When page structure is not already known from a fresh browser_read result, read the page before clicking or filling. Re-read after navigation or major DOM changes because temporary refs may change.")
+      lines.append("Never claim that browser access is unavailable while these tools are present. Never request or expose cookies, localStorage, sessionStorage, authentication tokens, or saved browser passwords. Do not invent page text or interaction results.")
     case .ssh(let mode):
       lines.append("AgenTM5N resolves SSH credentials internally from saved profiles and the encrypted Vault.")
       if mode == .run {
