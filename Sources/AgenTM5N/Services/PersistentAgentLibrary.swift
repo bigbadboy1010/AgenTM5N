@@ -155,8 +155,22 @@ public final class PersistentAgentLibrary: ObservableObject {
     guard !matches.isEmpty else {
       throw PersistentAgentLibraryError.notFound(query)
     }
-    guard matches.count == 1, let profile = matches.first else {
+    guard matches.count == 1, var profile = matches.first else {
       throw PersistentAgentLibraryError.ambiguous(query)
+    }
+
+    // A specialist resolving another specialist is never allowed to gain a
+    // capability that the current specialist does not already possess. This
+    // makes nested Apple and Ollama delegation monotonic even before provider
+    // schemas or the native execution bridge perform their own checks.
+    if let parent = AgentCapabilityExecutionContext.allowedCapabilities {
+      let effective = AgentCapabilityExecutionContext.delegatedScope(
+        parent: parent,
+        profile: profile.allowedCapabilities.map(Set.init)
+      ) ?? parent
+      profile.allowedCapabilities = AgentToolCapability.allCases.filter {
+        effective.contains($0)
+      }
     }
     return profile
   }
