@@ -4,6 +4,7 @@ import FoundationModels
 public enum AppleFoundationModelsProviderError: LocalizedError {
   case unavailable(String)
   case toolsDisabled
+  case capabilityDenied(String)
   case generationFailure(String)
 
   public var errorDescription: String? {
@@ -19,6 +20,12 @@ public enum AppleFoundationModelsProviderError: LocalizedError {
         de: "Die AgenTM5N-Werkzeuge sind deaktiviert. Aktiviere den Agent-Modus in den Einstellungen und versuche die Anfrage erneut.",
         en: "AgenTM5N tools are disabled. Enable Agent mode in Settings and retry the request.",
         fr: "Les outils AgenTM5N sont désactivés. Activez le mode Agent dans les réglages puis réessayez."
+      )
+    case .capabilityDenied(let capability):
+      return L10n.text(
+        de: "Der gespeicherte Agent ist für die Tool-Capability \(capability) eingeschränkt.",
+        en: "The saved agent is restricted from tool capability \(capability).",
+        fr: "L’agent enregistré est limité pour la capacité d’outil \(capability)."
       )
     case .generationFailure(let details):
       return L10n.text(
@@ -62,9 +69,19 @@ public actor AppleFoundationModelsProvider {
 
     let temporalContext = AgentRuntimeContext.currentTemporalContext()
     let selection = Self.toolSelection(for: messages)
+    let capabilityScope = Self.capabilityScope(from: configuration.systemPrompt)
 
     if selection.focused != nil, !configuration.agentEnabled {
       throw AppleFoundationModelsProviderError.toolsDisabled
+    }
+    if let focused = selection.focused,
+      let requiredCapability = Self.capability(for: focused),
+      let capabilityScope,
+      !capabilityScope.contains(requiredCapability)
+    {
+      throw AppleFoundationModelsProviderError.capabilityDenied(
+        requiredCapability.rawValue
+      )
     }
 
     let instructions: String
@@ -93,10 +110,14 @@ public actor AppleFoundationModelsProvider {
     } else {
       tools.append(SystemCurrentDateTimeTool())
       if configuration.agentEnabled {
-        if selection.macNative {
+        if selection.macNative,
+          Self.isAllowed(.macPersonal, in: capabilityScope)
+        {
           tools.append(contentsOf: AppleRoutedMacNativeTools.makeTools())
         }
-        if selection.persistentAgents {
+        if selection.persistentAgents,
+          Self.isAllowed(.agents, in: capabilityScope)
+        {
           tools.append(contentsOf: AppleRoutedPersistentAgentTools.makeTools())
         }
       }
@@ -273,6 +294,16 @@ public actor AppleFoundationModelsProvider {
       .lowercased() ?? ""
 
     if containsAny(text, [
+      "document studio", "dokument erstellen", "dokument generieren", "dokument erzeugen",
+      "datei erstellen", "datei generieren", "datei erzeugen", "zum download",
+      "docx", "xlsx", "pptx", "powerpoint", "word dokument", "word-datei", "word datei",
+      "excel dokument", "excel-datei", "excel datei", "als pdf", "pdf erstellen",
+      "pdf generieren", "generiertes dokument",
+    ]) {
+      return .init(macNative: false, persistentAgents: false, focused: .documents)
+    }
+
+    if containsAny(text, [
       "/data/edge", " edge ", "edge-", "edge host", "edge-host", "edge node",
       "edge-node", "edge system", "edge-system", "edge umgebung", "edge-umgebung",
       "edge server", "edge-server", "edge lesen", "edge schreiben", "edge steuern",
@@ -337,16 +368,6 @@ public actor AppleFoundationModelsProvider {
       "angehängte datei", "angehaengte datei", "beigefügte datei", "beigefuegte datei",
     ]) {
       return .init(macNative: false, persistentAgents: false, focused: .attachments)
-    }
-
-    if containsAny(text, [
-      "document studio", "dokument erstellen", "dokument generieren", "dokument erzeugen",
-      "datei erstellen", "datei generieren", "datei erzeugen", "zum download", "herunterladen",
-      "docx", "xlsx", "pptx", "powerpoint", "word dokument", "word-datei", "word datei",
-      "excel dokument", "excel-datei", "excel datei", "als pdf", "pdf erstellen",
-      "pdf generieren", "generiertes dokument",
-    ]) {
-      return .init(macNative: false, persistentAgents: false, focused: .documents)
     }
 
     if containsAny(text, [
@@ -472,6 +493,65 @@ public actor AppleFoundationModelsProvider {
     return runTerms.contains(where: { text.contains($0) }) ? .run : .list
   }
 
+  private static func capabilityScope(
+    from systemPrompt: String
+  ) -> Set<AgentToolCapability>? {
+    let marker = "- Tool capabilities:"
+    guard let line = systemPrompt
+      .split(whereSeparator: \.isNewline)
+      .map({ String($0).trimmingCharacters(in: .whitespaces) })
+      .last(where: { $0.hasPrefix(marker) })
+    else {
+      return nil
+    }
+
+    let raw = String(line.dropFirst(marker.count))
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if raw.caseInsensitiveCompare("all") == .orderedSame || raw.isEmpty {
+      return nil
+    }
+
+    let values = raw
+      .split(separator: ",")
+      .compactMap { piece -> AgentToolCapability? in
+        let value = piece.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AgentToolCapability.allCases.first {
+          $0.rawValue.caseInsensitiveCompare(value) == .orderedSame
+        }
+      }
+    return Set(values)
+  }
+
+  private static func capability(
+    for pack: FocusedToolPack
+  ) -> AgentToolCapability? {
+    switch pack {
+    case .edge: .edge
+    case .ssh: .ssh
+    case .http: .http
+    case .system, .clipboardRead, .macUtilities: .system
+    case .reminders: .reminders
+    case .delegation: .agents
+    case .workflows: .workflows
+    case .updates: .updates
+    case .git: .git
+    case .workspaceRead, .workspaceEdit: .workspace
+    case .localCommand: .terminal
+    case .memory, .context: .memory
+    case .knowledge: .knowledge
+    case .attachments: .attachments
+    case .documents: .documents
+    case .coreML: .coreML
+    }
+  }
+
+  private static func isAllowed(
+    _ capability: AgentToolCapability,
+    in scope: Set<AgentToolCapability>?
+  ) -> Bool {
+    scope?.contains(capability) ?? true
+  }
+
   private static func requiresToolCall(_ selection: ToolSelection) -> Bool {
     guard let focused = selection.focused else { return false }
     if case .documents = focused { return true }
@@ -495,9 +575,8 @@ public actor AppleFoundationModelsProvider {
     switch pack {
     case .edge:
       lines.append("This is AgenTM5N Edge Control mode. Edge access uses the existing saved SSH profiles and encrypted Vault credentials; do not ask the user for SSH passwords or keys when a saved profile exists.")
-      lines.append("Use ssh_run or ssh_run_batch to inspect and control Edge hosts, including /data/edge, Docker containers, systemd services, filesystem state, configuration, and diagnostics. Use ssh_tail_log for logs and ssh_upload/ssh_download for file transfer.")
-      lines.append("For remote file reads, use bounded commands such as sed, head, tail, cat only when the expected file is reasonably small. For remote file writes, inspect the target first, preserve ownership/permissions when relevant, create a backup before replacing important configuration, and then write through an explicit shell command or upload a prepared workspace file.")
-      lines.append("Never invent Edge hostnames, paths, container names, service names, or file contents. Derive them from saved SSH profiles and actual tool output.")
+      lines.append("Use edge_list_nodes to discover saved Edge-capable hosts, edge_list_directory and edge_read_file for bounded remote reads, edge_write_file for explicit atomic text writes, and edge_control for status, commands, Docker containers, systemd services, and logs.")
+      lines.append("For writes, inspect important targets first. edge_write_file creates a backup by default and preserves mode/ownership when possible. Never invent Edge hostnames, paths, container names, service names, or file contents.")
     case .ssh(let mode):
       lines.append("AgenTM5N resolves SSH credentials internally from saved profiles and the encrypted Vault.")
       if mode == .run {
