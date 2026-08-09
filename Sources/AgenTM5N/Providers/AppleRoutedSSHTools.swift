@@ -62,8 +62,8 @@ private struct RoutedSSHListHostsTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Use all")
-    var query: String
+    @Guide(description: "Optional. Omit this value or use all.")
+    var query: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -81,7 +81,7 @@ private struct RoutedSSHRunTool: Tool {
     @Guide(description: "Saved SSH profile name, hostname, or UUID")
     var host: String
 
-    @Guide(description: "Complete remote shell command string. When the user requested multiple commands, include every command in this single string, separated by semicolons or newlines, for example: whoami; hostname; uname -a")
+    @Guide(description: "Complete remote shell command string. When the user requested multiple commands, include every command in this single string, separated by semicolons or newlines.")
     var command: String
   }
 
@@ -107,13 +107,15 @@ private struct RoutedSSHOpenTerminalTool: Tool {
     @Guide(description: "Saved SSH profile name, hostname, or UUID")
     var host: String
 
-    @Guide(description: "Initial remote command, or empty for an interactive shell")
-    var command: String
+    @Guide(description: "Optional initial remote command. Omit for an interactive shell.")
+    var command: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
     var values: [String: JSONValue] = ["host": .string(arguments.host)]
-    if !arguments.command.isEmpty { values["command"] = .string(arguments.command) }
+    if let command = normalizedSSH(arguments.command, preserveWhitespace: true) {
+      values["command"] = .string(command)
+    }
     return await routeSSH(bridge: bridge, name: name, arguments: values)
   }
 }
@@ -175,21 +177,25 @@ private struct RoutedSSHTailLogTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
-    @Guide(description: "Remote log path") var path: String
-    @Guide(description: "Number of lines from 1 to 2000") var lines: Int
+    @Guide(description: "Saved SSH profile name, hostname, or UUID")
+    var host: String
+
+    @Guide(description: "Remote log path")
+    var path: String
+
+    @Guide(description: "Optional number of lines from 1 to 2000. Defaults to 200.")
+    var lines: Int? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await routeSSH(
-      bridge: bridge,
-      name: name,
-      arguments: [
-        "host": .string(arguments.host),
-        "path": .string(arguments.path),
-        "lines": .number(Double(arguments.lines)),
-      ]
-    )
+    var values: [String: JSONValue] = [
+      "host": .string(arguments.host),
+      "path": .string(arguments.path),
+    ]
+    if let lines = arguments.lines {
+      values["lines"] = .number(Double(lines))
+    }
+    return await routeSSH(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -200,8 +206,11 @@ private struct RoutedSSHBatchTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
-    @Guide(description: "Ordered remote commands, one command per line") var commands: String
+    @Guide(description: "Saved SSH profile name, hostname, or UUID")
+    var host: String
+
+    @Guide(description: "Ordered remote commands, one command per line")
+    var commands: String
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -218,6 +227,16 @@ private struct RoutedSSHBatchTool: Tool {
       ]
     )
   }
+}
+
+private func normalizedSSH(
+  _ value: String?,
+  preserveWhitespace: Bool = false
+) -> String? {
+  guard let value else { return nil }
+  if preserveWhitespace { return value.isEmpty ? nil : value }
+  let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  return normalized.isEmpty ? nil : normalized
 }
 
 private func routeSSH(
