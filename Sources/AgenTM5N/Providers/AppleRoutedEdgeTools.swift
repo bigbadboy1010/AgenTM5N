@@ -26,7 +26,8 @@ private struct AppleEdgeListNodesTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Use all") var query: String
+    @Guide(description: "Optional. Omit this value or use all.")
+    var query: String? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
@@ -41,21 +42,23 @@ private struct AppleEdgeListDirectoryTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
-    @Guide(description: "Absolute remote directory path") var path: String
-    @Guide(description: "Depth from 1 to 4") var depth: Int
+    @Guide(description: "Saved SSH profile name, hostname, or UUID")
+    var host: String
+
+    @Guide(description: "Absolute remote directory path")
+    var path: String
+
+    @Guide(description: "Optional depth from 1 to 4. Defaults to 2.")
+    var depth: Int? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await routeEdge(
-      bridge: bridge,
-      name: name,
-      arguments: [
-        "host": .string(arguments.host),
-        "path": .string(arguments.path),
-        "depth": .number(Double(arguments.depth)),
-      ]
-    )
+    var values: [String: JSONValue] = [
+      "host": .string(arguments.host),
+      "path": .string(arguments.path),
+    ]
+    if let depth = arguments.depth { values["depth"] = .number(Double(depth)) }
+    return await routeEdge(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -66,21 +69,25 @@ private struct AppleEdgeReadFileTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
-    @Guide(description: "Absolute remote file path") var path: String
-    @Guide(description: "Maximum bytes from 1 to 524288") var maxBytes: Int
+    @Guide(description: "Saved SSH profile name, hostname, or UUID")
+    var host: String
+
+    @Guide(description: "Absolute remote file path")
+    var path: String
+
+    @Guide(description: "Optional maximum bytes from 1 to 524288. Defaults to 65536.")
+    var maxBytes: Int? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await routeEdge(
-      bridge: bridge,
-      name: name,
-      arguments: [
-        "host": .string(arguments.host),
-        "path": .string(arguments.path),
-        "max_bytes": .number(Double(arguments.maxBytes)),
-      ]
-    )
+    var values: [String: JSONValue] = [
+      "host": .string(arguments.host),
+      "path": .string(arguments.path),
+    ]
+    if let maxBytes = arguments.maxBytes {
+      values["max_bytes"] = .number(Double(maxBytes))
+    }
+    return await routeEdge(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -91,25 +98,35 @@ private struct AppleEdgeWriteFileTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
-    @Guide(description: "Absolute remote destination path") var path: String
-    @Guide(description: "Complete UTF-8 file content, maximum 524288 bytes") var content: String
-    @Guide(description: "Create missing parent directories") var createParent: Bool
-    @Guide(description: "Back up an existing target before replacement") var backup: Bool
+    @Guide(description: "Saved SSH profile name, hostname, or UUID")
+    var host: String
+
+    @Guide(description: "Absolute remote destination path")
+    var path: String
+
+    @Guide(description: "Complete UTF-8 file content, maximum 524288 bytes")
+    var content: String
+
+    @Guide(description: "Optional. Create missing parent directories. Defaults to false.")
+    var createParent: Bool? = nil
+
+    @Guide(description: "Optional. Back up an existing target before replacement. Defaults to true.")
+    var backup: Bool? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
-    await routeEdge(
-      bridge: bridge,
-      name: name,
-      arguments: [
-        "host": .string(arguments.host),
-        "path": .string(arguments.path),
-        "content": .string(arguments.content),
-        "create_parent": .bool(arguments.createParent),
-        "backup": .bool(arguments.backup),
-      ]
-    )
+    var values: [String: JSONValue] = [
+      "host": .string(arguments.host),
+      "path": .string(arguments.path),
+      "content": .string(arguments.content),
+    ]
+    if let createParent = arguments.createParent {
+      values["create_parent"] = .bool(createParent)
+    }
+    if let backup = arguments.backup {
+      values["backup"] = .bool(backup)
+    }
+    return await routeEdge(bridge: bridge, name: name, arguments: values)
   }
 }
 
@@ -120,27 +137,52 @@ private struct AppleEdgeControlTool: Tool {
 
   @Generable
   struct Arguments {
-    @Guide(description: "Saved SSH profile name, hostname, or UUID") var host: String
-    @Guide(description: "status, run, container, service, or tail") var operation: String
-    @Guide(description: "Remote shell command for operation=run, otherwise empty") var command: String
-    @Guide(description: "Container or systemd service name, otherwise empty") var target: String
-    @Guide(description: "Action for container/service, otherwise empty") var action: String
-    @Guide(description: "Absolute remote log path for operation=tail, otherwise empty") var path: String
-    @Guide(description: "Log lines from 1 to 2000") var lines: Int
+    @Guide(description: "Saved SSH profile name, hostname, or UUID")
+    var host: String
+
+    @Guide(description: "status, run, container, service, or tail")
+    var operation: String
+
+    @Guide(description: "Optional remote shell command for operation=run")
+    var command: String? = nil
+
+    @Guide(description: "Optional container or systemd service name")
+    var target: String? = nil
+
+    @Guide(description: "Optional action for container/service")
+    var action: String? = nil
+
+    @Guide(description: "Optional absolute remote log path for operation=tail")
+    var path: String? = nil
+
+    @Guide(description: "Optional log lines from 1 to 2000. Defaults to 200.")
+    var lines: Int? = nil
   }
 
   func call(arguments: Arguments) async throws -> String {
     var values: [String: JSONValue] = [
       "host": .string(arguments.host),
       "operation": .string(arguments.operation),
-      "lines": .number(Double(arguments.lines)),
     ]
-    if !arguments.command.isEmpty { values["command"] = .string(arguments.command) }
-    if !arguments.target.isEmpty { values["target"] = .string(arguments.target) }
-    if !arguments.action.isEmpty { values["action"] = .string(arguments.action) }
-    if !arguments.path.isEmpty { values["path"] = .string(arguments.path) }
+    if let command = normalizedEdge(arguments.command, preserveWhitespace: true) {
+      values["command"] = .string(command)
+    }
+    if let target = normalizedEdge(arguments.target) { values["target"] = .string(target) }
+    if let action = normalizedEdge(arguments.action) { values["action"] = .string(action) }
+    if let path = normalizedEdge(arguments.path) { values["path"] = .string(path) }
+    if let lines = arguments.lines { values["lines"] = .number(Double(lines)) }
     return await routeEdge(bridge: bridge, name: name, arguments: values)
   }
+}
+
+private func normalizedEdge(
+  _ value: String?,
+  preserveWhitespace: Bool = false
+) -> String? {
+  guard let value else { return nil }
+  if preserveWhitespace { return value.isEmpty ? nil : value }
+  let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  return normalized.isEmpty ? nil : normalized
 }
 
 private func routeEdge(
