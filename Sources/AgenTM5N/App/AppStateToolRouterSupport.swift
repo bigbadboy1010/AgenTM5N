@@ -5,6 +5,12 @@ extension AppState {
   func registryRiskAndSummary(
     for call: ProviderToolCall
   ) async -> (risk: ToolRisk, summary: String) {
+    if BrowserBatchAgentTools.handles(call) {
+      return (
+        BrowserBatchAgentTools.risk(for: call),
+        BrowserBatchAgentTools.summary(for: call)
+      )
+    }
     if BrowserAgentTools.handles(call) {
       return (
         BrowserAgentTools.risk(for: call),
@@ -15,6 +21,12 @@ extension AppState {
       return (
         EdgeAgentTools.risk(for: call),
         EdgeAgentTools.summary(for: call)
+      )
+    }
+    if SelfBuiltToolAgentTools.handles(call) {
+      return (
+        SelfBuiltToolAgentTools.risk(for: call),
+        SelfBuiltToolAgentTools.summary(for: call)
       )
     }
     if PlatformExpansionAgentTools.handles(call) {
@@ -93,6 +105,23 @@ extension AppState {
     return (.execute, genericRegistrySummary(call))
   }
 
+  func capabilityDenialResult(
+    for call: ProviderToolCall,
+    explicitScope: Set<AgentToolCapability>? = nil
+  ) -> ToolExecutionResult? {
+    let scope = explicitScope ?? AgentCapabilityExecutionContext.allowedCapabilities
+    guard let scope else { return nil }
+    guard AgentToolRegistry.isAllowed(call.function.name, within: scope) else {
+      let capability = AgentToolRegistry.entry(named: call.function.name)?.capability.rawValue
+        ?? "unknown"
+      return ToolExecutionResult(
+        success: false,
+        output: "CAPABILITY_DENIED: Tool \(call.function.name) benötigt Capability \(capability), die diesem Spezial-Agenten nicht freigegeben ist."
+      )
+    }
+    return nil
+  }
+
   func executeMeasuredTool(
     call: ProviderToolCall,
     risk: ToolRisk,
@@ -139,7 +168,7 @@ extension AppState {
     call: ProviderToolCall,
     risk: ToolRisk
   ) -> Bool {
-    if BrowserAgentTools.handles(call) {
+    if BrowserAgentTools.handles(call) || BrowserBatchAgentTools.handles(call) {
       return risk != .read
     }
     if AgentToolRegistry.isRemoteOrExternal(call.function.name) {
@@ -206,6 +235,7 @@ extension AppState {
       let lower = key.lowercased()
       if lower == "body" || lower == "content" || lower == "text"
         || lower == "instructions" || lower == "old_text" || lower == "new_text"
+        || lower == "source" || lower == "arguments" || lower == "arguments_json"
       {
         return "\(key): <\(value.compactDescription.utf8.count) Bytes>"
       }
