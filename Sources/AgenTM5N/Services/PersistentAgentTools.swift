@@ -1,71 +1,77 @@
 import Foundation
 
 public enum PersistentAgentTools {
-  public static let definitions: [ProviderToolDefinition] = [
-    ProviderToolDefinition(
-      name: "agent_list",
-      description: "List persistent reusable AgenTM5N specialist agents. Use this before creating a duplicate agent or when the user asks what saved agents exist.",
-      parameters: objectSchema(properties: [:])
-    ),
-    ProviderToolDefinition(
-      name: "agent_get",
-      description: "Read one persistent reusable AgenTM5N specialist agent by exact name or UUID, including its purpose, specialist instructions, provider preference, and optional explicit sandbox scope.",
-      parameters: objectSchema(
-        required: ["agent"],
-        properties: [
-          "agent": stringSchema("Exact saved agent name or UUID.")
-        ]
+  public static var definitions: [ProviderToolDefinition] {
+    [
+      ProviderToolDefinition(
+        name: "agent_list",
+        description: "List persistent reusable AgenTM5N specialist agents. Use this before creating a duplicate agent or when the user asks what saved agents exist.",
+        parameters: objectSchema(properties: [:])
+      ),
+      ProviderToolDefinition(
+        name: "agent_get",
+        description: "Read one persistent reusable AgenTM5N specialist agent by exact name or UUID, including its purpose, specialist instructions, provider preference, and optional explicit sandbox scope.",
+        parameters: objectSchema(
+          required: ["agent"],
+          properties: [
+            "agent": stringSchema("Exact saved agent name or UUID.")
+          ]
+        )
+      ),
+      ProviderToolDefinition(
+        name: "agent_create",
+        description: "Create or replace a persistent reusable specialist agent for a recurring task. New agents should use capabilities=all by default so they inherit the complete centrally authorized AgenTM5N tool catalog, matching the main agent. Use a restricted capability list only when the user explicitly requests a sandbox. Never put secrets in the agent profile.",
+        parameters: objectSchema(
+          required: ["name", "purpose", "instructions", "provider", "symbol"],
+          properties: [
+            "name": stringSchema("Short unique agent name, maximum 80 characters."),
+            "purpose": stringSchema("Concise recurring purpose for this specialist agent, maximum 500 characters."),
+            "instructions": stringSchema("Complete specialist system instructions. Be operational and specific; do not include secrets. Maximum 12000 characters."),
+            "provider": stringSchema("Provider preference: current, apple_on_device, ollama_local, or ollama_cloud."),
+            "symbol": stringSchema("SF Symbols name for the Agenten UI, or an empty string for the default symbol."),
+            "capabilities": stringSchema("Use all by default for full main-agent tool parity. Only when explicitly requested, use a comma-separated restricted set: workspace, terminal, ssh, edge, browser, git, macPersonal, secrets, http, system, reminders, coreML, memory, knowledge, attachments, documents, agents, workflows, customTools, updates.")
+          ]
+        )
+      ),
+      ProviderToolDefinition(
+        name: "agent_update",
+        description: "Update an existing persistent specialist agent. Empty text fields mean unchanged. enabled_mode must be unchanged, true, or false. capabilities may be unchanged, all, or a comma-separated restricted capability set. Use all to restore full main-agent tool parity.",
+        parameters: objectSchema(
+          required: ["agent", "name", "purpose", "instructions", "provider", "symbol", "enabled_mode"],
+          properties: [
+            "agent": stringSchema("Exact saved agent name or UUID."),
+            "name": stringSchema("New name, or empty string to keep unchanged."),
+            "purpose": stringSchema("New purpose, or empty string to keep unchanged."),
+            "instructions": stringSchema("New specialist instructions, or empty string to keep unchanged."),
+            "provider": stringSchema("New provider preference, or empty string to keep unchanged."),
+            "symbol": stringSchema("New SF Symbols name, or empty string to keep unchanged."),
+            "enabled_mode": stringSchema("Use unchanged, true, or false."),
+            "capabilities": stringSchema("Use unchanged, all, or comma-separated capability names including browser and customTools.")
+          ]
+        )
+      ),
+      ProviderToolDefinition(
+        name: "agent_delete",
+        description: "Delete one persistent reusable specialist agent by exact name or UUID. Use only when the user explicitly asks to remove or delete it.",
+        parameters: objectSchema(
+          required: ["agent"],
+          properties: [
+            "agent": stringSchema("Exact saved agent name or UUID.")
+          ]
+        )
       )
-    ),
-    ProviderToolDefinition(
-      name: "agent_create",
-      description: "Create or replace a persistent reusable specialist agent for a recurring task. New agents should use capabilities=all by default so they inherit the complete centrally authorized AgenTM5N tool catalog, matching the main agent. Use a restricted capability list only when the user explicitly requests a sandbox. Never put secrets in the agent profile.",
-      parameters: objectSchema(
-        required: ["name", "purpose", "instructions", "provider", "symbol"],
-        properties: [
-          "name": stringSchema("Short unique agent name, maximum 80 characters."),
-          "purpose": stringSchema("Concise recurring purpose for this specialist agent, maximum 500 characters."),
-          "instructions": stringSchema("Complete specialist system instructions. Be operational and specific; do not include secrets. Maximum 12000 characters."),
-          "provider": stringSchema("Provider preference: current, apple_on_device, ollama_local, or ollama_cloud."),
-          "symbol": stringSchema("SF Symbols name for the Agenten UI, or an empty string for the default symbol."),
-          "capabilities": stringSchema("Use all by default for full main-agent tool parity. Only when explicitly requested, use a comma-separated restricted set: workspace, terminal, ssh, edge, browser, git, macPersonal, secrets, http, system, reminders, coreML, memory, knowledge, attachments, documents, agents, workflows, updates.")
-        ]
-      )
-    ),
-    ProviderToolDefinition(
-      name: "agent_update",
-      description: "Update an existing persistent specialist agent. Empty text fields mean unchanged. enabled_mode must be unchanged, true, or false. capabilities may be unchanged, all, or a comma-separated restricted capability set. Use all to restore full main-agent tool parity.",
-      parameters: objectSchema(
-        required: ["agent", "name", "purpose", "instructions", "provider", "symbol", "enabled_mode"],
-        properties: [
-          "agent": stringSchema("Exact saved agent name or UUID."),
-          "name": stringSchema("New name, or empty string to keep unchanged."),
-          "purpose": stringSchema("New purpose, or empty string to keep unchanged."),
-          "instructions": stringSchema("New specialist instructions, or empty string to keep unchanged."),
-          "provider": stringSchema("New provider preference, or empty string to keep unchanged."),
-          "symbol": stringSchema("New SF Symbols name, or empty string to keep unchanged."),
-          "enabled_mode": stringSchema("Use unchanged, true, or false."),
-          "capabilities": stringSchema("Use unchanged, all, or comma-separated capability names including browser for Microsoft Edge automation.")
-        ]
-      )
-    ),
-    ProviderToolDefinition(
-      name: "agent_delete",
-      description: "Delete one persistent reusable specialist agent by exact name or UUID. Use only when the user explicitly asks to remove or delete it.",
-      parameters: objectSchema(
-        required: ["agent"],
-        properties: [
-          "agent": stringSchema("Exact saved agent name or UUID.")
-        ]
-      )
-    )
-  ]
+    ] + SelfBuiltToolAgentTools.definitions
+  }
 
   public static func handles(_ call: ProviderToolCall) -> Bool {
-    definitions.contains { $0.function.name == call.function.name }
+    if SelfBuiltToolAgentTools.handles(call) { return true }
+    return definitions.contains { $0.function.name == call.function.name }
   }
 
   public static func risk(for call: ProviderToolCall) -> ToolRisk {
+    if SelfBuiltToolAgentTools.handles(call) {
+      return SelfBuiltToolAgentTools.risk(for: call)
+    }
     switch call.function.name {
     case "agent_list", "agent_get": .read
     default: .write
@@ -73,6 +79,9 @@ public enum PersistentAgentTools {
   }
 
   public static func summary(for call: ProviderToolCall) -> String {
+    if SelfBuiltToolAgentTools.handles(call) {
+      return SelfBuiltToolAgentTools.summary(for: call)
+    }
     let rendered = call.function.arguments.keys.sorted().compactMap { key -> String? in
       guard let value = call.function.arguments[key] else { return nil }
       if key == "instructions" {
@@ -93,6 +102,10 @@ public enum PersistentAgentTools {
     call: ProviderToolCall,
     library: PersistentAgentLibrary = .shared
   ) -> ToolExecutionResult {
+    if SelfBuiltToolAgentTools.handles(call) {
+      return SelfBuiltToolAgentTools.execute(call: call)
+    }
+
     do {
       switch call.function.name {
       case "agent_list":
