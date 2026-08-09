@@ -105,7 +105,7 @@ private struct AppleWorkspaceIndexBuildTool: Tool {
 private struct AppleWorkspaceSemanticSearchTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "workspace_semantic_search"
-  let description = "Search Workspace Memory by meaning. When an embedding model is configured, AgenTM5N runs the query embedding locally through Core ML with CPU + Apple Neural Engine policy."
+  let description = "Search Workspace Memory by meaning. When an embedding model is configured, AgenTM5N runs the query embedding locally through Core ML with all available CPU, GPU and Apple Neural Engine compute units; Core ML decides operator placement."
 
   @Generable
   struct Arguments {
@@ -521,7 +521,7 @@ private struct AppleCoreMLDescribeTool: Tool {
 private struct AppleCoreMLPredictTool: Tool {
   let bridge: AgentToolExecutionBridge
   let name = "coreml_predict"
-  let description = "Run one local Core ML prediction. Input is a JSON object string. Supports scalar features, nested numeric arrays for MLMultiArray, and local image-path strings for image features."
+  let description = "Run one local Core ML prediction with all available CPU, GPU and Apple Neural Engine compute units; Core ML decides operator placement. Input is a JSON object string supporting scalar features, nested numeric arrays for MLMultiArray, and local image-path strings for image features."
 
   @Generable
   struct Arguments {
