@@ -5,104 +5,61 @@ extension AppState {
   func registryRiskAndSummary(
     for call: ProviderToolCall
   ) async -> (risk: ToolRisk, summary: String) {
+    let risk = AgentToolRegistry.entry(named: call.function.name)?.risk ?? .execute
+
     if BrowserBatchAgentTools.handles(call) {
-      return (
-        BrowserBatchAgentTools.risk(for: call),
-        BrowserBatchAgentTools.summary(for: call)
-      )
+      return (risk, BrowserBatchAgentTools.summary(for: call))
     }
     if BrowserAgentTools.handles(call) {
-      return (
-        BrowserAgentTools.risk(for: call),
-        BrowserAgentTools.summary(for: call)
-      )
+      return (risk, BrowserAgentTools.summary(for: call))
     }
     if EdgeAgentTools.handles(call) {
-      return (
-        EdgeAgentTools.risk(for: call),
-        EdgeAgentTools.summary(for: call)
-      )
+      return (risk, EdgeAgentTools.summary(for: call))
     }
     if SelfBuiltToolAgentTools.handles(call) {
-      return (
-        SelfBuiltToolAgentTools.risk(for: call),
-        SelfBuiltToolAgentTools.summary(for: call)
-      )
+      return (risk, SelfBuiltToolAgentTools.summary(for: call))
     }
     if PlatformExpansionAgentTools.handles(call) {
-      return (
-        PlatformExpansionAgentTools.risk(for: call),
-        PlatformExpansionAgentTools.summary(for: call)
-      )
+      return (risk, PlatformExpansionAgentTools.summary(for: call))
     }
     if RemindersAgentTools.handles(call) {
-      return (
-        RemindersAgentTools.risk(for: call),
-        RemindersAgentTools.summary(for: call)
-      )
+      return (risk, RemindersAgentTools.summary(for: call))
     }
     if AgentDelegationTools.handles(call) {
-      return (
-        AgentDelegationTools.risk(for: call),
-        AgentDelegationTools.summary(for: call)
-      )
+      return (risk, AgentDelegationTools.summary(for: call))
     }
     if WorkflowAgentTools.handles(call) {
-      return (
-        WorkflowAgentTools.risk(for: call),
-        await workflowApprovalSummary(for: call)
-      )
+      return (risk, await workflowApprovalSummary(for: call))
     }
     if MacNativeAgentTools.handles(call) {
-      return (MacNativeAgentTools.risk(for: call), MacNativeAgentTools.summary(for: call))
+      return (risk, MacNativeAgentTools.summary(for: call))
     }
     if MacNativeMutationAgentTools.handles(call) {
-      return (
-        MacNativeMutationAgentTools.risk(for: call),
-        MacNativeMutationAgentTools.summary(for: call)
-      )
+      return (risk, MacNativeMutationAgentTools.summary(for: call))
     }
     if PersistentAgentTools.handles(call) {
-      return (PersistentAgentTools.risk(for: call), PersistentAgentTools.summary(for: call))
+      return (risk, PersistentAgentTools.summary(for: call))
     }
     if GeneratedDocumentAgentTools.handles(call) {
-      return (
-        GeneratedDocumentAgentTools.risk(for: call),
-        GeneratedDocumentAgentTools.summary(for: call)
-      )
+      return (risk, GeneratedDocumentAgentTools.summary(for: call))
     }
     if UnifiedContextAgentTools.handles(call) {
-      return (
-        UnifiedContextAgentTools.risk(for: call),
-        UnifiedContextAgentTools.summary(for: call)
-      )
+      return (risk, UnifiedContextAgentTools.summary(for: call))
     }
     if CoreMLAgentTools.handles(call) {
-      return (CoreMLAgentTools.risk(for: call), CoreMLAgentTools.summary(for: call))
+      return (risk, CoreMLAgentTools.summary(for: call))
     }
     if WorkspaceMemoryAgentTools.handles(call) {
-      return (
-        WorkspaceMemoryAgentTools.risk(for: call),
-        WorkspaceMemoryAgentTools.summary(for: call)
-      )
+      return (risk, WorkspaceMemoryAgentTools.summary(for: call))
     }
     if ConversationAttachmentAgentTools.handles(call) {
-      return (
-        ConversationAttachmentAgentTools.risk(for: call),
-        ConversationAttachmentAgentTools.summary(for: call)
-      )
+      return (risk, ConversationAttachmentAgentTools.summary(for: call))
     }
     if KnowledgeLibraryAgentTools.handles(call) {
-      return (
-        KnowledgeLibraryAgentTools.risk(for: call),
-        KnowledgeLibraryAgentTools.summary(for: call)
-      )
+      return (risk, KnowledgeLibraryAgentTools.summary(for: call))
     }
 
-    if let entry = AgentToolRegistry.entry(named: call.function.name) {
-      return (entry.risk, genericRegistrySummary(call))
-    }
-    return (.execute, genericRegistrySummary(call))
+    return (risk, genericRegistrySummary(call))
   }
 
   func capabilityDenialResult(
