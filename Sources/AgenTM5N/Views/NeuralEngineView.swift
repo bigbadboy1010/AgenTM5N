@@ -97,9 +97,9 @@ struct NeuralEngineView: View {
           .foregroundStyle(.secondary)
           Text(
             L10n.text(
-              de: "CPU + Apple Neural Engine",
-              en: "CPU + Apple Neural Engine",
-              fr: "CPU + Apple Neural Engine"
+              de: "CPU + GPU + Apple Neural Engine (Core ML entscheidet)",
+              en: "CPU + GPU + Apple Neural Engine (Core ML decides)",
+              fr: "CPU + GPU + Apple Neural Engine (Core ML décide)"
             )
           )
         }
@@ -149,9 +149,9 @@ struct NeuralEngineView: View {
   private var coreMLCard: some View {
     GroupBox(
       L10n.text(
-        de: "Core ML – expliziter Neural-Engine-Pfad",
-        en: "Core ML – explicit Neural Engine path",
-        fr: "Core ML – chemin Neural Engine explicite"
+        de: "Core ML – adaptive Hardware-Verteilung",
+        en: "Core ML – adaptive hardware scheduling",
+        fr: "Core ML – répartition matérielle adaptative"
       )
     ) {
       VStack(alignment: .leading, spacing: 14) {
@@ -211,9 +211,9 @@ struct NeuralEngineView: View {
 
             Text(
               L10n.text(
-                de: "Das ausgewählte Modell wird in den geschützten AgenTM5N-Anwendungsordner kopiert, bei Bedarf kompiliert und mit der Rechenrichtlinie CPU + Apple Neural Engine geladen. Diese Richtlinie fordert den Neural-Engine-Pfad an; Core ML entscheidet weiterhin pro Operator über die tatsächliche Ausführung.",
-                en: "The selected model is copied into AgenTM5N’s protected application directory, compiled when required, and loaded with the CPU + Apple Neural Engine compute policy. This policy requests the Neural Engine path; Core ML still decides the actual placement per operator.",
-                fr: "Le modèle sélectionné est copié dans le dossier d’application protégé d’AgenTM5N, compilé si nécessaire, puis chargé avec la politique CPU + Apple Neural Engine. Cette politique demande le chemin Neural Engine ; Core ML décide toujours de l’exécution réelle pour chaque opérateur."
+                de: "Das ausgewählte Modell wird in den geschützten AgenTM5N-Anwendungsordner kopiert, bei Bedarf kompiliert und mit allen verfügbaren Core-ML-Recheneinheiten geladen. CPU, GPU und Apple Neural Engine bleiben verfügbar; Core ML entscheidet pro Operator, welche Hardware tatsächlich verwendet wird.",
+                en: "The selected model is copied into AgenTM5N’s protected application directory, compiled when required, and loaded with all available Core ML compute units. CPU, GPU, and Apple Neural Engine remain available; Core ML decides the actual hardware placement per operator.",
+                fr: "Le modèle sélectionné est copié dans le dossier d’application protégé d’AgenTM5N, compilé si nécessaire, puis chargé avec toutes les unités de calcul Core ML disponibles. Le CPU, le GPU et l’Apple Neural Engine restent disponibles ; Core ML décide du matériel utilisé pour chaque opérateur."
               )
             )
             .foregroundStyle(.secondary)
@@ -233,7 +233,11 @@ struct NeuralEngineView: View {
           en: "Compute Policy",
           fr: "Politique de calcul"
         ),
-        value: descriptor.computeUnits
+        value: L10n.text(
+          de: "Alle verfügbar (CPU + GPU + Neural Engine)",
+          en: "All available (CPU + GPU + Neural Engine)",
+          fr: "Toutes disponibles (CPU + GPU + Neural Engine)"
+        )
       )
 
       VStack(alignment: .leading, spacing: 5) {
