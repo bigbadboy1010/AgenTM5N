@@ -26,6 +26,7 @@ jobs:
           bash -n scripts/check-release.sh
           bash -n scripts/release-macos.sh
           bash -n scripts/verify-release-dmg.sh
+          bash -n scripts/publish-github-release.sh
 
       - name: Validate Build 28 metadata consistency
         shell: python
@@ -49,6 +50,11 @@ jobs:
                   'VERSION="${AGENTM5N_VERSION:-1.1.2}"',
                   'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-28}"',
               ],
+              "scripts/publish-github-release.sh": [
+                  'VERSION="${AGENTM5N_VERSION:-1.1.2}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-28}"',
+                  'TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"',
+              ],
               "README.md": [
                   "1.1.2 Build 28 release candidate",
                   "AgenTM5N-1.1.2-build28.dmg",
@@ -56,6 +62,10 @@ jobs:
               "VALIDATION.md": [
                   "1.1.2 Build 28 release candidate",
                   "AgenTM5N-1.1.2-build28.dmg",
+              ],
+              "release-archive/README.md": [
+                  "GitHub Release assets",
+                  "AgenTM5N-<version>-build<build>.dmg.sha256",
               ],
           }
 
