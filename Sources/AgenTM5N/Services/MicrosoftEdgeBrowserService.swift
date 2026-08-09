@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 public struct ManagedBrowserStatus: Codable, Sendable {
@@ -180,6 +179,20 @@ public actor MicrosoftEdgeBrowserService {
     let text: String?
   }
 
+  private struct SnapshotPayload: Codable, Sendable {
+    let title: String
+    let url: String
+    let text: String
+    let elements: [BrowserInteractiveElement]
+  }
+
+  private struct ActionPayload: Codable, Sendable {
+    let success: Bool
+    let message: String
+    let title: String?
+    let url: String?
+  }
+
   private let fileManager = FileManager.default
   private let session: URLSession
   private var process: Process?
@@ -226,8 +239,14 @@ public actor MicrosoftEdgeBrowserService {
 
       case "browser_read":
         _ = try await ensureStarted()
-        let maxCharacters = max(1_000, min(optionalInt("max_chars", in: call) ?? 30_000, 60_000))
-        let maxElements = max(10, min(optionalInt("max_elements", in: call) ?? 120, 250))
+        let maxCharacters = max(
+          1_000,
+          min(optionalInt("max_chars", in: call) ?? 30_000, 60_000)
+        )
+        let maxElements = max(
+          10,
+          min(optionalInt("max_elements", in: call) ?? 120, 250)
+        )
         return encoded(
           try await readPage(
             tabID: optionalString("tab_id", in: call),
@@ -238,19 +257,18 @@ public actor MicrosoftEdgeBrowserService {
 
       case "browser_action":
         _ = try await ensureStarted()
-        return encoded(
-          try await performAction(
-            action: try requiredString("action", in: call),
-            tabID: optionalString("tab_id", in: call),
-            ref: optionalString("ref", in: call),
-            selector: optionalString("selector", in: call),
-            targetText: optionalString("target_text", in: call),
-            text: optionalStringAllowingEmpty("text", in: call),
-            key: optionalString("key", in: call),
-            amount: optionalInt("amount", in: call),
-            timeoutMilliseconds: optionalInt("timeout_ms", in: call)
-          )
+        let result = try await performAction(
+          action: try requiredString("action", in: call),
+          tabID: optionalString("tab_id", in: call),
+          ref: optionalString("ref", in: call),
+          selector: optionalString("selector", in: call),
+          targetText: optionalString("target_text", in: call),
+          text: optionalStringAllowingEmpty("text", in: call),
+          key: optionalString("key", in: call),
+          amount: optionalInt("amount", in: call),
+          timeoutMilliseconds: optionalInt("timeout_ms", in: call)
         )
+        return encoded(result, success: result.success)
 
       default:
         throw AgentRuntimeError.unsupportedTool(call.function.name)
@@ -263,7 +281,8 @@ public actor MicrosoftEdgeBrowserService {
   public func start() async throws -> ManagedBrowserStatus {
     let port = try await ensureStarted()
     let version = try await browserVersion(port: port)
-    let tabs = try await targets(port: port).filter { $0.type == "page" }
+    let allTargets = try await targets(port: port)
+    let tabs = allTargets.filter { $0.type == "page" }
     return ManagedBrowserStatus(
       running: true,
       browser: version.browser,
@@ -276,16 +295,11 @@ public actor MicrosoftEdgeBrowserService {
   public func status() async -> ManagedBrowserStatus {
     do {
       guard let port = await connectedPortIfAvailable() else {
-        return ManagedBrowserStatus(
-          running: false,
-          browser: nil,
-          protocolVersion: nil,
-          profile: "AgenTM5N Managed Microsoft Edge",
-          tabCount: 0
-        )
+        return stoppedStatus()
       }
       let version = try await browserVersion(port: port)
-      let tabs = try await targets(port: port).filter { $0.type == "page" }
+      let allTargets = try await targets(port: port)
+      let tabs = allTargets.filter { $0.type == "page" }
       return ManagedBrowserStatus(
         running: true,
         browser: version.browser,
@@ -294,13 +308,7 @@ public actor MicrosoftEdgeBrowserService {
         tabCount: tabs.count
       )
     } catch {
-      return ManagedBrowserStatus(
-        running: false,
-        browser: nil,
-        protocolVersion: nil,
-        profile: "AgenTM5N Managed Microsoft Edge",
-        tabCount: 0
-      )
+      return stoppedStatus()
     }
   }
 
@@ -308,7 +316,8 @@ public actor MicrosoftEdgeBrowserService {
     guard let port = await connectedPortIfAvailable() else {
       activePort = nil
       selectedTabID = nil
-      return await status()
+      process = nil
+      return stoppedStatus()
     }
 
     do {
@@ -316,8 +325,9 @@ public actor MicrosoftEdgeBrowserService {
       if let websocket = version.webSocketDebuggerUrl,
         let websocketURL = URL(string: websocket)
       {
+        let validatedSocket = try validatedCDPWebSocketURL(websocketURL)
         let _: EmptyResult = try await sendCDP(
-          websocketURL: websocketURL,
+          websocketURL: validatedSocket,
           method: "Browser.close",
           params: EmptyParams(),
           resultType: EmptyResult.self
@@ -336,20 +346,21 @@ public actor MicrosoftEdgeBrowserService {
     activePort = nil
     selectedTabID = nil
     try? fileManager.removeItem(at: devToolsActivePortURL)
-    return await status()
+    return stoppedStatus()
   }
 
   public func listTabs() async throws -> [ManagedBrowserTab] {
     let port = try await requireConnectedPort()
-    let pages = try await targets(port: port).filter { $0.type == "page" }
+    let allTargets = try await targets(port: port)
+    let pages = allTargets.filter { $0.type == "page" }
     if selectedTabID == nil {
       selectedTabID = pages.first?.id
     }
     return pages.map { target in
       ManagedBrowserTab(
         id: target.id,
-        title: target.title,
-        url: target.url,
+        title: boundedDisplayText(target.title, limit: 300),
+        url: sanitizedDisplayURL(target.url),
         selected: target.id == selectedTabID
       )
     }
@@ -362,11 +373,7 @@ public actor MicrosoftEdgeBrowserService {
 
     if let tabID {
       target = try await resolveTarget(tabID: tabID, port: port)
-      guard let websocket = target.webSocketDebuggerUrl,
-        let websocketURL = URL(string: websocket)
-      else {
-        throw MicrosoftEdgeBrowserError.protocolFailure("Tab besitzt keinen DevTools-WebSocket.")
-      }
+      let websocketURL = try targetWebSocketURL(target)
       let result: PageNavigateResult = try await sendCDP(
         websocketURL: websocketURL,
         method: "Page.navigate",
@@ -387,8 +394,8 @@ public actor MicrosoftEdgeBrowserService {
     let refreshed = try await resolveTarget(tabID: target.id, port: port)
     return ManagedBrowserTab(
       id: refreshed.id,
-      title: refreshed.title,
-      url: refreshed.url,
+      title: boundedDisplayText(refreshed.title, limit: 300),
+      url: sanitizedDisplayURL(refreshed.url),
       selected: true
     )
   }
@@ -448,7 +455,9 @@ public actor MicrosoftEdgeBrowserService {
           const ref = `b${index + 1}`;
           el.setAttribute('data-agentm5n-ref', ref);
           const tag = el.tagName.toLowerCase();
-          const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : null;
+          const inputType = tag === 'input'
+            ? (el.getAttribute('type') || 'text').toLowerCase()
+            : null;
           const selectedText = tag === 'select' && el.selectedOptions && el.selectedOptions.length
             ? clean(el.selectedOptions[0].textContent)
             : null;
@@ -477,22 +486,33 @@ public actor MicrosoftEdgeBrowserService {
       """
 
     let raw = try await evaluateString(on: target, expression: expression)
-    struct SnapshotPayload: Codable, Sendable {
-      let title: String
-      let url: String
-      let text: String
-      let elements: [BrowserInteractiveElement]
-    }
     guard let data = raw.data(using: .utf8) else {
-      throw MicrosoftEdgeBrowserError.pageEvaluationFailed("Snapshot ist kein UTF-8-JSON.")
+      throw MicrosoftEdgeBrowserError.pageEvaluationFailed(
+        "Snapshot ist kein UTF-8-JSON."
+      )
     }
     let payload = try JSONDecoder().decode(SnapshotPayload.self, from: data)
+    let elements = payload.elements.map { element in
+      BrowserInteractiveElement(
+        ref: element.ref,
+        tag: element.tag,
+        type: element.type,
+        role: element.role,
+        text: element.text.map { boundedDisplayText($0, limit: 300) },
+        label: element.label.map { boundedDisplayText($0, limit: 300) },
+        name: element.name.map { boundedDisplayText($0, limit: 200) },
+        href: element.href.map(sanitizedDisplayURL),
+        disabled: element.disabled,
+        checked: element.checked,
+        selectedText: element.selectedText.map { boundedDisplayText($0, limit: 300) }
+      )
+    }
     return ManagedBrowserSnapshot(
       tabID: target.id,
-      title: payload.title,
-      url: payload.url,
-      text: payload.text,
-      elements: payload.elements
+      title: boundedDisplayText(payload.title, limit: 300),
+      url: sanitizedDisplayURL(payload.url),
+      text: String(payload.text.prefix(maxCharacters)),
+      elements: elements
     )
   }
 
@@ -507,7 +527,9 @@ public actor MicrosoftEdgeBrowserService {
     amount: Int?,
     timeoutMilliseconds: Int?
   ) async throws -> ManagedBrowserActionResult {
-    let normalizedAction = action.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let normalizedAction = action
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
     let port = try await requireConnectedPort()
 
     if normalizedAction == "activate_tab" {
@@ -515,21 +537,28 @@ public actor MicrosoftEdgeBrowserService {
       let target = try await resolveTarget(tabID: id, port: port)
       try await activateTarget(id: target.id, port: port)
       selectedTabID = target.id
-      return actionResult(success: true, action: normalizedAction, message: "Tab aktiviert.", target: target)
+      return actionResult(
+        success: true,
+        action: normalizedAction,
+        message: "Tab aktiviert.",
+        target: target
+      )
     }
 
     if normalizedAction == "close_tab" {
       let id = try requiredValue(tabID, name: "tab_id")
       let target = try await resolveTarget(tabID: id, port: port)
       try await closeTarget(id: target.id, port: port)
-      if selectedTabID == target.id { selectedTabID = nil }
+      if selectedTabID == target.id {
+        selectedTabID = nil
+      }
       return ManagedBrowserActionResult(
         success: true,
         action: normalizedAction,
         message: "Tab geschlossen.",
         tabID: target.id,
-        title: target.title,
-        url: target.url
+        title: boundedDisplayText(target.title, limit: 300),
+        url: sanitizedDisplayURL(target.url)
       )
     }
 
@@ -547,13 +576,29 @@ public actor MicrosoftEdgeBrowserService {
         text: nil,
         timeoutMilliseconds: timeoutMilliseconds
       )
-      let result = try await evaluateAction(on: target, expression: script, action: normalizedAction)
+      let result = try await evaluateAction(
+        on: target,
+        expression: script,
+        action: normalizedAction
+      )
       try? await Task.sleep(for: .milliseconds(250))
-      try? await waitForReadyState(tabID: target.id, timeoutMilliseconds: 8_000)
-      return try await refreshedActionResult(result, targetID: target.id, port: port)
+      try? await waitForReadyState(
+        tabID: target.id,
+        timeoutMilliseconds: 8_000
+      )
+      return try await refreshedActionResult(
+        result,
+        targetID: target.id,
+        port: port
+      )
 
     case "fill":
-      guard let text else { throw MicrosoftEdgeBrowserError.missingArgument("text") }
+      guard let text else {
+        throw MicrosoftEdgeBrowserError.missingArgument("text")
+      }
+      guard text.utf8.count <= 128 * 1024 else {
+        throw AgentRuntimeError.inputTooLarge(limit: 128 * 1024)
+      }
       let script = actionScript(
         action: "fill",
         ref: ref,
@@ -562,10 +607,16 @@ public actor MicrosoftEdgeBrowserService {
         text: text,
         timeoutMilliseconds: timeoutMilliseconds
       )
-      return try await evaluateAction(on: target, expression: script, action: normalizedAction)
+      return try await evaluateAction(
+        on: target,
+        expression: script,
+        action: normalizedAction
+      )
 
     case "select":
-      guard let text else { throw MicrosoftEdgeBrowserError.missingArgument("text") }
+      guard let text else {
+        throw MicrosoftEdgeBrowserError.missingArgument("text")
+      }
       let script = actionScript(
         action: "select",
         ref: ref,
@@ -574,7 +625,11 @@ public actor MicrosoftEdgeBrowserService {
         text: text,
         timeoutMilliseconds: timeoutMilliseconds
       )
-      return try await evaluateAction(on: target, expression: script, action: normalizedAction)
+      return try await evaluateAction(
+        on: target,
+        expression: script,
+        action: normalizedAction
+      )
 
     case "check", "uncheck":
       let script = actionScript(
@@ -585,7 +640,11 @@ public actor MicrosoftEdgeBrowserService {
         text: nil,
         timeoutMilliseconds: timeoutMilliseconds
       )
-      return try await evaluateAction(on: target, expression: script, action: normalizedAction)
+      return try await evaluateAction(
+        on: target,
+        expression: script,
+        action: normalizedAction
+      )
 
     case "press":
       if ref != nil || selector != nil || targetText != nil {
@@ -597,8 +656,14 @@ public actor MicrosoftEdgeBrowserService {
           text: nil,
           timeoutMilliseconds: timeoutMilliseconds
         )
-        let focusResult = try await evaluateAction(on: target, expression: focusScript, action: "focus")
-        guard focusResult.success else { return focusResult }
+        let focusResult = try await evaluateAction(
+          on: target,
+          expression: focusScript,
+          action: "focus"
+        )
+        guard focusResult.success else {
+          return focusResult
+        }
       }
       let keyName = key ?? text
       guard let keyName, !keyName.isEmpty else {
@@ -606,7 +671,10 @@ public actor MicrosoftEdgeBrowserService {
       }
       try await dispatchKey(keyName, on: target)
       try? await Task.sleep(for: .milliseconds(200))
-      try? await waitForReadyState(tabID: target.id, timeoutMilliseconds: 8_000)
+      try? await waitForReadyState(
+        tabID: target.id,
+        timeoutMilliseconds: 8_000
+      )
       let refreshed = try? await resolveTarget(tabID: target.id, port: port)
       return actionResult(
         success: true,
@@ -620,13 +688,25 @@ public actor MicrosoftEdgeBrowserService {
       let expression = """
         (() => {
           window.scrollBy({ top: \(distance), left: 0, behavior: 'auto' });
-          return JSON.stringify({ success: true, message: 'Seite gescrollt.', title: document.title || '', url: location.href });
+          return JSON.stringify({
+            success: true,
+            message: 'Seite gescrollt.',
+            title: document.title || '',
+            url: location.href
+          });
         })()
         """
-      return try await evaluateAction(on: target, expression: expression, action: normalizedAction)
+      return try await evaluateAction(
+        on: target,
+        expression: expression,
+        action: normalizedAction
+      )
 
     case "wait":
-      let timeout = max(100, min(timeoutMilliseconds ?? 5_000, 30_000))
+      let timeout = max(
+        100,
+        min(timeoutMilliseconds ?? 5_000, 30_000)
+      )
       if ref == nil && selector == nil && targetText == nil {
         try await Task.sleep(for: .milliseconds(timeout))
         let refreshed = try? await resolveTarget(tabID: target.id, port: port)
@@ -645,7 +725,11 @@ public actor MicrosoftEdgeBrowserService {
         text: nil,
         timeoutMilliseconds: timeout
       )
-      return try await evaluateAction(on: target, expression: script, action: normalizedAction)
+      return try await evaluateAction(
+        on: target,
+        expression: script,
+        action: normalizedAction
+      )
 
     case "back", "forward", "reload":
       let call = switch normalizedAction {
@@ -656,13 +740,29 @@ public actor MicrosoftEdgeBrowserService {
       let expression = """
         (() => {
           setTimeout(() => { \(call); }, 0);
-          return JSON.stringify({ success: true, message: '\(normalizedAction) ausgelöst.', title: document.title || '', url: location.href });
+          return JSON.stringify({
+            success: true,
+            message: '\(normalizedAction) ausgelöst.',
+            title: document.title || '',
+            url: location.href
+          });
         })()
         """
-      let result = try await evaluateAction(on: target, expression: expression, action: normalizedAction)
+      let result = try await evaluateAction(
+        on: target,
+        expression: expression,
+        action: normalizedAction
+      )
       try? await Task.sleep(for: .milliseconds(250))
-      try? await waitForReadyState(tabID: target.id, timeoutMilliseconds: 8_000)
-      return try await refreshedActionResult(result, targetID: target.id, port: port)
+      try? await waitForReadyState(
+        tabID: target.id,
+        timeoutMilliseconds: 8_000
+      )
+      return try await refreshedActionResult(
+        result,
+        targetID: target.id,
+        port: port
+      )
 
     default:
       throw MicrosoftEdgeBrowserError.invalidOperation(normalizedAction)
@@ -701,23 +801,27 @@ public actor MicrosoftEdgeBrowserService {
     for _ in 0..<150 {
       try Task.checkCancellation()
       if !edge.isRunning {
-        throw MicrosoftEdgeBrowserError.launchFailed("Der Edge-Prozess wurde vorzeitig beendet.")
+        throw MicrosoftEdgeBrowserError.launchFailed(
+          "Der Edge-Prozess wurde vorzeitig beendet."
+        )
       }
       if let port = readActivePort(), await canConnect(port: port) {
         activePort = port
-        let pages = try? await targets(port: port).filter { $0.type == "page" }
-        selectedTabID = pages?.first?.id
-        if let application = NSRunningApplication(processIdentifier: edge.processIdentifier) {
-          application.activate(options: [.activateAllWindows])
+        if let allTargets = try? await targets(port: port) {
+          selectedTabID = allTargets.first(where: { $0.type == "page" })?.id
         }
         return port
       }
       try await Task.sleep(for: .milliseconds(100))
     }
 
-    if edge.isRunning { edge.terminate() }
+    if edge.isRunning {
+      edge.terminate()
+    }
     process = nil
-    throw MicrosoftEdgeBrowserError.devToolsUnavailable("DevToolsActivePort wurde nicht rechtzeitig bereitgestellt.")
+    throw MicrosoftEdgeBrowserError.devToolsUnavailable(
+      "DevToolsActivePort wurde nicht rechtzeitig bereitgestellt."
+    )
   }
 
   private func connectedPortIfAvailable() async -> Int? {
@@ -749,16 +853,30 @@ public actor MicrosoftEdgeBrowserService {
   }
 
   private func browserVersion(port: Int) async throws -> BrowserVersion {
-    try await requestJSON(port: port, path: "/json/version", method: "GET", as: BrowserVersion.self)
+    try await requestJSON(
+      port: port,
+      path: "/json/version",
+      method: "GET",
+      as: BrowserVersion.self
+    )
   }
 
   private func targets(port: Int) async throws -> [EdgeTarget] {
-    try await requestJSON(port: port, path: "/json/list", method: "GET", as: [EdgeTarget].self)
+    try await requestJSON(
+      port: port,
+      path: "/json/list",
+      method: "GET",
+      as: [EdgeTarget].self
+    )
   }
 
   private func createTab(urlText: String, port: Int) async throws -> EdgeTarget {
-    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
-    guard let encodedURL = urlText.addingPercentEncoding(withAllowedCharacters: allowed) else {
+    let allowed = CharacterSet.alphanumerics.union(
+      CharacterSet(charactersIn: "-._~")
+    )
+    guard let encodedURL = urlText.addingPercentEncoding(
+      withAllowedCharacters: allowed
+    ) else {
       throw MicrosoftEdgeBrowserError.invalidURL(urlText)
     }
     return try await requestJSON(
@@ -770,17 +888,28 @@ public actor MicrosoftEdgeBrowserService {
   }
 
   private func activateTarget(id: String, port: Int) async throws {
-    _ = try await requestText(port: port, path: "/json/activate/\(id)", method: "GET")
+    _ = try await requestText(
+      port: port,
+      path: "/json/activate/\(id)",
+      method: "GET"
+    )
   }
 
   private func closeTarget(id: String, port: Int) async throws {
-    _ = try await requestText(port: port, path: "/json/close/\(id)", method: "GET")
+    _ = try await requestText(
+      port: port,
+      path: "/json/close/\(id)",
+      method: "GET"
+    )
   }
 
   private func resolveTarget(tabID: String?, port: Int) async throws -> EdgeTarget {
-    let pages = try await targets(port: port).filter { $0.type == "page" }
+    let allTargets = try await targets(port: port)
+    let pages = allTargets.filter { $0.type == "page" }
     if let tabID {
-      guard let target = pages.first(where: { $0.id.caseInsensitiveCompare(tabID) == .orderedSame }) else {
+      guard let target = pages.first(where: {
+        $0.id.caseInsensitiveCompare(tabID) == .orderedSame
+      }) else {
         throw MicrosoftEdgeBrowserError.tabNotFound(tabID)
       }
       return target
@@ -796,13 +925,22 @@ public actor MicrosoftEdgeBrowserService {
     return first
   }
 
-  private func waitForReadyState(tabID: String, timeoutMilliseconds: Int) async throws {
+  private func waitForReadyState(
+    tabID: String,
+    timeoutMilliseconds: Int
+  ) async throws {
     let port = try await requireConnectedPort()
-    let deadline = ContinuousClock.now.advanced(by: .milliseconds(timeoutMilliseconds))
-    while ContinuousClock.now < deadline {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(
+      by: .milliseconds(timeoutMilliseconds)
+    )
+    while clock.now < deadline {
       try Task.checkCancellation()
       if let target = try? await resolveTarget(tabID: tabID, port: port),
-        let state = try? await evaluateString(on: target, expression: "document.readyState"),
+        let state = try? await evaluateString(
+          on: target,
+          expression: "document.readyState"
+        ),
         state == "complete" || state == "interactive"
       {
         return
@@ -811,13 +949,11 @@ public actor MicrosoftEdgeBrowserService {
     }
   }
 
-  private func evaluateString(on target: EdgeTarget, expression: String) async throws -> String {
-    guard let websocket = target.webSocketDebuggerUrl,
-      let websocketURL = URL(string: websocket)
-    else {
-      throw MicrosoftEdgeBrowserError.protocolFailure("Tab besitzt keinen DevTools-WebSocket.")
-    }
-
+  private func evaluateString(
+    on target: EdgeTarget,
+    expression: String
+  ) async throws -> String {
+    let websocketURL = try targetWebSocketURL(target)
     let result: RuntimeEvaluateResult = try await sendCDP(
       websocketURL: websocketURL,
       method: "Runtime.evaluate",
@@ -848,23 +984,19 @@ public actor MicrosoftEdgeBrowserService {
     action: String
   ) async throws -> ManagedBrowserActionResult {
     let raw = try await evaluateString(on: target, expression: expression)
-    struct Payload: Codable, Sendable {
-      let success: Bool
-      let message: String
-      let title: String?
-      let url: String?
-    }
     guard let data = raw.data(using: .utf8) else {
-      throw MicrosoftEdgeBrowserError.pageEvaluationFailed("Action-Ergebnis ist kein UTF-8-JSON.")
+      throw MicrosoftEdgeBrowserError.pageEvaluationFailed(
+        "Action-Ergebnis ist kein UTF-8-JSON."
+      )
     }
-    let payload = try JSONDecoder().decode(Payload.self, from: data)
+    let payload = try JSONDecoder().decode(ActionPayload.self, from: data)
     return ManagedBrowserActionResult(
       success: payload.success,
       action: action,
       message: payload.message,
       tabID: target.id,
-      title: payload.title,
-      url: payload.url
+      title: payload.title.map { boundedDisplayText($0, limit: 300) },
+      url: payload.url.map(sanitizedDisplayURL)
     )
   }
 
@@ -873,15 +1005,19 @@ public actor MicrosoftEdgeBrowserService {
     targetID: String,
     port: Int
   ) async throws -> ManagedBrowserActionResult {
-    guard result.success else { return result }
+    guard result.success else {
+      return result
+    }
     let target = try? await resolveTarget(tabID: targetID, port: port)
     return ManagedBrowserActionResult(
       success: result.success,
       action: result.action,
       message: result.message,
       tabID: target?.id ?? result.tabID,
-      title: target?.title ?? result.title,
-      url: target?.url ?? result.url
+      title: target.map { boundedDisplayText($0.title, limit: 300) }
+        ?? result.title,
+      url: target.map { sanitizedDisplayURL($0.url) }
+        ?? result.url
     )
   }
 
@@ -897,7 +1033,10 @@ public actor MicrosoftEdgeBrowserService {
     let selectorJSON = jsLiteral(selector ?? "")
     let targetTextJSON = jsLiteral(targetText ?? "")
     let textJSON = jsLiteral(text ?? "")
-    let timeout = max(100, min(timeoutMilliseconds ?? 5_000, 30_000))
+    let timeout = max(
+      100,
+      min(timeoutMilliseconds ?? 5_000, 30_000)
+    )
 
     return """
       (async () => {
@@ -960,8 +1099,11 @@ public actor MicrosoftEdgeBrowserService {
             }
             return result(false, 'Element wurde innerhalb des Timeouts nicht gefunden.');
           }
+
           const el = findTarget();
-          if (!el) return result(false, 'Zielelement wurde nicht gefunden. Bitte browser_read erneut ausführen.');
+          if (!el) {
+            return result(false, 'Zielelement wurde nicht gefunden. Bitte browser_read erneut ausführen.');
+          }
           if (!visible(el)) return result(false, 'Zielelement ist nicht sichtbar.');
           if (el.disabled || el.getAttribute('aria-disabled') === 'true') {
             return result(false, 'Zielelement ist deaktiviert.');
@@ -979,26 +1121,38 @@ public actor MicrosoftEdgeBrowserService {
           }
           if ('\(action)' === 'fill') {
             const tag = el.tagName.toLowerCase();
-            if (tag === 'input' && (el.type || '').toLowerCase() === 'file') {
+            const inputType = tag === 'input'
+              ? (el.getAttribute('type') || 'text').toLowerCase()
+              : '';
+            if (tag === 'input' && inputType === 'file') {
               return result(false, 'Datei-Inputs werden nicht durch Text-Fill gesetzt.');
+            }
+            if (tag === 'input' && inputType === 'password') {
+              return result(false, 'Passwortfelder werden nicht mit modellseitigem Klartext gefüllt. Melde dich bei Bedarf einmal manuell im persistenten AgenTM5N-Edge-Profil an.');
             }
             el.focus();
             if (el.isContentEditable) {
               el.textContent = VALUE;
             } else if ('value' in el) {
-              const prototype = Object.getPrototypeOf(el);
-              const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+              letPrototype = Object.getPrototypeOf(el);
+              const descriptor = Object.getOwnPropertyDescriptor(letPrototype, 'value');
               if (descriptor && descriptor.set) descriptor.set.call(el, VALUE);
               else el.value = VALUE;
             } else {
               return result(false, 'Element unterstützt keine Texteingabe.');
             }
-            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: VALUE }));
+            el.dispatchEvent(new InputEvent('input', {
+              bubbles: true,
+              inputType: 'insertText',
+              data: VALUE
+            }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
             return result(true, 'Text eingegeben.');
           }
           if ('\(action)' === 'select') {
-            if (el.tagName.toLowerCase() !== 'select') return result(false, 'Zielelement ist kein Select-Feld.');
+            if (el.tagName.toLowerCase() !== 'select') {
+              return result(false, 'Zielelement ist kein Select-Feld.');
+            }
             const needle = VALUE.toLocaleLowerCase();
             const option = Array.from(el.options).find((item) =>
               String(item.value).toLocaleLowerCase() === needle ||
@@ -1011,11 +1165,17 @@ public actor MicrosoftEdgeBrowserService {
             return result(true, 'Option ausgewählt.');
           }
           if ('\(action)' === 'check' || '\(action)' === 'uncheck') {
-            if (typeof el.checked !== 'boolean') return result(false, 'Zielelement ist keine Checkbox/Radio-Auswahl.');
-            el.checked = '\(action)' === 'check';
+            if (typeof el.checked !== 'boolean') {
+              return result(false, 'Zielelement ist keine Checkbox/Radio-Auswahl.');
+            }
+            const desired = '\(action)' === 'check';
+            const prototype = Object.getPrototypeOf(el);
+            const descriptor = Object.getOwnPropertyDescriptor(prototype, 'checked');
+            if (descriptor && descriptor.set) descriptor.set.call(el, desired);
+            else el.checked = desired;
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
-            return result(true, el.checked ? 'Auswahl aktiviert.' : 'Auswahl deaktiviert.');
+            return result(true, desired ? 'Auswahl aktiviert.' : 'Auswahl deaktiviert.');
           }
           return result(false, 'Nicht unterstützte DOM-Aktion.');
         } catch (error) {
@@ -1025,12 +1185,11 @@ public actor MicrosoftEdgeBrowserService {
       """
   }
 
-  private func dispatchKey(_ keyName: String, on target: EdgeTarget) async throws {
-    guard let websocket = target.webSocketDebuggerUrl,
-      let websocketURL = URL(string: websocket)
-    else {
-      throw MicrosoftEdgeBrowserError.protocolFailure("Tab besitzt keinen DevTools-WebSocket.")
-    }
+  private func dispatchKey(
+    _ keyName: String,
+    on target: EdgeTarget
+  ) async throws {
+    let websocketURL = try targetWebSocketURL(target)
     let spec = keySpec(keyName)
     let down = KeyEventParams(
       type: "keyDown",
@@ -1064,34 +1223,57 @@ public actor MicrosoftEdgeBrowserService {
 
   private func keySpec(_ value: String) -> KeySpec {
     switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-    case "enter", "return": KeySpec(key: "Enter", code: "Enter", virtualKey: 13, text: "\r")
-    case "tab": KeySpec(key: "Tab", code: "Tab", virtualKey: 9, text: "\t")
-    case "escape", "esc": KeySpec(key: "Escape", code: "Escape", virtualKey: 27, text: nil)
-    case "backspace": KeySpec(key: "Backspace", code: "Backspace", virtualKey: 8, text: nil)
-    case "arrowdown", "down": KeySpec(key: "ArrowDown", code: "ArrowDown", virtualKey: 40, text: nil)
-    case "arrowup", "up": KeySpec(key: "ArrowUp", code: "ArrowUp", virtualKey: 38, text: nil)
-    case "arrowleft", "left": KeySpec(key: "ArrowLeft", code: "ArrowLeft", virtualKey: 37, text: nil)
-    case "arrowright", "right": KeySpec(key: "ArrowRight", code: "ArrowRight", virtualKey: 39, text: nil)
-    case "space", "spacebar": KeySpec(key: " ", code: "Space", virtualKey: 32, text: " ")
+    case "enter", "return":
+      KeySpec(key: "Enter", code: "Enter", virtualKey: 13, text: "\r")
+    case "tab":
+      KeySpec(key: "Tab", code: "Tab", virtualKey: 9, text: "\t")
+    case "escape", "esc":
+      KeySpec(key: "Escape", code: "Escape", virtualKey: 27, text: nil)
+    case "backspace":
+      KeySpec(key: "Backspace", code: "Backspace", virtualKey: 8, text: nil)
+    case "arrowdown", "down":
+      KeySpec(key: "ArrowDown", code: "ArrowDown", virtualKey: 40, text: nil)
+    case "arrowup", "up":
+      KeySpec(key: "ArrowUp", code: "ArrowUp", virtualKey: 38, text: nil)
+    case "arrowleft", "left":
+      KeySpec(key: "ArrowLeft", code: "ArrowLeft", virtualKey: 37, text: nil)
+    case "arrowright", "right":
+      KeySpec(key: "ArrowRight", code: "ArrowRight", virtualKey: 39, text: nil)
+    case "space", "spacebar":
+      KeySpec(key: " ", code: "Space", virtualKey: 32, text: " ")
     default:
       let first = String(value.prefix(1))
-      return KeySpec(key: first, code: first, virtualKey: first.uppercased().unicodeScalars.first.map { Int($0.value) } ?? 0, text: first)
+      let scalarValue = first.uppercased().unicodeScalars.first.map {
+        Int($0.value)
+      } ?? 0
+      return KeySpec(
+        key: first,
+        code: first,
+        virtualKey: scalarValue,
+        text: first
+      )
     }
   }
 
-  private func sendCDP<Params: Codable & Sendable, Result: Codable & Sendable>(
+  private func sendCDP<
+    Params: Codable & Sendable,
+    Result: Codable & Sendable
+  >(
     websocketURL: URL,
     method: String,
     params: Params,
     resultType: Result.Type
   ) async throws -> Result {
+    let validatedURL = try validatedCDPWebSocketURL(websocketURL)
     let id = nextCommandID
     nextCommandID += 1
     let command = CDPCommand(id: id, method: method, params: params)
     let data = try JSONEncoder().encode(command)
-    let task = session.webSocketTask(with: websocketURL)
+    let task = session.webSocketTask(with: validatedURL)
     task.resume()
-    defer { task.cancel(with: .normalClosure, reason: nil) }
+    defer {
+      task.cancel(with: .normalClosure, reason: nil)
+    }
 
     try await task.send(.data(data))
     while true {
@@ -1107,13 +1289,22 @@ public actor MicrosoftEdgeBrowserService {
         continue
       }
       let header = try JSONDecoder().decode(CDPHeader.self, from: responseData)
-      guard header.id == id else { continue }
-      let envelope = try JSONDecoder().decode(CDPEnvelope<Result>.self, from: responseData)
+      guard header.id == id else {
+        continue
+      }
+      let envelope = try JSONDecoder().decode(
+        CDPEnvelope<Result>.self,
+        from: responseData
+      )
       if let error = envelope.error {
-        throw MicrosoftEdgeBrowserError.protocolFailure("\(error.code): \(error.message)")
+        throw MicrosoftEdgeBrowserError.protocolFailure(
+          "\(error.code): \(error.message)"
+        )
       }
       guard let result = envelope.result else {
-        throw MicrosoftEdgeBrowserError.protocolFailure("CDP-Antwort enthält kein result für \(method).")
+        throw MicrosoftEdgeBrowserError.protocolFailure(
+          "CDP-Antwort enthält kein result für \(method)."
+        )
       }
       return result
     }
@@ -1135,37 +1326,89 @@ public actor MicrosoftEdgeBrowserService {
     }
   }
 
-  private func requestText(port: Int, path: String, method: String) async throws -> String {
+  private func requestText(
+    port: Int,
+    path: String,
+    method: String
+  ) async throws -> String {
     let data = try await requestData(port: port, path: path, method: method)
     return String(decoding: data, as: UTF8.self)
   }
 
-  private func requestData(port: Int, path: String, method: String) async throws -> Data {
-    guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else {
-      throw MicrosoftEdgeBrowserError.devToolsUnavailable("Ungültiger lokaler DevTools-Endpunkt.")
+  private func requestData(
+    port: Int,
+    path: String,
+    method: String
+  ) async throws -> Data {
+    guard (1...65_535).contains(port),
+      let url = URL(string: "http://127.0.0.1:\(port)\(path)")
+    else {
+      throw MicrosoftEdgeBrowserError.devToolsUnavailable(
+        "Ungültiger lokaler DevTools-Endpunkt."
+      )
     }
     var request = URLRequest(url: url)
     request.httpMethod = method
     request.timeoutInterval = 10
     request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
     let (data, response) = try await session.data(for: request)
-    guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+    guard let http = response as? HTTPURLResponse,
+      (200...299).contains(http.statusCode)
+    else {
       let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-      throw MicrosoftEdgeBrowserError.devToolsUnavailable("HTTP \(status) für \(path)")
+      throw MicrosoftEdgeBrowserError.devToolsUnavailable(
+        "HTTP \(status) für \(path)"
+      )
+    }
+    guard data.count <= 4 * 1024 * 1024 else {
+      throw MicrosoftEdgeBrowserError.protocolFailure(
+        "DevTools-Antwort überschreitet das 4-MiB-Limit."
+      )
     }
     return data
   }
 
   private func validateBrowserURL(_ value: String) throws -> String {
     let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalized.isEmpty, let url = URL(string: normalized) else {
+    guard !normalized.isEmpty,
+      let url = URL(string: normalized)
+    else {
       throw MicrosoftEdgeBrowserError.invalidURL(value)
     }
     let scheme = url.scheme?.lowercased() ?? ""
     guard ["http", "https", "edge", "about"].contains(scheme) else {
       throw MicrosoftEdgeBrowserError.invalidURL(value)
     }
+    if scheme == "http" || scheme == "https" {
+      guard url.host != nil else {
+        throw MicrosoftEdgeBrowserError.invalidURL(value)
+      }
+    }
     return normalized
+  }
+
+  private func targetWebSocketURL(_ target: EdgeTarget) throws -> URL {
+    guard let websocket = target.webSocketDebuggerUrl,
+      let url = URL(string: websocket)
+    else {
+      throw MicrosoftEdgeBrowserError.protocolFailure(
+        "Tab besitzt keinen DevTools-WebSocket."
+      )
+    }
+    return try validatedCDPWebSocketURL(url)
+  }
+
+  private func validatedCDPWebSocketURL(_ url: URL) throws -> URL {
+    let scheme = url.scheme?.lowercased() ?? ""
+    let host = url.host?.lowercased() ?? ""
+    guard ["ws", "wss"].contains(scheme),
+      ["127.0.0.1", "localhost", "::1"].contains(host)
+    else {
+      throw MicrosoftEdgeBrowserError.protocolFailure(
+        "Nicht-lokaler DevTools-WebSocket wurde blockiert."
+      )
+    }
+    return url
   }
 
   private func actionResult(
@@ -1179,33 +1422,92 @@ public actor MicrosoftEdgeBrowserService {
       action: action,
       message: message,
       tabID: target.id,
-      title: target.title,
-      url: target.url
+      title: boundedDisplayText(target.title, limit: 300),
+      url: sanitizedDisplayURL(target.url)
     )
   }
 
-  private func requiredString(_ name: String, in call: ProviderToolCall) throws -> String {
+  private func stoppedStatus() -> ManagedBrowserStatus {
+    ManagedBrowserStatus(
+      running: false,
+      browser: nil,
+      protocolVersion: nil,
+      profile: "AgenTM5N Managed Microsoft Edge",
+      tabCount: 0
+    )
+  }
+
+  private func sanitizedDisplayURL(_ value: String) -> String {
+    guard var components = URLComponents(string: value) else {
+      return boundedDisplayText(value, limit: 2_000)
+    }
+    components.user = nil
+    components.password = nil
+    components.fragment = nil
+    if let queryItems = components.queryItems {
+      components.queryItems = queryItems.map { item in
+        let normalized = item.name.lowercased()
+        let sensitiveFragments = [
+          "token", "secret", "password", "passwd", "key", "auth", "jwt",
+          "session", "ticket", "sso", "code", "signature", "credential"
+        ]
+        if sensitiveFragments.contains(where: { normalized.contains($0) }) {
+          return URLQueryItem(name: item.name, value: "<redacted>")
+        }
+        return URLQueryItem(
+          name: item.name,
+          value: item.value.map { String($0.prefix(500)) }
+        )
+      }
+    }
+    return boundedDisplayText(components.string ?? value, limit: 2_000)
+  }
+
+  private func boundedDisplayText(_ value: String, limit: Int) -> String {
+    value.count > limit ? String(value.prefix(limit)) + "…" : value
+  }
+
+  private func requiredString(
+    _ name: String,
+    in call: ProviderToolCall
+  ) throws -> String {
     guard let value = optionalString(name, in: call) else {
-      throw AgentRuntimeError.missingArgument(tool: call.function.name, name: name)
+      throw AgentRuntimeError.missingArgument(
+        tool: call.function.name,
+        name: name
+      )
     }
     return value
   }
 
-  private func optionalString(_ name: String, in call: ProviderToolCall) -> String? {
-    guard let value = call.function.arguments[name]?.stringValue else { return nil }
+  private func optionalString(
+    _ name: String,
+    in call: ProviderToolCall
+  ) -> String? {
+    guard let value = call.function.arguments[name]?.stringValue else {
+      return nil
+    }
     let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return normalized.isEmpty ? nil : normalized
   }
 
-  private func optionalStringAllowingEmpty(_ name: String, in call: ProviderToolCall) -> String? {
+  private func optionalStringAllowingEmpty(
+    _ name: String,
+    in call: ProviderToolCall
+  ) -> String? {
     call.function.arguments[name]?.stringValue
   }
 
-  private func optionalInt(_ name: String, in call: ProviderToolCall) -> Int? {
+  private func optionalInt(
+    _ name: String,
+    in call: ProviderToolCall
+  ) -> Int? {
     guard let value = call.function.arguments[name],
       case .number(let number) = value,
       number.isFinite
-    else { return nil }
+    else {
+      return nil
+    }
     return Int(number)
   }
 
@@ -1216,19 +1518,30 @@ public actor MicrosoftEdgeBrowserService {
     return value
   }
 
-  private func encoded<T: Encodable>(_ value: T) -> ToolExecutionResult {
+  private func encoded<T: Encodable>(
+    _ value: T,
+    success: Bool = true
+  ) -> ToolExecutionResult {
     do {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
       let data = try encoder.encode(value)
-      return ToolExecutionResult(success: true, output: String(decoding: data, as: UTF8.self))
+      return ToolExecutionResult(
+        success: success,
+        output: String(decoding: data, as: UTF8.self)
+      )
     } catch {
-      return ToolExecutionResult(success: false, output: error.localizedDescription)
+      return ToolExecutionResult(
+        success: false,
+        output: error.localizedDescription
+      )
     }
   }
 
   private func jsLiteral(_ value: String) -> String {
-    guard let data = try? JSONEncoder().encode(value) else { return "\"\"" }
+    guard let data = try? JSONEncoder().encode(value) else {
+      return "\"\""
+    }
     return String(decoding: data, as: UTF8.self)
   }
 
@@ -1245,29 +1558,43 @@ public actor MicrosoftEdgeBrowserService {
   }
 
   private func readActivePort() -> Int? {
-    guard let text = try? String(contentsOf: devToolsActivePortURL, encoding: .utf8) else {
+    guard let text = try? String(
+      contentsOf: devToolsActivePortURL,
+      encoding: .utf8
+    ) else {
       return nil
     }
-    return text.split(whereSeparator: { $0.isNewline }).first.flatMap { Int($0) }
+    return text
+      .split(whereSeparator: { $0.isNewline })
+      .first
+      .flatMap { Int($0) }
   }
 
   private func edgeBinaryURL() throws -> URL {
     let candidates = [
       "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-      NSString(string: "~/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge").expandingTildeInPath,
+      NSString(
+        string: "~/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+      ).expandingTildeInPath,
       "/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta",
       "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
       "/Applications/Microsoft Edge Canary.app/Contents/MacOS/Microsoft Edge Canary",
     ]
-    guard let path = candidates.first(where: { fileManager.isExecutableFile(atPath: $0) }) else {
+    guard let path = candidates.first(where: {
+      fileManager.isExecutableFile(atPath: $0)
+    }) else {
       throw MicrosoftEdgeBrowserError.edgeNotInstalled
     }
     return URL(fileURLWithPath: path)
   }
 
   private var profileDirectory: URL {
-    let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-      ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+    let base = fileManager.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    ).first
+      ?? fileManager.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Application Support", isDirectory: true)
     return base
       .appendingPathComponent("AgenTM5N", isDirectory: true)
       .appendingPathComponent("Browser", isDirectory: true)
@@ -1275,6 +1602,9 @@ public actor MicrosoftEdgeBrowserService {
   }
 
   private var devToolsActivePortURL: URL {
-    profileDirectory.appendingPathComponent("DevToolsActivePort", isDirectory: false)
+    profileDirectory.appendingPathComponent(
+      "DevToolsActivePort",
+      isDirectory: false
+    )
   }
 }
