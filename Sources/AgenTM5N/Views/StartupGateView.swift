@@ -3,8 +3,10 @@ import SwiftUI
 
 /// Native startup experience for AgenTM5N.
 ///
-/// The splash is not a fixed-delay movie. It is shown while AppState performs
-/// its real bootstrap work and transitions away as soon as bootstrap returns.
+/// The real AppState bootstrap starts immediately. The visual intro remains
+/// visible for a short minimum presentation time so the neural boot animation
+/// can be perceived instead of flashing past on fast Macs. If bootstrap takes
+/// longer, the splash naturally remains visible until bootstrap is complete.
 /// Accessibility Reduce Motion is respected automatically.
 struct StartupGateView: View {
   @EnvironmentObject private var appState: AppState
@@ -12,6 +14,8 @@ struct StartupGateView: View {
 
   @State private var bootstrapStarted = false
   @State private var isReady = false
+
+  private let minimumIntroDuration: Duration = .seconds(3)
 
   var body: some View {
     ZStack {
@@ -33,13 +37,21 @@ struct StartupGateView: View {
       guard !bootstrapStarted else { return }
       bootstrapStarted = true
 
+      let clock = ContinuousClock()
+      let earliestTransition = clock.now.advanced(by: minimumIntroDuration)
+
       await appState.bootstrap()
+
+      // Fast machines can finish bootstrap almost immediately. Keep the visual
+      // boot sequence on screen until the minimum intro time has elapsed, while
+      // never delaying a bootstrap that itself takes longer than that minimum.
+      try? await clock.sleep(until: earliestTransition)
       await Task.yield()
 
       if reduceMotion {
         isReady = true
       } else {
-        withAnimation(.easeOut(duration: 0.42)) {
+        withAnimation(.easeOut(duration: 0.48)) {
           isReady = true
         }
       }
