@@ -3,13 +3,19 @@ import Foundation
 
 /// Serial Core ML prediction engine with an in-process model cache.
 ///
-/// Large compiled transformer graphs can spend tens of seconds building their
-/// execution plan. Keeping the `MLModel` actor-isolated means a compiled model is
-/// loaded once per application process and then reused for subsequent predictions
-/// without transferring the non-Sendable model across isolation boundaries.
-public actor CoreMLPredictionRunner {
+/// Xcode 27 exposes async Core ML entry points with strict Sendability rules,
+/// while `MLModel`, `MLFeatureValue`, and `MLFeatureProvider` remain reference
+/// types that should not be transferred between concurrency regions. AgenTM5N
+/// therefore keeps loading, the cache, feature construction, and synchronous
+/// prediction on one dedicated background queue. Only URLs/JSON input and the
+/// Sendable `CoreMLPredictionResult` cross the async boundary.
+public final class CoreMLPredictionRunner: @unchecked Sendable {
   public static let shared = CoreMLPredictionRunner()
 
+  private let queue = DispatchQueue(
+    label: "AgenTM5N.CoreMLPredictionRunner",
+    qos: .userInitiated
+  )
   private var loadedModels: [String: MLModel] = [:]
 
   public init() {}
@@ -18,6 +24,37 @@ public actor CoreMLPredictionRunner {
     compiledURL: URL,
     jsonInput: String
   ) async throws -> CoreMLPredictionResult {
+    try await withCheckedThrowingContinuation { continuation in
+      queue.async { [self] in
+        do {
+          continuation.resume(
+            returning: try predictOnQueue(
+              compiledURL: compiledURL,
+              jsonInput: jsonInput
+            )
+          )
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  public func clearCache() async {
+    await withCheckedContinuation { continuation in
+      queue.async { [self] in
+        loadedModels.removeAll(keepingCapacity: false)
+        continuation.resume()
+      }
+    }
+  }
+
+  private func predictOnQueue(
+    compiledURL: URL,
+    jsonInput: String
+  ) throws -> CoreMLPredictionResult {
+    dispatchPrecondition(condition: .onQueue(queue))
+
     guard let data = jsonInput.data(using: .utf8) else {
       throw CoreMLServiceError.invalidJSON
     }
@@ -29,7 +66,7 @@ public actor CoreMLPredictionRunner {
       throw CoreMLServiceError.invalidJSON
     }
 
-    let model = try await cachedModel(at: compiledURL)
+    let model = try cachedModelOnQueue(at: compiledURL)
 
     var featureValues: [String: MLFeatureValue] = [:]
     for (name, description) in model.modelDescription.inputDescriptionsByName {
@@ -42,10 +79,9 @@ public actor CoreMLPredictionRunner {
     }
 
     let input = PredictionFeatureProvider(values: featureValues)
-    let clock = ContinuousClock()
-    let startedAt = clock.now
-    let output = try await model.prediction(from: input)
-    let elapsed = startedAt.duration(to: clock.now)
+    let startedAt = ContinuousClock().now
+    let output = try model.prediction(from: input)
+    let elapsed = startedAt.duration(to: ContinuousClock().now)
 
     var resultValues: [String: String] = [:]
     for name in output.featureNames.sorted() {
@@ -59,11 +95,8 @@ public actor CoreMLPredictionRunner {
     )
   }
 
-  public func clearCache() {
-    loadedModels.removeAll(keepingCapacity: false)
-  }
-
-  private func cachedModel(at url: URL) async throws -> MLModel {
+  private func cachedModelOnQueue(at url: URL) throws -> MLModel {
+    dispatchPrecondition(condition: .onQueue(queue))
     let key = url.standardizedFileURL.path
     if let existing = loadedModels[key] {
       return existing
@@ -74,10 +107,7 @@ public actor CoreMLPredictionRunner {
     // stateful transformer graphs that cannot build an execution plan when
     // GPU is excluded by `.cpuAndNeuralEngine` on current macOS runtimes.
     configuration.computeUnits = .all
-    let model = try await MLModel.load(
-      contentsOf: url,
-      configuration: configuration
-    )
+    let model = try MLModel(contentsOf: url, configuration: configuration)
     loadedModels[key] = model
     return model
   }
