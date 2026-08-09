@@ -4,6 +4,7 @@ public enum AgentToolCapability: String, Codable, CaseIterable, Sendable {
   case workspace
   case terminal
   case ssh
+  case edge
   case git
   case macPersonal
   case secrets
@@ -62,6 +63,7 @@ public enum AgentToolRegistry {
         + GeneratedDocumentAgentTools.definitions
         + PersistentAgentTools.definitions
         + PlatformExpansionAgentTools.definitions
+        + EdgeAgentTools.definitions
         + AgentDelegationTools.definitions
         + WorkflowAgentTools.definitions
     )
@@ -99,6 +101,12 @@ public enum AgentToolRegistry {
     .init(name: "ssh_download", capability: .ssh, risk: .execute, secretAware: true),
     .init(name: "ssh_tail_log", capability: .ssh, risk: .execute, secretAware: true),
     .init(name: "ssh_run_batch", capability: .ssh, risk: .execute, secretAware: true),
+
+    .init(name: "edge_list_nodes", capability: .edge, risk: .read, cacheable: true, secretAware: true),
+    .init(name: "edge_list_directory", capability: .edge, risk: .read, secretAware: true),
+    .init(name: "edge_read_file", capability: .edge, risk: .read, secretAware: true),
+    .init(name: "edge_write_file", capability: .edge, risk: .write, secretAware: true),
+    .init(name: "edge_control", capability: .edge, risk: .execute, secretAware: true),
 
     .init(name: "git_status", capability: .git, risk: .read, cacheable: true),
     .init(name: "git_diff", capability: .git, risk: .read),
@@ -185,6 +193,7 @@ public enum AgentToolRegistry {
 
   public static func isRemoteOrExternal(_ name: String) -> Bool {
     entry(named: name)?.capability == .ssh
+      || entry(named: name)?.capability == .edge
       || entry(named: name)?.capability == .http
       || name == "app_check_update"
   }
