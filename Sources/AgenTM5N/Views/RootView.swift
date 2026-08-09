@@ -12,6 +12,7 @@ struct RootView: View {
   @State private var showingDocumentStudio = false
   @State private var showingMacAccessCenter = false
   @State private var showingAgents = false
+  @State private var showingTools = false
   @State private var showingWorkflows = false
   @State private var showingActivity = false
 
@@ -35,6 +36,25 @@ struct RootView: View {
               Spacer()
               if !agentLibrary.profiles.isEmpty {
                 Text("\(agentLibrary.profiles.count)")
+                  .font(.caption.monospacedDigit())
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .buttonStyle(.plain)
+
+          Button {
+            showingTools = true
+          } label: {
+            HStack {
+              Label(
+                L10n.text(de: "Tools", en: "Tools", fr: "Outils"),
+                systemImage: "wrench.and.screwdriver"
+              )
+              Spacer()
+              let toolCount = SelfBuiltToolLibrary.shared.records.count
+              if toolCount > 0 {
+                Text("\(toolCount)")
                   .font(.caption.monospacedDigit())
                   .foregroundStyle(.secondary)
               }
@@ -274,6 +294,10 @@ struct RootView: View {
     }
     .sheet(isPresented: $showingAgents) {
       AgentsView()
+        .environmentObject(appState)
+    }
+    .sheet(isPresented: $showingTools) {
+      ToolsView()
         .environmentObject(appState)
     }
     .sheet(isPresented: $showingWorkflows) {
