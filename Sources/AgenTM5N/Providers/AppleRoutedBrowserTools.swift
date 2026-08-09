@@ -141,6 +141,7 @@ private struct BrowserActionTool: Tool {
   func call(arguments: Arguments) async throws -> String {
     var values: [String: JSONValue] = [
       "action": .string(arguments.action),
+      "text": .string(arguments.text),
       "amount": .number(Double(arguments.amount)),
       "timeout_ms": .number(Double(arguments.timeoutMilliseconds)),
     ]
@@ -149,7 +150,6 @@ private struct BrowserActionTool: Tool {
       ("ref", arguments.ref),
       ("selector", arguments.selector),
       ("target_text", arguments.targetText),
-      ("text", arguments.text),
       ("key", arguments.key),
     ]
     for (name, value) in optional
