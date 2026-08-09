@@ -13,6 +13,8 @@ public actor AgentToolExecutionBridge {
   private var sessionID: UUID?
   private var executor: Executor?
   private var capabilityScopes: [CapabilityScopeFrame] = []
+  private var executionBusy = false
+  private var executionWaiters: [CheckedContinuation<Void, Never>] = []
 
   public init() {}
 
@@ -23,6 +25,12 @@ public actor AgentToolExecutionBridge {
     self.sessionID = sessionID
     self.executor = executor
     capabilityScopes.removeAll(keepingCapacity: true)
+    executionBusy = false
+    let waiters = executionWaiters
+    executionWaiters.removeAll(keepingCapacity: false)
+    for waiter in waiters {
+      waiter.resume()
+    }
   }
 
   public func clear(sessionID: UUID) {
@@ -30,6 +38,12 @@ public actor AgentToolExecutionBridge {
     self.sessionID = nil
     executor = nil
     capabilityScopes.removeAll(keepingCapacity: true)
+    executionBusy = false
+    let waiters = executionWaiters
+    executionWaiters.removeAll(keepingCapacity: false)
+    for waiter in waiters {
+      waiter.resume()
+    }
   }
 
   /// Persists a delegated capability scope across Foundation Models-created
@@ -57,6 +71,9 @@ public actor AgentToolExecutionBridge {
   }
 
   public func execute(_ call: ProviderToolCall) async -> String {
+    await acquireExecutionPermit()
+    defer { releaseExecutionPermit() }
+
     let scope = capabilityScopes.last?.capabilities
       ?? AgentCapabilityExecutionContext.allowedCapabilities
 
@@ -80,5 +97,32 @@ public actor AgentToolExecutionBridge {
     }
 
     return await executor(call)
+  }
+
+  /// Foundation Models may schedule several tool adapters concurrently. AppState
+  /// intentionally displays one approval sheet at a time, so native tool execution
+  /// is serialized here before it reaches the shared permission/audit router. The
+  /// Ollama loops are already sequential; this closes the framework-concurrency gap
+  /// without allowing one pending approval continuation to overwrite another.
+  private func acquireExecutionPermit() async {
+    if !executionBusy {
+      executionBusy = true
+      return
+    }
+
+    await withCheckedContinuation { continuation in
+      executionWaiters.append(continuation)
+    }
+  }
+
+  private func releaseExecutionPermit() {
+    if executionWaiters.isEmpty {
+      executionBusy = false
+      return
+    }
+
+    let next = executionWaiters.removeFirst()
+    // Keep executionBusy true: ownership transfers directly to the next waiter.
+    next.resume()
   }
 }
