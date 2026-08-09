@@ -217,13 +217,16 @@ struct AgentsView: View {
           }
         } else {
           Label(
-            "Alle zentral autorisierten AgenTM5N-Capabilities erben",
-            systemImage: "checkmark.shield"
+            "Volle Tool-Parität mit dem Haupt-Agenten",
+            systemImage: "checkmark.shield.fill"
           )
-          .foregroundStyle(.secondary)
+          .fontWeight(.semibold)
+          Text("Dieser Agent erbt standardmäßig alle zentral autorisierten AgenTM5N-Werkzeuge des Haupt-Agenten. Eine Capability-Liste wird nur verwendet, wenn ausdrücklich eine eingeschränkte Sandbox gewünscht ist.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
 
-        Text("Die Capability-Auswahl begrenzt nur verfügbare Werkzeuge. Permission-, Audit-, Vault- und macOS-Regeln bleiben immer aktiv.")
+        Text("Permission-, Audit-, Vault-, Workspace- und macOS-Regeln bleiben auch bei voller Tool-Parität immer aktiv.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -254,7 +257,7 @@ struct AgentsView: View {
           }
 
         HStack {
-          Text("Die Aufgabe wird über agent_delegate an das gespeicherte Profil übergeben.")
+          Text("Die Aufgabe wird über agent_delegate mit denselben zentralen Tools wie beim Haupt-Agenten ausgeführt.")
             .font(.caption)
             .foregroundStyle(.secondary)
 
@@ -306,7 +309,7 @@ struct AgentsView: View {
 
   private func prepareAgentCreation() {
     appState.inputText = """
-      Ich möchte einen neuen persistenten Spezial-Agenten erstellen. Hilf mir, einen präzisen Namen, einen klaren wiederkehrenden Zweck, vollständige operative Anweisungen und passende AgenTM5N-Tool-Capabilities festzulegen. Speichere den fertigen Agenten anschließend mit agent_create, damit er dauerhaft in der Rubrik Agenten verfügbar ist. Speichere keine Passwörter, API-Keys, Tokens oder Private Keys im Agentenprofil.
+      Ich möchte einen neuen persistenten Spezial-Agenten erstellen. Hilf mir, einen präzisen Namen, einen klaren wiederkehrenden Zweck und vollständige operative Anweisungen festzulegen. Speichere den fertigen Agenten anschließend mit agent_create. Verwende capabilities=all, damit der neue Agent standardmäßig dieselben zentral autorisierten AgenTM5N-Werkzeuge wie der Haupt-Agent bedienen kann. Verwende eine eingeschränkte Capability-Liste nur dann, wenn ich ausdrücklich eine Sandbox verlange. Speichere keine Passwörter, API-Keys, Tokens oder Private Keys im Agentenprofil.
       """
     appState.selectedSection = .chat
     dismiss()
@@ -317,7 +320,7 @@ struct AgentsView: View {
     guard !task.isEmpty, profile.isEnabled else { return }
 
     appState.inputText = """
-      Delegiere die folgende Aufgabe mit dem AgenTM5N-Werkzeug agent_delegate an den gespeicherten Spezial-Agenten "\(profile.name)". Verwende dessen gespeicherten Provider und dessen Capability-Einschränkungen. Fasse das tatsächliche Delegationsergebnis anschließend für mich zusammen.
+      Delegiere die folgende Aufgabe mit dem AgenTM5N-Werkzeug agent_delegate an den gespeicherten Spezial-Agenten "\(profile.name)". Aktiviere dessen AgenTM5N-Werkzeuge. Der Agent soll standardmäßig dieselben zentral autorisierten Werkzeuge wie der Haupt-Agent verwenden; bestehende explizite Sandbox-Einschränkungen des Profils bleiben erhalten. Fasse das tatsächliche Delegationsergebnis anschließend für mich zusammen.
 
       Aufgabe:
       \(task)
