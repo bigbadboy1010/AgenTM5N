@@ -93,7 +93,13 @@ public enum CoreMLManagedStorage {
       ofItemAtPath: directory.path
     )
 
-    let contentHash = try digest ?? contentDigest(at: sourceURL)
+    let contentHash: String
+    if let digest {
+      contentHash = digest
+    } else {
+      contentHash = try contentDigest(at: sourceURL)
+    }
+
     let baseName = sanitizedBaseName(
       sourceURL.deletingPathExtension().lastPathComponent
     )
