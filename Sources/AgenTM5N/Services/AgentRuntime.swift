@@ -265,6 +265,10 @@ public actor AgentRuntime {
     workspacePath: String,
     permissionMode: AgentPermissionMode
   ) async -> ToolExecutionResult {
+    if BrowserAgentTools.handles(call) {
+      return await MicrosoftEdgeBrowserService.shared.execute(call: call)
+    }
+
     do {
       if let repeated = repetitionBlock(for: call) {
         throw repeated
