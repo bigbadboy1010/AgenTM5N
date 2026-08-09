@@ -1,67 +1,85 @@
 import CoreML
 import Foundation
 
-/// Executes one Core ML prediction without transferring `MLModel` or
-/// `MLFeatureProvider` instances across the `CoreMLService` actor boundary.
+/// Serial Core ML prediction engine with an in-process model cache.
 ///
-/// Xcode 27 exposes prediction as an `@concurrent` async operation. Loading the
-/// model and creating the feature provider inside the detached task keeps all
-/// non-Sendable Core ML objects in one isolated execution region. Only the
-/// compiled model URL, JSON text and the Sendable result cross boundaries.
-public enum CoreMLPredictionRunner {
-  public static func predict(
+/// Large compiled transformer graphs can spend tens of seconds building their
+/// execution plan. Keeping the `MLModel` actor-isolated means a compiled model is
+/// loaded once per application process and then reused for subsequent predictions
+/// without transferring the non-Sendable model across isolation boundaries.
+public actor CoreMLPredictionRunner {
+  public static let shared = CoreMLPredictionRunner()
+
+  private var loadedModels: [String: MLModel] = [:]
+
+  public init() {}
+
+  public func predict(
     compiledURL: URL,
     jsonInput: String
   ) async throws -> CoreMLPredictionResult {
-    try await Task.detached(priority: .userInitiated) {
-      guard let data = jsonInput.data(using: .utf8) else {
-        throw CoreMLServiceError.invalidJSON
-      }
+    guard let data = jsonInput.data(using: .utf8) else {
+      throw CoreMLServiceError.invalidJSON
+    }
 
-      let values: [String: JSONValue]
-      do {
-        values = try JSONDecoder().decode([String: JSONValue].self, from: data)
-      } catch {
-        throw CoreMLServiceError.invalidJSON
-      }
+    let values: [String: JSONValue]
+    do {
+      values = try JSONDecoder().decode([String: JSONValue].self, from: data)
+    } catch {
+      throw CoreMLServiceError.invalidJSON
+    }
 
-      let configuration = MLModelConfiguration()
-      // `.all` keeps CPU, GPU and ANE available. This matters for large
-      // stateful transformer graphs that cannot build an execution plan when
-      // GPU is excluded by `.cpuAndNeuralEngine` on current macOS runtimes.
-      configuration.computeUnits = .all
-      let model = try await MLModel.load(
-        contentsOf: compiledURL,
-        configuration: configuration
+    let model = try await cachedModel(at: compiledURL)
+
+    var featureValues: [String: MLFeatureValue] = [:]
+    for (name, description) in model.modelDescription.inputDescriptionsByName {
+      guard let value = values[name] else { continue }
+      featureValues[name] = try Self.makeFeatureValue(
+        value,
+        name: name,
+        description: description
       )
+    }
 
-      var featureValues: [String: MLFeatureValue] = [:]
-      for (name, description) in model.modelDescription.inputDescriptionsByName {
-        guard let value = values[name] else { continue }
-        featureValues[name] = try makeFeatureValue(
-          value,
-          name: name,
-          description: description
-        )
-      }
+    let input = PredictionFeatureProvider(values: featureValues)
+    let clock = ContinuousClock()
+    let startedAt = clock.now
+    let output = try await model.prediction(from: input)
+    let elapsed = startedAt.duration(to: clock.now)
 
-      let input = PredictionFeatureProvider(values: featureValues)
-      let clock = ContinuousClock()
-      let startedAt = clock.now
-      let output = try await model.prediction(from: input)
-      let elapsed = startedAt.duration(to: clock.now)
+    var resultValues: [String: String] = [:]
+    for name in output.featureNames.sorted() {
+      guard let value = output.featureValue(for: name) else { continue }
+      resultValues[name] = Self.describe(value)
+    }
 
-      var resultValues: [String: String] = [:]
-      for name in output.featureNames.sorted() {
-        guard let value = output.featureValue(for: name) else { continue }
-        resultValues[name] = describe(value)
-      }
+    return CoreMLPredictionResult(
+      values: resultValues,
+      durationMilliseconds: Self.milliseconds(from: elapsed)
+    )
+  }
 
-      return CoreMLPredictionResult(
-        values: resultValues,
-        durationMilliseconds: milliseconds(from: elapsed)
-      )
-    }.value
+  public func clearCache() {
+    loadedModels.removeAll(keepingCapacity: false)
+  }
+
+  private func cachedModel(at url: URL) async throws -> MLModel {
+    let key = url.standardizedFileURL.path
+    if let existing = loadedModels[key] {
+      return existing
+    }
+
+    let configuration = MLModelConfiguration()
+    // `.all` keeps CPU, GPU and ANE available. This matters for large
+    // stateful transformer graphs that cannot build an execution plan when
+    // GPU is excluded by `.cpuAndNeuralEngine` on current macOS runtimes.
+    configuration.computeUnits = .all
+    let model = try await MLModel.load(
+      contentsOf: url,
+      configuration: configuration
+    )
+    loadedModels[key] = model
+    return model
   }
 
   private static func makeFeatureValue(
