@@ -501,7 +501,7 @@ public actor MicrosoftEdgeBrowserService {
         text: element.text.map { boundedDisplayText($0, limit: 300) },
         label: element.label.map { boundedDisplayText($0, limit: 300) },
         name: element.name.map { boundedDisplayText($0, limit: 200) },
-        href: element.href.map(sanitizedDisplayURL),
+        href: element.href.map { sanitizedDisplayURL($0) },
         disabled: element.disabled,
         checked: element.checked,
         selectedText: element.selectedText.map { boundedDisplayText($0, limit: 300) }
@@ -778,9 +778,9 @@ public actor MicrosoftEdgeBrowserService {
     try ensureProfileDirectory()
     try? fileManager.removeItem(at: devToolsActivePortURL)
     let binary = try edgeBinaryURL()
-    let edge = Process()
-    edge.executableURL = binary
-    edge.arguments = [
+    let launchedProcess = Process()
+    launchedProcess.executableURL = binary
+    launchedProcess.arguments = [
       "--remote-debugging-port=0",
       "--remote-debugging-address=127.0.0.1",
       "--user-data-dir=\(profileDirectory.path)",
@@ -788,23 +788,18 @@ public actor MicrosoftEdgeBrowserService {
       "--no-default-browser-check",
       "about:blank",
     ]
-    edge.standardOutput = FileHandle.nullDevice
-    edge.standardError = FileHandle.nullDevice
+    launchedProcess.standardOutput = FileHandle.nullDevice
+    launchedProcess.standardError = FileHandle.nullDevice
 
     do {
-      try edge.run()
+      try launchedProcess.run()
     } catch {
       throw MicrosoftEdgeBrowserError.launchFailed(error.localizedDescription)
     }
-    process = edge
+    process = launchedProcess
 
     for _ in 0..<150 {
       try Task.checkCancellation()
-      if !edge.isRunning {
-        throw MicrosoftEdgeBrowserError.launchFailed(
-          "Der Edge-Prozess wurde vorzeitig beendet."
-        )
-      }
       if let port = readActivePort(), await canConnect(port: port) {
         activePort = port
         if let allTargets = try? await targets(port: port) {
@@ -812,11 +807,16 @@ public actor MicrosoftEdgeBrowserService {
         }
         return port
       }
+      if process?.isRunning == false {
+        throw MicrosoftEdgeBrowserError.launchFailed(
+          "Der Edge-Prozess wurde vorzeitig beendet."
+        )
+      }
       try await Task.sleep(for: .milliseconds(100))
     }
 
-    if edge.isRunning {
-      edge.terminate()
+    if process?.isRunning == true {
+      process?.terminate()
     }
     process = nil
     throw MicrosoftEdgeBrowserError.devToolsUnavailable(
@@ -996,7 +996,7 @@ public actor MicrosoftEdgeBrowserService {
       message: payload.message,
       tabID: target.id,
       title: payload.title.map { boundedDisplayText($0, limit: 300) },
-      url: payload.url.map(sanitizedDisplayURL)
+      url: payload.url.map { sanitizedDisplayURL($0) }
     )
   }
 
@@ -1134,8 +1134,8 @@ public actor MicrosoftEdgeBrowserService {
             if (el.isContentEditable) {
               el.textContent = VALUE;
             } else if ('value' in el) {
-              letPrototype = Object.getPrototypeOf(el);
-              const descriptor = Object.getOwnPropertyDescriptor(letPrototype, 'value');
+              const prototype = Object.getPrototypeOf(el);
+              const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
               if (descriptor && descriptor.set) descriptor.set.call(el, VALUE);
               else el.value = VALUE;
             } else {
@@ -1380,7 +1380,10 @@ public actor MicrosoftEdgeBrowserService {
       throw MicrosoftEdgeBrowserError.invalidURL(value)
     }
     if scheme == "http" || scheme == "https" {
-      guard url.host != nil else {
+      guard url.host != nil,
+        url.user == nil,
+        url.password == nil
+      else {
         throw MicrosoftEdgeBrowserError.invalidURL(value)
       }
     }
@@ -1446,17 +1449,9 @@ public actor MicrosoftEdgeBrowserService {
     components.fragment = nil
     if let queryItems = components.queryItems {
       components.queryItems = queryItems.map { item in
-        let normalized = item.name.lowercased()
-        let sensitiveFragments = [
-          "token", "secret", "password", "passwd", "key", "auth", "jwt",
-          "session", "ticket", "sso", "code", "signature", "credential"
-        ]
-        if sensitiveFragments.contains(where: { normalized.contains($0) }) {
-          return URLQueryItem(name: item.name, value: "<redacted>")
-        }
-        return URLQueryItem(
+        URLQueryItem(
           name: item.name,
-          value: item.value.map { String($0.prefix(500)) }
+          value: item.value == nil ? nil : "<redacted>"
         )
       }
     }
