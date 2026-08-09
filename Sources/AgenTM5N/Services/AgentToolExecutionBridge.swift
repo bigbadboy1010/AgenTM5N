@@ -25,6 +25,14 @@ public actor AgentToolExecutionBridge {
   }
 
   public func execute(_ call: ProviderToolCall) async -> String {
+    if let scope = AgentCapabilityExecutionContext.allowedCapabilities,
+      !AgentToolRegistry.isAllowed(call.function.name, within: scope)
+    {
+      let capability = AgentToolRegistry.entry(named: call.function.name)?.capability.rawValue
+        ?? "unknown"
+      return "TOOL_ERROR: CAPABILITY_DENIED — \(call.function.name) benötigt Capability \(capability)."
+    }
+
     guard let executor else {
       return "TOOL_ERROR: AgenTM5N provider-neutral tool router is not active."
     }
