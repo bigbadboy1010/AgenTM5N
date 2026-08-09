@@ -139,6 +139,9 @@ extension AppState {
     call: ProviderToolCall,
     risk: ToolRisk
   ) -> Bool {
+    if BrowserAgentTools.handles(call) {
+      return risk != .read
+    }
     if AgentToolRegistry.isRemoteOrExternal(call.function.name) {
       return true
     }
