@@ -198,21 +198,33 @@ struct AgentsView: View {
     }
   }
 
+  @ViewBuilder
   private func agentCapabilities(_ profile: SavedAgentProfile) -> some View {
     GroupBox("Werkzeug-Capabilities") {
       VStack(alignment: .leading, spacing: 10) {
-        if let capabilities = profile.allowedCapabilities, !capabilities.isEmpty {
-          LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 120), alignment: .leading)],
-            alignment: .leading,
-            spacing: 8
-          ) {
-            ForEach(capabilities, id: \.rawValue) { capability in
-              Label(capabilityTitle(capability), systemImage: capabilityIcon(capability))
-                .font(.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(.quaternary, in: Capsule())
+        if let capabilities = profile.allowedCapabilities {
+          if capabilities.isEmpty {
+            Label(
+              "Keine Tool-Capabilities freigegeben",
+              systemImage: "lock.shield.fill"
+            )
+            .fontWeight(.semibold)
+            Text("Dieser Agent besitzt eine explizite leere Sandbox. Er kann Sprachmodell-Aufgaben bearbeiten, aber keine AgenTM5N-Werkzeuge aufrufen.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          } else {
+            LazyVGrid(
+              columns: [GridItem(.adaptive(minimum: 120), alignment: .leading)],
+              alignment: .leading,
+              spacing: 8
+            ) {
+              ForEach(capabilities, id: \.rawValue) { capability in
+                Label(capabilityTitle(capability), systemImage: capabilityIcon(capability))
+                  .font(.caption)
+                  .padding(.horizontal, 8)
+                  .padding(.vertical, 5)
+                  .background(.quaternary, in: Capsule())
+              }
             }
           }
         } else {
@@ -226,7 +238,7 @@ struct AgentsView: View {
             .foregroundStyle(.secondary)
         }
 
-        Text("Permission-, Audit-, Vault-, Workspace- und macOS-Regeln bleiben auch bei voller Tool-Parität immer aktiv.")
+        Text("Permission-, Audit-, Vault-, Workspace- und macOS-Regeln bleiben in jedem Capability-Modus aktiv. Verschachtelte Delegationen können einen vorhandenen Sandbox-Scope nur weiter einschränken, niemals erweitern.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -257,7 +269,7 @@ struct AgentsView: View {
           }
 
         HStack {
-          Text("Die Aufgabe wird über agent_delegate mit denselben zentralen Tools wie beim Haupt-Agenten ausgeführt.")
+          Text("Die Aufgabe wird über agent_delegate ausgeführt. Explizite Capability-Sandboxes des Profils und eines delegierenden Parent-Agenten bleiben technisch wirksam.")
             .font(.caption)
             .foregroundStyle(.secondary)
 
@@ -320,7 +332,7 @@ struct AgentsView: View {
     guard !task.isEmpty, profile.isEnabled else { return }
 
     appState.inputText = """
-      Delegiere die folgende Aufgabe mit dem AgenTM5N-Werkzeug agent_delegate an den gespeicherten Spezial-Agenten "\(profile.name)". Aktiviere dessen AgenTM5N-Werkzeuge. Der Agent soll standardmäßig dieselben zentral autorisierten Werkzeuge wie der Haupt-Agent verwenden; bestehende explizite Sandbox-Einschränkungen des Profils bleiben erhalten. Fasse das tatsächliche Delegationsergebnis anschließend für mich zusammen.
+      Delegiere die folgende Aufgabe mit dem AgenTM5N-Werkzeug agent_delegate an den gespeicherten Spezial-Agenten "\(profile.name)". Aktiviere dessen AgenTM5N-Werkzeuge. Der Agent soll seine zentral autorisierten Werkzeuge verwenden; bestehende explizite Sandbox-Einschränkungen des Profils sowie eines delegierenden Parent-Agenten bleiben erhalten und dürfen nicht erweitert werden. Fasse das tatsächliche Delegationsergebnis anschließend für mich zusammen.
 
       Aufgabe:
       \(task)
