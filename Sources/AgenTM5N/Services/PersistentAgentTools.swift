@@ -73,8 +73,10 @@ public enum PersistentAgentTools {
       return SelfBuiltToolAgentTools.risk(for: call)
     }
     switch call.function.name {
-    case "agent_list", "agent_get": .read
-    default: .write
+    case "agent_list", "agent_get":
+      return .read
+    default:
+      return .write
     }
   }
 
