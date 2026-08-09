@@ -19,7 +19,6 @@ public enum AgentToolCapability: String, Codable, CaseIterable, Hashable, Sendab
   case documents
   case agents
   case workflows
-  case customTools
   case updates
 }
 
@@ -84,7 +83,7 @@ public enum AgentToolRegistry {
         .filter { capabilities.contains($0.capability) }
         .map(\.name)
     )
-    if capabilities.contains(.customTools) {
+    if capabilities.contains(.terminal) {
       for tool in SelfBuiltToolLibrary.shared.records where tool.isEnabled {
         names.insert(tool.name)
       }
@@ -193,11 +192,11 @@ public enum AgentToolRegistry {
     .init(name: "workflow_delete", capability: .workflows, risk: .write),
     .init(name: "workflow_run", capability: .workflows, risk: .execute),
 
-    .init(name: "toolsmith_list", capability: .customTools, risk: .read),
-    .init(name: "toolsmith_get", capability: .customTools, risk: .read),
-    .init(name: "toolsmith_create", capability: .customTools, risk: .write),
-    .init(name: "toolsmith_delete", capability: .customTools, risk: .write),
-    .init(name: "toolsmith_run", capability: .customTools, risk: .execute),
+    .init(name: "toolsmith_list", capability: .terminal, risk: .read),
+    .init(name: "toolsmith_get", capability: .terminal, risk: .read),
+    .init(name: "toolsmith_create", capability: .terminal, risk: .write),
+    .init(name: "toolsmith_delete", capability: .terminal, risk: .write),
+    .init(name: "toolsmith_run", capability: .terminal, risk: .execute),
 
     .init(name: "document_generate", capability: .documents, risk: .write),
     .init(name: "document_list_generated", capability: .documents, risk: .read, cacheable: true),
@@ -214,7 +213,7 @@ public enum AgentToolRegistry {
     if SelfBuiltToolAgentTools.isDynamicToolName(name) {
       return AgentToolCatalogEntry(
         name: name,
-        capability: .customTools,
+        capability: .terminal,
         risk: .execute,
         cacheable: false,
         secretAware: false
@@ -224,6 +223,11 @@ public enum AgentToolRegistry {
   }
 
   public static func isRemoteOrExternal(_ name: String) -> Bool {
+    if SelfBuiltToolAgentTools.managementNames.contains(name)
+      || SelfBuiltToolAgentTools.isDynamicToolName(name)
+    {
+      return true
+    }
     guard let capability = entry(named: name)?.capability else {
       return name == "app_check_update"
     }
@@ -231,7 +235,6 @@ public enum AgentToolRegistry {
       || capability == .edge
       || capability == .browser
       || capability == .http
-      || capability == .customTools
       || name == "app_check_update"
   }
 
