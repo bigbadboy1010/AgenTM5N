@@ -45,5 +45,10 @@ let package = Package(
         .linkedFramework("Vision"),
       ]
     ),
+    .testTarget(
+      name: "AgenTM5NTests",
+      dependencies: ["AgenTM5N"],
+      path: "Tests/AgenTM5NTests"
+    ),
   ]
 )
