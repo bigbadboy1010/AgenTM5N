@@ -7,6 +7,7 @@ public enum SecureSecretBrokerError: LocalizedError {
   case invalidURL(String)
   case unsupportedScheme(String)
   case insecureSecretTransport(String)
+  case secretHostMismatch(expected: String, actual: String)
   case invalidHeaderName(String)
   case sensitiveHeaderBlocked(String)
   case responseTooLarge(Int)
@@ -25,6 +26,8 @@ public enum SecureSecretBrokerError: LocalizedError {
       return "Nicht unterstütztes URL-Schema: \(value). Erlaubt sind http und https."
     case .insecureSecretTransport(let host):
       return "Ein Secret wird nicht über unverschlüsseltes HTTP an \(host) gesendet. Verwende HTTPS; HTTP mit Secrets ist nur für Loopback (localhost/127.0.0.0/8/::1) erlaubt."
+    case .secretHostMismatch(let expected, let actual):
+      return "Das ausgewählte Vault-Secret ist an \(expected) gebunden und darf nicht an \(actual) gesendet werden. Passe den Host des Secrets an oder verwende ein passendes secret_ref."
     case .invalidHeaderName(let name):
       return "Ungültiger HTTP-Headername: \(name)"
     case .sensitiveHeaderBlocked(let name):
@@ -167,6 +170,9 @@ public struct SecureHTTPClient: Sendable {
     guard scheme == "https" || scheme == "http" else {
       throw SecureSecretBrokerError.unsupportedScheme(scheme)
     }
+    if let secret {
+      try Self.validateSecretHostBinding(secret, requestHost: host)
+    }
     if secret != nil, scheme != "https", !Self.isLoopbackHost(host) {
       throw SecureSecretBrokerError.insecureSecretTransport(host)
     }
@@ -288,11 +294,47 @@ public struct SecureHTTPClient: Sendable {
     )
   }
 
+  /// Enforces optional host binding stored with a Vault secret. An empty host
+  /// keeps backward compatibility for deliberately generic secrets; once a host
+  /// is configured, the secret can only leave AgenTM5N for that exact host.
+  public static func validateSecretHostBinding(
+    _ secret: VaultSecret,
+    requestHost: String
+  ) throws {
+    guard let expected = normalizedHost(secret.host) else { return }
+    let actual = normalizedHost(requestHost) ?? requestHost.lowercased()
+    guard expected == actual else {
+      throw SecureSecretBrokerError.secretHostMismatch(
+        expected: expected,
+        actual: actual
+      )
+    }
+  }
+
   fileprivate static func isLoopbackHost(_ host: String) -> Bool {
-    let normalized = host.lowercased()
+    let normalized = normalizedHost(host) ?? host.lowercased()
     return normalized == "localhost"
       || normalized == "::1"
       || normalized.hasPrefix("127.")
+  }
+
+  private static func normalizedHost(_ value: String) -> String? {
+    var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalized.isEmpty else { return nil }
+
+    if let url = URL(string: normalized), let host = url.host {
+      normalized = host
+    } else if let url = URL(string: "https://\(normalized)"), let host = url.host {
+      normalized = host
+    }
+
+    normalized = normalized
+      .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+      .lowercased()
+    while normalized.hasSuffix(".") {
+      normalized.removeLast()
+    }
+    return normalized.isEmpty ? nil : normalized
   }
 
   private static func validateHeaderName(_ name: String) throws {
