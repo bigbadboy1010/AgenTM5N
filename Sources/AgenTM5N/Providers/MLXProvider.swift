@@ -401,7 +401,7 @@ public final class MLXProvider: @unchecked Sendable {
     }
     return [
       ProviderMessage(role: .system, content: first.content + "\n\n" + context)
-    ] + messages.dropFirst()
+    ] + Array(messages.dropFirst())
   }
 
   private func jsonString(_ value: JSONValue) throws -> String {
@@ -432,7 +432,8 @@ public final class MLXProvider: @unchecked Sendable {
       throw MLXProviderError.invalidHTTPResponse
     }
     guard (200...299).contains(httpResponse.statusCode) else {
-      let text = String(data: body.prefix(64 * 1024), encoding: .utf8) ?? "Keine Fehlerdetails"
+      let bounded = Data(body.prefix(64 * 1024))
+      let text = String(data: bounded, encoding: .utf8) ?? "Keine Fehlerdetails"
       throw MLXProviderError.httpError(statusCode: httpResponse.statusCode, body: text)
     }
   }
