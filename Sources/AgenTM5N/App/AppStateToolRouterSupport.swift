@@ -118,6 +118,19 @@ extension AppState {
       return sanitized
     }
 
+    if let blockReason = await ToolStagnationGuard.shared.blockReason(for: call) {
+      let blocked = ToolExecutionResult(success: false, output: blockReason)
+      let sanitized = sanitizeToolResult(blocked)
+      recordTelemetry(
+        call: call,
+        risk: risk,
+        result: sanitized,
+        startedAt: startedAt,
+        cacheHit: false
+      )
+      return sanitized
+    }
+
     let raw = await operation()
     let result = sanitizeToolResult(raw)
 
