@@ -125,7 +125,7 @@ public struct AgentOperatingLayerConfiguration: Codable, Equatable, Sendable {
     case .off:
       return .bool(false)
     case .standard:
-      return .bool(legacyThinkingEnabled || thinkingMode == .standard)
+      return .bool(true)
     case .low:
       return .string("low")
     case .medium:
@@ -202,11 +202,13 @@ public enum AgentOperatingLayerStore {
     )
   }
 
-  public static func effectiveToolRoundLimit(fallback: Int) -> Int {
+  public static func effectiveToolRoundLimit(fallback _: Int) -> Int {
     let value = load()
-    if !FileManager.default.fileExists(atPath: fileURL.path) {
-      return max(1, fallback)
+    if value.bundledToolsEnabled {
+      BundledToolPackInstaller.ensureInstalled()
     }
+    // 1.2.0 intentionally establishes its own default instead of inheriting
+    // the historical 8/24-round value from AppConfiguration.
     return value.effectiveToolRoundLimit
   }
 }
@@ -229,17 +231,16 @@ public final class AgentOperatingLayerSettings: ObservableObject {
   public func applyRuntimeCompatibility(to appState: AppState) {
     configuration.normalize()
     appState.configuration.maxToolIterations = configuration.effectiveToolRoundLimit
-    if configuration.thinkingMode == .off {
-      appState.configuration.thinkingEnabled = false
-    } else if configuration.thinkingMode == .standard {
-      appState.configuration.thinkingEnabled = true
-    }
+    appState.configuration.thinkingEnabled = configuration.thinkingMode != .off
   }
 
   public func saveAndApply(to appState: AppState) async {
     do {
       configuration.normalize()
       try AgentOperatingLayerStore.save(configuration)
+      if configuration.bundledToolsEnabled {
+        BundledToolPackInstaller.ensureInstalled()
+      }
       await appState.saveConfiguration()
       // saveConfiguration() in the 1.1 compatibility layer clamps the legacy
       // field to 24. Restore the effective 1.2 runtime value immediately; the
