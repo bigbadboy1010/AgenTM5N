@@ -33,6 +33,11 @@ struct SettingsView: View {
     .onChange(of: operatingLayer.configuration.maxToolRounds) { _, _ in
       operatingLayer.applyRuntimeCompatibility(to: appState)
     }
+    .onChange(of: operatingLayer.configuration.localInferenceRuntime) { _, runtime in
+      guard appState.configuration.providerKind == .ollamaLocal else { return }
+      appState.configuration.baseURL = runtime.defaultBaseURL
+      appState.availableModels = []
+    }
   }
 
   private var providerSection: some View {
@@ -49,6 +54,28 @@ struct SettingsView: View {
         }
       }
 
+      if appState.configuration.providerKind == .ollamaLocal {
+        Picker(
+          L10n.text(de: "Lokale Inference Runtime", en: "Local Inference Runtime", fr: "Runtime d’inférence locale"),
+          selection: $operatingLayer.configuration.localInferenceRuntime
+        ) {
+          Text("Ollama").tag(LocalInferenceRuntime.ollama)
+          Text("MLX / mlx_lm.server").tag(LocalInferenceRuntime.mlxServer)
+        }
+
+        if operatingLayer.configuration.localInferenceRuntime == .mlxServer {
+          Text(
+            L10n.text(
+              de: "MLX verwendet den lokalen OpenAI-kompatiblen mlx_lm.server. AgenTM5N behält Tool-Approval, Audit, Vault und Tool-Ausführung; nur die lokale Modell-Inference läuft über MLX/Metal.",
+              en: "MLX uses the local OpenAI-compatible mlx_lm.server. AgenTM5N keeps tool approval, audit, vault, and execution; only local model inference runs through MLX/Metal.",
+              fr: "MLX utilise le serveur local compatible OpenAI mlx_lm.server. AgenTM5N conserve les autorisations, l’audit, le coffre et l’exécution des outils ; seule l’inférence locale passe par MLX/Metal."
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+      }
+
       if appState.configuration.providerKind != .appleOnDevice {
         TextField("Basis-URL", text: $appState.configuration.baseURL)
         TextField(
@@ -56,13 +83,27 @@ struct SettingsView: View {
           text: $appState.configuration.model
         )
 
-        Picker(
-          L10n.text(de: "Denkmodus", en: "Thinking Mode", fr: "Mode de réflexion"),
-          selection: $operatingLayer.configuration.thinkingMode
-        ) {
-          ForEach(OllamaThinkingMode.allCases) { mode in
-            Text(thinkingTitle(mode)).tag(mode)
+        if appState.configuration.providerKind != .ollamaLocal
+          || operatingLayer.configuration.localInferenceRuntime == .ollama
+        {
+          Picker(
+            L10n.text(de: "Denkmodus", en: "Thinking Mode", fr: "Mode de réflexion"),
+            selection: $operatingLayer.configuration.thinkingMode
+          ) {
+            ForEach(OllamaThinkingMode.allCases) { mode in
+              Text(thinkingTitle(mode)).tag(mode)
+            }
           }
+        } else {
+          Text(
+            L10n.text(
+              de: "Bei MLX wird Reasoning vom geladenen Modell und dessen Chat-Template gesteuert; die Ollama-Denkmodi werden nicht übertragen.",
+              en: "With MLX, reasoning is controlled by the loaded model and its chat template; Ollama thinking modes are not forwarded.",
+              fr: "Avec MLX, le raisonnement est contrôlé par le modèle chargé et son template de chat ; les modes de réflexion Ollama ne sont pas transmis."
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
         }
       }
 
@@ -95,9 +136,9 @@ struct SettingsView: View {
       if appState.configuration.providerKind == .appleOnDevice {
         Text(
           L10n.text(
-            de: "Apple Foundation Models verwendet die native System-Runtime. Die folgenden Sampling-Parameter gelten für Ollama Local und Ollama Cloud.",
-            en: "Apple Foundation Models uses the native system runtime. The sampling parameters below apply to Ollama Local and Ollama Cloud.",
-            fr: "Apple Foundation Models utilise le runtime système natif. Les paramètres ci-dessous s’appliquent à Ollama Local et Ollama Cloud."
+            de: "Apple Foundation Models verwendet die native System-Runtime. Die folgenden Sampling-Parameter gelten für Ollama und MLX.",
+            en: "Apple Foundation Models uses the native system runtime. The sampling parameters below apply to Ollama and MLX.",
+            fr: "Apple Foundation Models utilise le runtime système natif. Les paramètres ci-dessous s’appliquent à Ollama et MLX."
           )
         )
         .font(.caption)
@@ -169,11 +210,17 @@ struct SettingsView: View {
         .multilineTextAlignment(.trailing)
         .frame(width: 110)
       }
-      LabeledContent("Keep Alive") {
-        TextField("5m", text: $operatingLayer.configuration.keepAlive)
-          .multilineTextAlignment(.trailing)
-          .frame(width: 110)
+
+      if appState.configuration.providerKind != .ollamaLocal
+        || operatingLayer.configuration.localInferenceRuntime == .ollama
+      {
+        LabeledContent("Keep Alive") {
+          TextField("5m", text: $operatingLayer.configuration.keepAlive)
+            .multilineTextAlignment(.trailing)
+            .frame(width: 110)
+        }
       }
+
       Stepper(
         L10n.text(
           de: "Request-Timeout: \(operatingLayer.configuration.requestTimeoutSeconds) s",
@@ -185,15 +232,19 @@ struct SettingsView: View {
         step: 30
       )
 
-      Text(
-        L10n.text(
-          de: "Die Werte werden vor dem Speichern validiert und begrenzt. -1 bei Max. Ausgabe-Tokens übergibt Ollama den offenen Generierungsmodus.",
-          en: "Values are validated and bounded before saving. -1 for Max Output Tokens passes Ollama's open-ended generation mode.",
-          fr: "Les valeurs sont validées avant l’enregistrement. -1 pour les tokens de sortie active le mode de génération ouvert d’Ollama."
+      if appState.configuration.providerKind == .ollamaLocal,
+        operatingLayer.configuration.localInferenceRuntime == .mlxServer
+      {
+        Text(
+          L10n.text(
+            de: "MLX übernimmt Sampling, Max Output und Repetition-Parameter pro Request. Das maximale KV-/Context-Budget des MLX-Servers wird beim Start von mlx_lm.server festgelegt; der Context-Window-Wert oben wird daher nur von Ollama verwendet.",
+            en: "MLX consumes sampling, max-output, and repetition parameters per request. The MLX server KV/context budget is configured when mlx_lm.server starts; therefore Context Window above is used only by Ollama.",
+            fr: "MLX utilise les paramètres d’échantillonnage, de sortie maximale et de répétition par requête. Le budget KV/contexte du serveur MLX est défini au démarrage de mlx_lm.server ; la fenêtre de contexte ci-dessus est donc utilisée uniquement par Ollama."
+          )
         )
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
     }
     .disabled(appState.configuration.providerKind == .appleOnDevice)
   }
@@ -281,6 +332,26 @@ struct SettingsView: View {
         .foregroundStyle(.secondary)
       }
 
+      Toggle(
+        L10n.text(
+          de: "Stagnation Guard aktivieren",
+          en: "Enable Stagnation Guard",
+          fr: "Activer Stagnation Guard"
+        ),
+        isOn: $operatingLayer.configuration.stagnationGuardEnabled
+      )
+      if operatingLayer.configuration.stagnationGuardEnabled {
+        Stepper(
+          L10n.text(
+            de: "Identische Tool-Wiederholungen: \(operatingLayer.configuration.maxIdenticalToolRounds)",
+            en: "Identical tool repetitions: \(operatingLayer.configuration.maxIdenticalToolRounds)",
+            fr: "Répétitions d’outil identiques : \(operatingLayer.configuration.maxIdenticalToolRounds)"
+          ),
+          value: $operatingLayer.configuration.maxIdenticalToolRounds,
+          in: 2...20
+        )
+      }
+
       Picker(
         L10n.text(de: "Tool-Auswahl", en: "Tool Selection", fr: "Sélection d’outils"),
         selection: $operatingLayer.configuration.toolSelectionMode
@@ -345,9 +416,9 @@ struct SettingsView: View {
     Section(L10n.text(de: "Tool-Capabilities", en: "Tool Capabilities", fr: "Capacités d’outils")) {
       Text(
         L10n.text(
-          de: "Capabilities begrenzen, welche Tool-Familien an Ollama weitergegeben werden. Spezialisierte gespeicherte Agenten dürfen diesen Scope zusätzlich nur weiter einschränken.",
-          en: "Capabilities limit which tool families are advertised to Ollama. Specialized saved agents may only narrow this scope further.",
-          fr: "Les capacités limitent les familles d’outils annoncées à Ollama. Les agents spécialisés ne peuvent que réduire davantage ce scope."
+          de: "Capabilities begrenzen, welche Tool-Familien an lokale oder Cloud-Modelle weitergegeben werden. Spezialisierte gespeicherte Agenten dürfen diesen Scope zusätzlich nur weiter einschränken.",
+          en: "Capabilities limit which tool families are advertised to local or cloud models. Specialized saved agents may only narrow this scope further.",
+          fr: "Les capacités limitent les familles d’outils annoncées aux modèles locaux ou cloud. Les agents spécialisés ne peuvent que réduire davantage ce scope."
         )
       )
       .font(.caption)
@@ -454,7 +525,7 @@ struct SettingsView: View {
   private func providerTitle(_ provider: ProviderKind) -> String {
     switch provider {
     case .ollamaLocal:
-      return "Ollama Local"
+      return "Local Runtime"
     case .ollamaCloud:
       return "Ollama Cloud"
     case .appleOnDevice:
@@ -482,7 +553,7 @@ struct SettingsView: View {
   private func capabilityTitle(_ capability: AgentToolCapability) -> String {
     switch capability {
     case .workspace: "Workspace / Files"
-    case .terminal: "Terminal / Toolsmith / Built-ins"
+    case .terminal: "Terminal / Toolsmith / MCP"
     case .ssh: "SSH"
     case .edge: "Edge Nodes"
     case .browser: "Browser"
@@ -490,7 +561,7 @@ struct SettingsView: View {
     case .macPersonal: "Calendar / Contacts / Mail"
     case .secrets: "Vault Metadata"
     case .http: "HTTP / APIs"
-    case .system: "macOS System"
+    case .system: "macOS / Containers / Kubernetes / Network"
     case .reminders: "Reminders"
     case .coreML: "Core ML / Neural Engine"
     case .memory: "Workspace Memory / Context"
@@ -528,9 +599,9 @@ struct SettingsView: View {
       )
     case .workspaceTrusted:
       return L10n.text(
-        de: "Normale, begrenzte Workspace-Dateioperationen dürfen automatisch laufen. Shell/Terminal, Remote/Browser/HTTP, Shortcuts/Toolsmith, persönliche macOS-Daten sowie System-, Agenten- und Workflow-Mutationen bleiben freigabepflichtig.",
-        en: "Normal bounded workspace file operations may run automatically. Shell/terminal, remote/browser/HTTP, Shortcuts/Toolsmith, personal macOS data, and system/agent/workflow mutations still require approval.",
-        fr: "Les opérations de fichiers normales et limitées à l’espace de travail peuvent s’exécuter automatiquement. Le shell/terminal, les actions distantes/navigateur/HTTP, Raccourcis/Toolsmith, les données macOS personnelles ainsi que les mutations système/agent/workflow nécessitent toujours une autorisation."
+        de: "Normale, begrenzte Workspace-Dateioperationen dürfen automatisch laufen. Shell/Terminal, Remote/Browser/HTTP, Shortcuts/Toolsmith/MCP, persönliche macOS-Daten sowie System-, Agenten- und Workflow-Mutationen bleiben freigabepflichtig.",
+        en: "Normal bounded workspace file operations may run automatically. Shell/terminal, remote/browser/HTTP, Shortcuts/Toolsmith/MCP, personal macOS data, and system/agent/workflow mutations still require approval.",
+        fr: "Les opérations de fichiers normales et limitées à l’espace de travail peuvent s’exécuter automatiquement. Le shell/terminal, les actions distantes/navigateur/HTTP, Raccourcis/Toolsmith/MCP, les données macOS personnelles ainsi que les mutations système/agent/workflow nécessitent toujours une autorisation."
       )
     case .fullAccess:
       return L10n.text(
