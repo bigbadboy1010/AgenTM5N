@@ -295,6 +295,10 @@ public enum AgentOperatingLayerStore {
       ofItemAtPath: fileURL.path
     )
   }
+
+  public static func runtimeToolRoundLimit(fallback: Int) -> Int {
+    load().effectiveToolRoundLimit ?? max(1_000_000_000, fallback)
+  }
 }
 
 @MainActor
@@ -314,6 +318,8 @@ public final class AgentOperatingLayerSettings: ObservableObject {
 
   public func applyRuntimeCompatibility(to appState: AppState) {
     configuration.normalize()
+    appState.configuration.maxToolIterations = configuration.effectiveToolRoundLimit
+      ?? 1_000_000_000
     appState.configuration.thinkingEnabled = configuration.thinkingMode != .off
   }
 
@@ -324,8 +330,10 @@ public final class AgentOperatingLayerSettings: ObservableObject {
       if configuration.bundledToolsEnabled {
         BundledToolPackInstaller.ensureInstalled()
       }
-      applyRuntimeCompatibility(to: appState)
       await appState.saveConfiguration()
+      // AppConfiguration still persists the legacy field for 1.1 compatibility.
+      // Restore the authoritative 1.2 runtime value after that compatibility save.
+      applyRuntimeCompatibility(to: appState)
     } catch {
       appState.errorMessage = error.localizedDescription
     }
