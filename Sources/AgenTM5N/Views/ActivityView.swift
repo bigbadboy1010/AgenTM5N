@@ -2,12 +2,16 @@ import SwiftUI
 
 struct ActivityView: View {
   @Environment(\.dismiss) private var dismiss
+  @EnvironmentObject private var appState: AppState
   @ObservedObject private var telemetry = ToolTelemetryStore.shared
+  @ObservedObject private var operatingLayer = AgentOperatingLayerSettings.shared
 
   var body: some View {
     NavigationStack {
       VStack(spacing: 0) {
-        summary
+        runtimeSummary
+        Divider()
+        telemetrySummary
         Divider()
         if telemetry.entries.isEmpty {
           ContentUnavailableView(
@@ -49,7 +53,13 @@ struct ActivityView: View {
           }
         }
       }
-      .navigationTitle(L10n.text(de: "Aktivität", en: "Activity", fr: "Activité"))
+      .navigationTitle(
+        L10n.text(
+          de: "Agent Operating Layer",
+          en: "Agent Operating Layer",
+          fr: "Agent Operating Layer"
+        )
+      )
       .toolbar {
         ToolbarItemGroup {
           Button(role: .destructive) {
@@ -74,10 +84,78 @@ struct ActivityView: View {
         }
       }
     }
-    .frame(minWidth: 920, minHeight: 620)
+    .frame(minWidth: 1_000, minHeight: 680)
   }
 
-  private var summary: some View {
+  private var runtimeSummary: some View {
+    let configuration = operatingLayer.configuration
+    let totalTools = AgentToolRegistry.allDefinitions.count
+    let enabledCapabilities = configuration.enabledCapabilities.count
+    let installed = SelfBuiltToolLibrary.shared.records
+    let bundledCount = installed.filter {
+      BundledToolPackInstaller.isBundledToolName($0.name)
+    }.count
+    let customCount = installed.count - bundledCount
+    let roundValue = configuration.effectiveToolRoundLimit.map(String.init)
+      ?? L10n.text(de: "Unbegrenzt", en: "Unlimited", fr: "Illimité")
+
+    return VStack(alignment: .leading, spacing: 12) {
+      HStack(spacing: 20) {
+        runtimeMetric(
+          L10n.text(de: "Provider", en: "Provider", fr: "Provider"),
+          value: providerDisplayName
+        )
+        runtimeMetric(
+          L10n.text(de: "Runtime", en: "Runtime", fr: "Runtime"),
+          value: localRuntimeDisplayName
+        )
+        runtimeMetric(
+          L10n.text(de: "Modell", en: "Model", fr: "Modèle"),
+          value: appState.configuration.model.isEmpty ? "—" : appState.configuration.model
+        )
+        runtimeMetric(
+          L10n.text(de: "Tool-Runden", en: "Tool Rounds", fr: "Cycles d’outils"),
+          value: roundValue
+        )
+        Spacer()
+      }
+
+      HStack(spacing: 20) {
+        runtimeMetric(
+          L10n.text(de: "Registrierte Tools", en: "Registered Tools", fr: "Outils enregistrés"),
+          value: "\(totalTools)"
+        )
+        runtimeMetric(
+          L10n.text(de: "Built-ins", en: "Built-ins", fr: "Built-ins"),
+          value: "\(bundledCount)/\(BundledToolPackInstaller.bundledToolNames.count)"
+        )
+        runtimeMetric(
+          L10n.text(de: "Eigene Tools", en: "Custom Tools", fr: "Outils personnalisés"),
+          value: "\(max(0, customCount))"
+        )
+        runtimeMetric(
+          L10n.text(de: "Capabilities", en: "Capabilities", fr: "Capabilities"),
+          value: "\(enabledCapabilities)/\(AgentToolCapability.allCases.count)"
+        )
+        runtimeMetric(
+          "Stagnation Guard",
+          value: configuration.stagnationGuardEnabled
+            ? "ON · \(configuration.maxIdenticalToolRounds)x"
+            : "OFF"
+        )
+        Spacer()
+      }
+
+      Text(appState.configuration.baseURL.isEmpty ? appState.configuration.workspacePath : appState.configuration.baseURL)
+        .font(.caption.monospaced())
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
+    }
+    .padding(16)
+    .background(.thinMaterial)
+  }
+
+  private var telemetrySummary: some View {
     let value = telemetry.summary
     return HStack(spacing: 18) {
       metric(L10n.text(de: "Aufrufe", en: "Calls", fr: "Appels"), value: "\(value.total)")
@@ -91,6 +169,41 @@ struct ActivityView: View {
       Spacer()
     }
     .padding(16)
+  }
+
+  private var providerDisplayName: String {
+    switch appState.configuration.providerKind {
+    case .ollamaLocal:
+      L10n.text(de: "Lokal", en: "Local", fr: "Local")
+    case .ollamaCloud:
+      "Ollama Cloud"
+    case .appleOnDevice:
+      "Apple Foundation Models"
+    }
+  }
+
+  private var localRuntimeDisplayName: String {
+    switch appState.configuration.providerKind {
+    case .ollamaLocal:
+      operatingLayer.configuration.localInferenceRuntime == .mlxServer
+        ? "MLX / Metal"
+        : "Ollama"
+    case .ollamaCloud:
+      "Ollama API"
+    case .appleOnDevice:
+      "Apple On-Device"
+    }
+  }
+
+  private func runtimeMetric(_ title: String, value: String) -> some View {
+    VStack(alignment: .leading, spacing: 3) {
+      Text(title)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+      Text(value)
+        .font(.subheadline.weight(.semibold))
+        .lineLimit(1)
+    }
   }
 
   private func metric(_ title: String, value: String) -> some View {
