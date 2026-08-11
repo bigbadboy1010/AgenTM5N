@@ -23,11 +23,12 @@ public actor JSONDocumentStore<Value: Codable & Sendable> {
   public func load() throws -> Value {
     let manager = FileManager.default
     guard manager.fileExists(atPath: url.path) else {
-      return defaultValue
+      return Self.applyOperatingLayerCompatibility(to: defaultValue)
     }
 
     let data = try Data(contentsOf: url)
-    return try Self.makeDecoder().decode(Value.self, from: data)
+    let decoded = try Self.makeDecoder().decode(Value.self, from: data)
+    return Self.applyOperatingLayerCompatibility(to: decoded)
   }
 
   public func save(_ value: Value) throws {
@@ -47,6 +48,21 @@ public actor JSONDocumentStore<Value: Codable & Sendable> {
       [.posixPermissions: 0o600],
       ofItemAtPath: url.path
     )
+  }
+
+  private static func applyOperatingLayerCompatibility(to value: Value) -> Value {
+    guard var configuration = value as? AppConfiguration else {
+      return value
+    }
+
+    configuration.maxToolIterations = AgentOperatingLayerStore.effectiveToolRoundLimit(
+      fallback: configuration.maxToolIterations
+    )
+
+    guard let adjusted = configuration as? Value else {
+      return value
+    }
+    return adjusted
   }
 
   private static func makeEncoder() -> JSONEncoder {
