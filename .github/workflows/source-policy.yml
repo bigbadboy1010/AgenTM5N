@@ -5,9 +5,11 @@ on:
     branches:
       - main
       - agent/v1.1.0-platform-expansion
+      - agent/v1.2.0-agent-operating-layer
   pull_request:
     branches:
       - main
+      - agent/v1.1.0-platform-expansion
 
 permissions:
   contents: read
@@ -28,40 +30,46 @@ jobs:
           bash -n scripts/verify-release-dmg.sh
           bash -n scripts/publish-github-release.sh
 
-      - name: Validate Build 28 metadata consistency
+      - name: Validate Build 29 metadata consistency
         shell: python
         run: |
           from pathlib import Path
 
           expected = {
               "scripts/build-app.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.1.2}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-28}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
               ],
               "scripts/release-macos.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.1.2}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-28}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
               ],
               "scripts/check-release.sh": [
-                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.1.2}"',
-                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-28}"',
+                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.2.0}"',
+                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-29}"',
               ],
               "scripts/verify-release-dmg.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.1.2}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-28}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
               ],
               "scripts/publish-github-release.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.1.2}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-28}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
                   'TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"',
               ],
               "README.md": [
-                  "1.1.2 Build 28 release candidate",
-                  "AgenTM5N-1.1.2-build28.dmg",
+                  "1.2.0 Build 29 candidate",
+                  "AgenTM5N-1.2.0-build29.dmg",
+                  "agent/v1.2.0-agent-operating-layer",
               ],
               "VALIDATION.md": [
-                  "1.1.2 Build 28 release candidate",
-                  "AgenTM5N-1.1.2-build28.dmg",
+                  "1.2.0 Build 29 candidate",
+                  "AgenTM5N-1.2.0-build29.dmg",
+                  "agent/v1.2.0-agent-operating-layer",
+              ],
+              "CHANGELOG-1.2.0.md": [
+                  "AgenTM5N 1.2.0",
+                  "Build 29 candidate",
               ],
               "release-archive/README.md": [
                   "GitHub Release assets",
@@ -87,7 +95,17 @@ jobs:
           checks = {
               "Sources/AgenTM5N/Services/AgentToolRegistry.swift": [
                   "requiresWorkspaceTrustedApproval",
+                  "BundledToolCatalog.entry",
                   "case .macPersonal, .reminders, .system, .agents, .workflows",
+              ],
+              "Sources/AgenTM5N/Services/BundledToolCatalog.swift": [
+                  "custom_builtin_docker_action",
+                  "custom_builtin_kube_apply",
+                  "custom_builtin_mcp_stdio_call",
+              ],
+              "Sources/AgenTM5N/Services/ToolStagnationGuard.swift": [
+                  "STAGNATION_GUARD_TRIGGERED",
+                  "maxIdenticalToolRounds",
               ],
               "Sources/AgenTM5N/Services/SecureSecretBroker.swift": [
                   "validateSecretHostBinding",
@@ -105,10 +123,19 @@ jobs:
                   "loadedModels",
                   "configuration.computeUnits = .all",
               ],
+              "Sources/AgenTM5N/Providers/MLXProvider.swift": [
+                  "/v1/chat/completions",
+                  "ProviderToolCall",
+              ],
               "Tests/AgenTM5NTests/SecurityPolicyTests.swift": [
                   "testSecretHostBindingRejectsDifferentHTTPSHost",
                   "testPersistentAgentResolveIntersectsRestrictedParentScope",
                   "testCoreMLManagedStorageDeduplicatesIdenticalContentAcrossDifferentNames",
+              ],
+              "Tests/AgenTM5NTests/OperatingLayerTests.swift": [
+                  "testFixedToolBudgetSupportsValuesAboveLegacyLimit",
+                  "testUnlimitedToolBudgetHasNoFiniteOperatingLimit",
+                  "testStagnationGuardBlocksOnlyAfterConfiguredThreshold",
               ],
           }
 
@@ -125,4 +152,4 @@ jobs:
       - name: Note target-Mac gate
         run: |
           echo "Static source policy passed."
-          echo "Full Swift/Xcode/FoundationModels/CoreML verification remains mandatory on the target Apple Silicon Mac via scripts/verify.sh."
+          echo "Full Swift/Xcode/FoundationModels/CoreML/MLX verification remains mandatory on the target Apple Silicon Mac via scripts/verify.sh and VALIDATION.md."
