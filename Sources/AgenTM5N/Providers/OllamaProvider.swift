@@ -45,7 +45,19 @@ public final class OllamaProvider: @unchecked Sendable {
     let messages: [OllamaRequestMessage]
     let tools: [ProviderToolDefinition]?
     let stream: Bool
-    let think: Bool
+    let think: JSONValue
+    let options: [String: JSONValue]
+    let keepAlive: String
+
+    private enum CodingKeys: String, CodingKey {
+      case model
+      case messages
+      case tools
+      case stream
+      case think
+      case options
+      case keepAlive = "keep_alive"
+    }
   }
 
   private struct OllamaRequestMessage: Encodable {
@@ -194,11 +206,21 @@ public final class OllamaProvider: @unchecked Sendable {
             throw OllamaProviderError.emptyModel
           }
 
-          let effectiveTools = scopedTools(tools, messages: messages)
+          var operatingConfiguration = AgentOperatingLayerStore.load()
+          operatingConfiguration.normalize()
+          if operatingConfiguration.bundledToolsEnabled {
+            BundledToolPackInstaller.ensureInstalled()
+          }
+
+          let effectiveTools = scopedTools(
+            tools,
+            messages: messages,
+            operatingConfiguration: operatingConfiguration
+          )
           let url = try endpointURL(baseURL: configuration.baseURL, path: "/api/chat")
           var request = URLRequest(url: url)
           request.httpMethod = "POST"
-          request.timeoutInterval = 600
+          request.timeoutInterval = TimeInterval(operatingConfiguration.requestTimeoutSeconds)
           request.setValue("application/json", forHTTPHeaderField: "Content-Type")
           request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
           applyAuthorization(apiKey: apiKey, to: &request)
@@ -216,7 +238,11 @@ public final class OllamaProvider: @unchecked Sendable {
             messages: requestMessages,
             tools: effectiveTools.isEmpty ? nil : effectiveTools,
             stream: true,
-            think: configuration.thinkingEnabled
+            think: operatingConfiguration.ollamaThinkValue(
+              legacyThinkingEnabled: configuration.thinkingEnabled
+            ),
+            options: operatingConfiguration.ollamaOptions,
+            keepAlive: operatingConfiguration.keepAlive
           )
           request.httpBody = try JSONEncoder().encode(body)
 
@@ -330,9 +356,64 @@ public final class OllamaProvider: @unchecked Sendable {
 
   private func scopedTools(
     _ tools: [ProviderToolDefinition],
-    messages: [ProviderMessage]
+    messages: [ProviderMessage],
+    operatingConfiguration: AgentOperatingLayerConfiguration
   ) -> [ProviderToolDefinition] {
-    guard !tools.isEmpty,
+    guard !tools.isEmpty else { return [] }
+
+    let configuredCapabilities = operatingConfiguration.enabledCapabilities
+    let specialistCapabilities = specialistCapabilityScope(messages: messages)
+    let allowedCapabilities: Set<AgentToolCapability>
+    if let specialistCapabilities {
+      allowedCapabilities = configuredCapabilities.intersection(specialistCapabilities)
+    } else {
+      allowedCapabilities = configuredCapabilities
+    }
+
+    var candidates = tools.filter { definition in
+      guard let entry = AgentToolRegistry.entry(named: definition.function.name) else {
+        return false
+      }
+      guard allowedCapabilities.contains(entry.capability) else {
+        return false
+      }
+      if !operatingConfiguration.bundledToolsEnabled,
+        BundledToolPackInstaller.isBundledToolName(definition.function.name)
+      {
+        return false
+      }
+      return true
+    }
+
+    switch operatingConfiguration.toolSelectionMode {
+    case .all, .capabilityFiltered:
+      return candidates
+
+    case .adaptive:
+      let prompt = latestUserPrompt(messages: messages)
+      let adaptiveCapabilities = adaptiveCapabilityScope(for: prompt)
+        .intersection(allowedCapabilities)
+      candidates = candidates.filter { definition in
+        guard let entry = AgentToolRegistry.entry(named: definition.function.name) else {
+          return false
+        }
+        return adaptiveCapabilities.contains(entry.capability)
+      }
+      candidates.sort { lhs, rhs in
+        let left = adaptiveToolPriority(lhs.function.name, prompt: prompt)
+        let right = adaptiveToolPriority(rhs.function.name, prompt: prompt)
+        if left != right { return left < right }
+        return lhs.function.name.localizedCaseInsensitiveCompare(rhs.function.name)
+          == .orderedAscending
+      }
+      return Array(candidates.prefix(operatingConfiguration.maxAdvertisedTools))
+    }
+  }
+
+  private func specialistCapabilityScope(
+    messages: [ProviderMessage]
+  ) -> Set<AgentToolCapability>? {
+    guard
       let systemContent = messages.first(where: { $0.role == .system })?.content,
       let capabilityLine = systemContent
         .split(whereSeparator: { $0.isNewline })
@@ -342,12 +423,12 @@ public final class OllamaProvider: @unchecked Sendable {
             .hasPrefix("- Tool capabilities:")
         })
     else {
-      return tools
+      return nil
     }
 
     let marker = "- Tool capabilities:"
     guard let markerRange = capabilityLine.range(of: marker) else {
-      return tools
+      return nil
     }
     let raw = String(capabilityLine[markerRange.upperBound...])
       .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -355,30 +436,135 @@ public final class OllamaProvider: @unchecked Sendable {
       || raw.caseInsensitiveCompare("inherit all centrally authorized capabilities") == .orderedSame
       || raw.caseInsensitiveCompare("all") == .orderedSame
     {
-      return tools
+      return nil
     }
 
     let requestedNames = raw
       .split(separator: ",")
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
-    let allowed = Set(
+
+    return Set(
       requestedNames.compactMap { value in
         AgentToolCapability.allCases.first {
           $0.rawValue.caseInsensitiveCompare(value) == .orderedSame
         }
       }
     )
-    guard !allowed.isEmpty else {
-      return []
+  }
+
+  private func latestUserPrompt(messages: [ProviderMessage]) -> String {
+    messages.last(where: { $0.role == .user })?.content.lowercased() ?? ""
+  }
+
+  private func adaptiveCapabilityScope(
+    for prompt: String
+  ) -> Set<AgentToolCapability> {
+    var capabilities: Set<AgentToolCapability> = [
+      .workspace,
+      .memory,
+      .attachments,
+      .knowledge,
+    ]
+
+    if containsAny(prompt, [
+      "code", "source", "repo", "repository", "datei", "file", "patch", "build", "test",
+      "swift", "xcode", "npm", "pnpm", "node", "python", "compile", "fehler", "error",
+    ]) {
+      capabilities.formUnion([.workspace, .git, .terminal, .memory, .documents])
+    }
+    if containsAny(prompt, ["git", "commit", "branch", "merge", "rebase", "pull", "push", "diff"]) {
+      capabilities.formUnion([.git, .workspace, .terminal])
+    }
+    if containsAny(prompt, ["docker", "container", "compose"]) {
+      capabilities.formUnion([.terminal, .system, .workspace, .ssh, .edge])
+    }
+    if containsAny(prompt, ["podman", "photon", "rhel", "red hat", "linux", "systemctl", "journalctl"]) {
+      capabilities.formUnion([.terminal, .system, .ssh, .edge])
+    }
+    if containsAny(prompt, ["kubernetes", "kubectl", "k8s", "pod", "namespace", "deployment", "statefulset", "daemonset"]) {
+      capabilities.formUnion([.terminal, .system, .ssh, .edge, .workspace])
+    }
+    if containsAny(prompt, ["openshift", " open shift", "oc ", "route", "project"]) {
+      capabilities.formUnion([.terminal, .system, .ssh, .edge, .workspace])
+    }
+    if containsAny(prompt, ["ssh", "server", "remote", "host", "scp", "logfile", "log file"]) {
+      capabilities.formUnion([.ssh, .edge, .terminal, .system])
+    }
+    if containsAny(prompt, ["browser", "webseite", "website", "edge", "tab", "seite öffnen", "open page"]) {
+      capabilities.formUnion([.browser, .http])
+    }
+    if containsAny(prompt, ["http", "https", "api", "rest", "endpoint", "webhook"]) {
+      capabilities.formUnion([.http, .secrets])
+    }
+    if containsAny(prompt, ["kalender", "calendar", "kontakt", "contact", "mail", "email", "e-mail"]) {
+      capabilities.insert(.macPersonal)
+    }
+    if containsAny(prompt, ["reminder", "erinnerung", "erinnerungen"]) {
+      capabilities.insert(.reminders)
+    }
+    if containsAny(prompt, ["core ml", "coreml", "neural engine", "ane", "embedding", "modell", "model"]) {
+      capabilities.formUnion([.coreML, .memory])
+    }
+    if containsAny(prompt, ["pdf", "docx", "xlsx", "pptx", "dokument", "document", "excel", "powerpoint", "word"]) {
+      capabilities.formUnion([.documents, .attachments, .knowledge, .memory, .workspace])
+    }
+    if containsAny(prompt, ["agent", "delegate", "delegiere", "spezialist", "specialist"]) {
+      capabilities.formUnion([.agents, .workflows])
+    }
+    if containsAny(prompt, ["workflow", "ablauf", "pipeline"]) {
+      capabilities.formUnion([.workflows, .agents])
+    }
+    if containsAny(prompt, ["tool", "werkzeug", "toolsmith", "mcp", "model context protocol"]) {
+      capabilities.insert(.terminal)
+    }
+    if containsAny(prompt, ["prozess", "process", "cpu", "memory", "ram", "disk", "network", "netzwerk", "clipboard", "zwischenablage", "shortcut", "finder"]) {
+      capabilities.insert(.system)
+    }
+    if containsAny(prompt, ["version", "update", "release"]) {
+      capabilities.insert(.updates)
     }
 
-    return tools.filter { definition in
-      guard let entry = AgentToolRegistry.entry(named: definition.function.name) else {
-        return false
-      }
-      return allowed.contains(entry.capability)
+    return capabilities
+  }
+
+  private func adaptiveToolPriority(_ name: String, prompt: String) -> Int {
+    let lowerName = name.lowercased()
+
+    let affinityGroups: [(keywords: [String], nameFragments: [String])] = [
+      (["kubernetes", "kubectl", "k8s", "pod", "namespace"], ["kube_"]),
+      (["openshift", "oc ", "route"], ["builtin_oc_"]),
+      (["docker", "compose"], ["docker_"]),
+      (["podman"], ["podman_"]),
+      (["mcp", "model context protocol"], ["mcp_"]),
+      (["dns", "ping", "traceroute", "port", "network", "netzwerk"], ["dns_", "ping", "traceroute", "port_probe"]),
+      (["git", "commit", "branch", "pull", "push"], ["git_"]),
+      (["archive", "zip", "copy", "move", "checksum", "sha256"], ["fs_", "archive_"]),
+    ]
+
+    for group in affinityGroups
+    where containsAny(prompt, group.keywords)
+      && group.nameFragments.contains(where: { lowerName.contains($0) })
+    {
+      return 0
     }
+
+    if lowerName == "context_search" || lowerName == "context_read_source" {
+      return 1
+    }
+    if ["read_file", "search_text", "glob_files", "list_directory", "git_status", "git_diff"]
+      .contains(lowerName)
+    {
+      return 2
+    }
+    if BundledToolPackInstaller.isBundledToolName(lowerName) {
+      return 4
+    }
+    return 3
+  }
+
+  private func containsAny(_ text: String, _ needles: [String]) -> Bool {
+    needles.contains { text.contains($0) }
   }
 
   private func enrichedMessages(
