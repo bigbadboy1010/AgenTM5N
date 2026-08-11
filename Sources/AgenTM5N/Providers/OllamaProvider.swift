@@ -153,6 +153,13 @@ public final class OllamaProvider: @unchecked Sendable {
     configuration: AppConfiguration,
     apiKey: String?
   ) async throws -> [String] {
+    if shouldUseMLX(configuration) {
+      return try await MLXProvider(session: session).listModels(
+        configuration: configuration,
+        apiKey: apiKey
+      )
+    }
+
     let url = try endpointURL(baseURL: configuration.baseURL, path: "/api/tags")
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
@@ -169,6 +176,13 @@ public final class OllamaProvider: @unchecked Sendable {
     configuration: AppConfiguration,
     apiKey: String?
   ) async throws -> Set<String> {
+    if shouldUseMLX(configuration) {
+      // The MLX HTTP server is text-only at the request surface used by
+      // AgenTM5N. Tool support is model/template dependent and is handled by
+      // the server; returning no vision capability keeps image validation safe.
+      return []
+    }
+
     let model = configuration.model.trimmingCharacters(
       in: .whitespacesAndNewlines
     )
@@ -199,7 +213,16 @@ public final class OllamaProvider: @unchecked Sendable {
     messages: [ProviderMessage],
     tools: [ProviderToolDefinition] = []
   ) -> AsyncThrowingStream<ProviderStreamEvent, Error> {
-    AsyncThrowingStream { continuation in
+    if shouldUseMLX(configuration) {
+      return MLXProvider(session: session).streamChat(
+        configuration: configuration,
+        apiKey: apiKey,
+        messages: messages,
+        tools: tools
+      )
+    }
+
+    return AsyncThrowingStream { continuation in
       let task = Task {
         do {
           guard !configuration.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -352,6 +375,11 @@ public final class OllamaProvider: @unchecked Sendable {
         task.cancel()
       }
     }
+  }
+
+  private func shouldUseMLX(_ configuration: AppConfiguration) -> Bool {
+    configuration.providerKind == .ollamaLocal
+      && AgentOperatingLayerStore.load().localInferenceRuntime == .mlxServer
   }
 
   private func scopedTools(
