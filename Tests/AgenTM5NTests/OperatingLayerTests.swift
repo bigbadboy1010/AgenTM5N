@@ -149,27 +149,25 @@ final class OperatingLayerTests: XCTestCase {
       )
     )
 
-    XCTAssertNil(
-      await guardService.blockReason(
-        for: call,
-        configuration: configuration,
-        now: Date(timeIntervalSince1970: 100)
-      )
+    let first = await guardService.blockReason(
+      for: call,
+      configuration: configuration,
+      now: Date(timeIntervalSince1970: 100)
     )
-    XCTAssertNil(
-      await guardService.blockReason(
-        for: call,
-        configuration: configuration,
-        now: Date(timeIntervalSince1970: 101)
-      )
+    let second = await guardService.blockReason(
+      for: call,
+      configuration: configuration,
+      now: Date(timeIntervalSince1970: 101)
     )
-    XCTAssertNotNil(
-      await guardService.blockReason(
-        for: call,
-        configuration: configuration,
-        now: Date(timeIntervalSince1970: 102)
-      )
+    let third = await guardService.blockReason(
+      for: call,
+      configuration: configuration,
+      now: Date(timeIntervalSince1970: 102)
     )
+
+    XCTAssertNil(first)
+    XCTAssertNil(second)
+    XCTAssertNotNil(third)
 
     let changedCall = ProviderToolCall(
       function: .init(
@@ -177,13 +175,12 @@ final class OperatingLayerTests: XCTestCase {
         arguments: ["path": .string("Package.swift")]
       )
     )
-    XCTAssertNil(
-      await guardService.blockReason(
-        for: changedCall,
-        configuration: configuration,
-        now: Date(timeIntervalSince1970: 103)
-      )
+    let changed = await guardService.blockReason(
+      for: changedCall,
+      configuration: configuration,
+      now: Date(timeIntervalSince1970: 103)
     )
+    XCTAssertNil(changed)
   }
 
   func testStagnationGuardCanBeDisabled() async {
