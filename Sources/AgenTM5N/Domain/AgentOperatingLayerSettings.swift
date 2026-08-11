@@ -16,6 +16,22 @@ public enum AgentToolSelectionMode: String, Codable, CaseIterable, Identifiable,
   public var id: String { rawValue }
 }
 
+public enum LocalInferenceRuntime: String, Codable, CaseIterable, Identifiable, Sendable {
+  case ollama
+  case mlxServer
+
+  public var id: String { rawValue }
+
+  public var defaultBaseURL: String {
+    switch self {
+    case .ollama:
+      "http://localhost:11434"
+    case .mlxServer:
+      "http://127.0.0.1:8080"
+    }
+  }
+}
+
 public enum OllamaThinkingMode: String, Codable, CaseIterable, Identifiable, Sendable {
   case off
   case standard
@@ -34,7 +50,10 @@ public struct AgentOperatingLayerConfiguration: Codable, Equatable, Sendable {
   public var maxAdvertisedTools: Int
   public var enabledCapabilities: Set<AgentToolCapability>
   public var bundledToolsEnabled: Bool
+  public var stagnationGuardEnabled: Bool
+  public var maxIdenticalToolRounds: Int
 
+  public var localInferenceRuntime: LocalInferenceRuntime
   public var thinkingMode: OllamaThinkingMode
   public var numContext: Int
   public var numPredict: Int
@@ -55,7 +74,10 @@ public struct AgentOperatingLayerConfiguration: Codable, Equatable, Sendable {
     maxAdvertisedTools: Int = 48,
     enabledCapabilities: Set<AgentToolCapability> = Set(AgentToolCapability.allCases),
     bundledToolsEnabled: Bool = true,
-    thinkingMode: OllamaThinkingMode = .standard,
+    stagnationGuardEnabled: Bool = true,
+    maxIdenticalToolRounds: Int = 3,
+    localInferenceRuntime: LocalInferenceRuntime = .ollama,
+    thinkingMode: OllamaThinkingMode = .off,
     numContext: Int = 8_192,
     numPredict: Int = 4_096,
     temperature: Double = 0.2,
@@ -74,6 +96,9 @@ public struct AgentOperatingLayerConfiguration: Codable, Equatable, Sendable {
     self.maxAdvertisedTools = maxAdvertisedTools
     self.enabledCapabilities = enabledCapabilities
     self.bundledToolsEnabled = bundledToolsEnabled
+    self.stagnationGuardEnabled = stagnationGuardEnabled
+    self.maxIdenticalToolRounds = maxIdenticalToolRounds
+    self.localInferenceRuntime = localInferenceRuntime
     self.thinkingMode = thinkingMode
     self.numContext = numContext
     self.numPredict = numPredict
@@ -91,15 +116,83 @@ public struct AgentOperatingLayerConfiguration: Codable, Equatable, Sendable {
 
   public static let `default` = AgentOperatingLayerConfiguration()
 
-  public var effectiveToolRoundLimit: Int {
+  private enum CodingKeys: String, CodingKey {
+    case toolRoundMode
+    case maxToolRounds
+    case toolSelectionMode
+    case maxAdvertisedTools
+    case enabledCapabilities
+    case bundledToolsEnabled
+    case stagnationGuardEnabled
+    case maxIdenticalToolRounds
+    case localInferenceRuntime
+    case thinkingMode
+    case numContext
+    case numPredict
+    case temperature
+    case topK
+    case topP
+    case minP
+    case repeatPenalty
+    case repeatLastN
+    case seed
+    case keepAlive
+    case requestTimeoutSeconds
+  }
+
+  public init(from decoder: Decoder) throws {
+    let defaults = Self.default
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    toolRoundMode = try container.decodeIfPresent(AgentToolRoundMode.self, forKey: .toolRoundMode)
+      ?? defaults.toolRoundMode
+    maxToolRounds = try container.decodeIfPresent(Int.self, forKey: .maxToolRounds)
+      ?? defaults.maxToolRounds
+    toolSelectionMode = try container.decodeIfPresent(AgentToolSelectionMode.self, forKey: .toolSelectionMode)
+      ?? defaults.toolSelectionMode
+    maxAdvertisedTools = try container.decodeIfPresent(Int.self, forKey: .maxAdvertisedTools)
+      ?? defaults.maxAdvertisedTools
+    enabledCapabilities = try container.decodeIfPresent(Set<AgentToolCapability>.self, forKey: .enabledCapabilities)
+      ?? defaults.enabledCapabilities
+    bundledToolsEnabled = try container.decodeIfPresent(Bool.self, forKey: .bundledToolsEnabled)
+      ?? defaults.bundledToolsEnabled
+    stagnationGuardEnabled = try container.decodeIfPresent(Bool.self, forKey: .stagnationGuardEnabled)
+      ?? defaults.stagnationGuardEnabled
+    maxIdenticalToolRounds = try container.decodeIfPresent(Int.self, forKey: .maxIdenticalToolRounds)
+      ?? defaults.maxIdenticalToolRounds
+    localInferenceRuntime = try container.decodeIfPresent(LocalInferenceRuntime.self, forKey: .localInferenceRuntime)
+      ?? defaults.localInferenceRuntime
+    thinkingMode = try container.decodeIfPresent(OllamaThinkingMode.self, forKey: .thinkingMode)
+      ?? defaults.thinkingMode
+    numContext = try container.decodeIfPresent(Int.self, forKey: .numContext)
+      ?? defaults.numContext
+    numPredict = try container.decodeIfPresent(Int.self, forKey: .numPredict)
+      ?? defaults.numPredict
+    temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
+      ?? defaults.temperature
+    topK = try container.decodeIfPresent(Int.self, forKey: .topK)
+      ?? defaults.topK
+    topP = try container.decodeIfPresent(Double.self, forKey: .topP)
+      ?? defaults.topP
+    minP = try container.decodeIfPresent(Double.self, forKey: .minP)
+      ?? defaults.minP
+    repeatPenalty = try container.decodeIfPresent(Double.self, forKey: .repeatPenalty)
+      ?? defaults.repeatPenalty
+    repeatLastN = try container.decodeIfPresent(Int.self, forKey: .repeatLastN)
+      ?? defaults.repeatLastN
+    seed = try container.decodeIfPresent(Int.self, forKey: .seed)
+    keepAlive = try container.decodeIfPresent(String.self, forKey: .keepAlive)
+      ?? defaults.keepAlive
+    requestTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .requestTimeoutSeconds)
+      ?? defaults.requestTimeoutSeconds
+    normalize()
+  }
+
+  public var effectiveToolRoundLimit: Int? {
     switch toolRoundMode {
     case .fixed:
       return max(1, min(maxToolRounds, 1_000_000))
     case .unlimited:
-      // The legacy AppState loop expects an Int. This sentinel is intentionally
-      // far beyond a realistic session while still avoiding Int overflow in UI
-      // and diagnostics. Cancellation remains available at every round.
-      return 1_000_000_000
+      return nil
     }
   }
 
@@ -120,7 +213,7 @@ public struct AgentOperatingLayerConfiguration: Codable, Equatable, Sendable {
     return options
   }
 
-  public func ollamaThinkValue(legacyThinkingEnabled: Bool) -> JSONValue {
+  public func ollamaThinkValue(legacyThinkingEnabled _: Bool) -> JSONValue {
     switch thinkingMode {
     case .off:
       return .bool(false)
@@ -140,6 +233,7 @@ public struct AgentOperatingLayerConfiguration: Codable, Equatable, Sendable {
   public mutating func normalize() {
     maxToolRounds = max(1, min(maxToolRounds, 1_000_000))
     maxAdvertisedTools = max(4, min(maxAdvertisedTools, 256))
+    maxIdenticalToolRounds = max(2, min(maxIdenticalToolRounds, 20))
     numContext = max(512, min(numContext, 1_048_576))
     numPredict = max(-1, min(numPredict, 131_072))
     temperature = max(0, min(temperature, 2))
@@ -201,16 +295,6 @@ public enum AgentOperatingLayerStore {
       ofItemAtPath: fileURL.path
     )
   }
-
-  public static func effectiveToolRoundLimit(fallback _: Int) -> Int {
-    let value = load()
-    if value.bundledToolsEnabled {
-      BundledToolPackInstaller.ensureInstalled()
-    }
-    // 1.2.0 intentionally establishes its own default instead of inheriting
-    // the historical 8/24-round value from AppConfiguration.
-    return value.effectiveToolRoundLimit
-  }
 }
 
 @MainActor
@@ -230,7 +314,6 @@ public final class AgentOperatingLayerSettings: ObservableObject {
 
   public func applyRuntimeCompatibility(to appState: AppState) {
     configuration.normalize()
-    appState.configuration.maxToolIterations = configuration.effectiveToolRoundLimit
     appState.configuration.thinkingEnabled = configuration.thinkingMode != .off
   }
 
@@ -241,11 +324,8 @@ public final class AgentOperatingLayerSettings: ObservableObject {
       if configuration.bundledToolsEnabled {
         BundledToolPackInstaller.ensureInstalled()
       }
-      await appState.saveConfiguration()
-      // saveConfiguration() in the 1.1 compatibility layer clamps the legacy
-      // field to 24. Restore the effective 1.2 runtime value immediately; the
-      // dedicated 1.2 store is authoritative on subsequent launches.
       applyRuntimeCompatibility(to: appState)
+      await appState.saveConfiguration()
     } catch {
       appState.errorMessage = error.localizedDescription
     }
