@@ -9,81 +9,85 @@ struct CoreMLModelLabView: View {
   @State private var labReport: CoreMLModelLabReport?
 
   var body: some View {
-    GroupBox(
-      L10n.text(
-        de: "ANE Model Lab · Build 31",
-        en: "ANE Model Lab · Build 31",
-        fr: "ANE Model Lab · Build 31"
-      )
-    ) {
-      VStack(alignment: .leading, spacing: 14) {
-        Text(
-          L10n.text(
-            de: "Vergleicht dasselbe Core-ML-Modell sequenziell mit Automatisch, CPU+GPU und CPU+Neural Engine. Gemessen wird die Zeit zum Aufbau und Analysieren des MLComputePlan; dies ist keine gemessene Hardware-Auslastung und noch kein Token/s-Benchmark.",
-            en: "Compares the same Core ML model sequentially with Automatic, CPU+GPU, and CPU+Neural Engine. The measured time is MLComputePlan build and analysis time; it is not measured hardware utilization and not yet a tokens/s benchmark.",
-            fr: "Compare séquentiellement le même modèle Core ML avec Automatique, CPU+GPU et CPU+Neural Engine. Le temps mesuré correspond à la construction et à l’analyse de MLComputePlan ; il ne s’agit ni d’une utilisation matérielle mesurée ni encore d’un benchmark en tokens/s."
-          )
+    VStack(alignment: .leading, spacing: 20) {
+      GroupBox(
+        L10n.text(
+          de: "ANE Model Lab · Build 32",
+          en: "ANE Model Lab · Build 32",
+          fr: "ANE Model Lab · Build 32"
         )
-        .font(.callout)
-        .foregroundStyle(.secondary)
+      ) {
+        VStack(alignment: .leading, spacing: 14) {
+          Text(
+            L10n.text(
+              de: "Vergleicht dasselbe Core-ML-Modell sequenziell mit Automatisch, CPU+GPU und CPU+Neural Engine. Gemessen wird die Zeit zum Aufbau und Analysieren des MLComputePlan; dies ist keine gemessene Hardware-Auslastung. Der separate Runtime Benchmark darunter misst anschließend echte Vorhersagelatenzen.",
+              en: "Compares the same Core ML model sequentially with Automatic, CPU+GPU, and CPU+Neural Engine. The measured time is MLComputePlan build and analysis time; it is not measured hardware utilization. The separate Runtime Benchmark below then measures real prediction latency.",
+              fr: "Compare séquentiellement le même modèle Core ML avec Automatique, CPU+GPU et CPU+Neural Engine. Le temps mesuré correspond à la construction et à l’analyse de MLComputePlan ; il ne s’agit pas d’une utilisation matérielle mesurée. Le benchmark d’exécution séparé ci-dessous mesure ensuite la latence réelle des prédictions."
+            )
+          )
+          .font(.callout)
+          .foregroundStyle(.secondary)
 
-        HStack(spacing: 12) {
-          Button {
-            Task { await runLab() }
-          } label: {
-            if isRunning {
-              HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(
-                  currentMode.map {
-                    L10n.text(
-                      de: "Teste \($0.displayName)…",
-                      en: "Testing \($0.displayName)…",
-                      fr: "Test de \($0.displayName)…"
-                    )
-                  }
-                    ?? L10n.text(de: "Model Lab läuft…", en: "Model Lab running…", fr: "Model Lab en cours…")
+          HStack(spacing: 12) {
+            Button {
+              Task { await runLab() }
+            } label: {
+              if isRunning {
+                HStack(spacing: 8) {
+                  ProgressView().controlSize(.small)
+                  Text(
+                    currentMode.map {
+                      L10n.text(
+                        de: "Teste \($0.displayName)…",
+                        en: "Testing \($0.displayName)…",
+                        fr: "Test de \($0.displayName)…"
+                      )
+                    }
+                      ?? L10n.text(de: "Model Lab läuft…", en: "Model Lab running…", fr: "Model Lab en cours…")
+                  )
+                }
+              } else {
+                Label(
+                  L10n.text(
+                    de: "ANE Model Lab starten",
+                    en: "Run ANE Model Lab",
+                    fr: "Lancer ANE Model Lab"
+                  ),
+                  systemImage: "cpu"
                 )
               }
-            } else {
-              Label(
+            }
+            .disabled(isRunning)
+
+            if !partialResults.isEmpty {
+              Text(
                 L10n.text(
-                  de: "ANE Model Lab starten",
-                  en: "Run ANE Model Lab",
-                  fr: "Lancer ANE Model Lab"
-                ),
-                systemImage: "cpu"
+                  de: "\(partialResults.count) / \(CoreMLModelLab.benchmarkModes.count) Modi abgeschlossen",
+                  en: "\(partialResults.count) / \(CoreMLModelLab.benchmarkModes.count) modes complete",
+                  fr: "\(partialResults.count) / \(CoreMLModelLab.benchmarkModes.count) modes terminés"
+                )
               )
+              .font(.caption)
+              .foregroundStyle(.secondary)
             }
           }
-          .disabled(isRunning)
 
-          if !partialResults.isEmpty {
-            Text(
-              L10n.text(
-                de: "\(partialResults.count) / \(CoreMLModelLab.benchmarkModes.count) Modi abgeschlossen",
-                en: "\(partialResults.count) / \(CoreMLModelLab.benchmarkModes.count) modes complete",
-                fr: "\(partialResults.count) / \(CoreMLModelLab.benchmarkModes.count) modes terminés"
+          if let report = labReport {
+            modelLabSummary(report)
+            modelLabMatrix(report)
+          } else if !partialResults.isEmpty {
+            modelLabMatrix(
+              CoreMLModelLab.evaluate(
+                modelName: descriptor.sourceURL.lastPathComponent,
+                results: partialResults
               )
             )
-            .font(.caption)
-            .foregroundStyle(.secondary)
           }
         }
-
-        if let report = labReport {
-          modelLabSummary(report)
-          modelLabMatrix(report)
-        } else if !partialResults.isEmpty {
-          modelLabMatrix(
-            CoreMLModelLab.evaluate(
-              modelName: descriptor.sourceURL.lastPathComponent,
-              results: partialResults
-            )
-          )
-        }
+        .padding(8)
       }
-      .padding(8)
+
+      CoreMLRuntimeBenchmarkView(descriptor: descriptor)
     }
   }
 
