@@ -33,32 +33,32 @@ jobs:
           bash -n scripts/verify-release-dmg.sh
           bash -n scripts/publish-github-release.sh
 
-      - name: Validate Build 34 metadata consistency
+      - name: Validate Build 35 metadata consistency
         shell: python
         run: |
           from pathlib import Path
 
           expected = {
               "scripts/build-app.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.4}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-34}"',
-                  "Build 34 turns adaptive Core ML routing into real prediction execution",
+                  'VERSION="${AGENTM5N_VERSION:-1.3.5}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-35}"',
+                  "Build 35 routes real neural workloads",
               ],
               "scripts/release-macos.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.4}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-34}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.5}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-35}"',
               ],
               "scripts/check-release.sh": [
-                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.4}"',
-                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-34}"',
+                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.5}"',
+                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-35}"',
               ],
               "scripts/verify-release-dmg.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.4}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-34}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.5}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-35}"',
               ],
               "scripts/publish-github-release.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.4}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-34}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.5}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-35}"',
                   'TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"',
               ],
           }
@@ -115,8 +115,7 @@ jobs:
               ],
               "Sources/AgenTM5N/Services/CoreMLAdaptiveExecutionPolicy.swift": [
                   "CoreMLExecutionStrategy",
-                  "automaticFallback",
-                  "workloadPreset",
+                  "expectedPredictions: Int?",
                   "decision.confidence != .low",
                   "automaticFailover",
               ],
@@ -124,6 +123,27 @@ jobs:
                   "CoreMLExecutionTelemetrySnapshot",
                   "NSLock",
                   "adaptiveRoutingApplied",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLNeuralRuntimeOrchestrator.swift": [
+                  "CoreMLNeuralWorkloadKind",
+                  "workspaceEmbeddingQuery",
+                  "workspaceEmbeddingBatch",
+                  "CoreMLAdaptiveExecutionPolicy.resolve",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLNeuralRuntimeTelemetry.swift": [
+                  "CoreMLNeuralRuntimeEvent",
+                  "maximumEvents",
+                  "fallbackUsed",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLEmbeddingRunner.swift": [
+                  "CoreMLNeuralRuntimeOrchestrator.resolve",
+                  "route.allowsAutomaticFailover",
+                  "configuration.computeUnits = mode.computeUnits",
+                  "CoreMLNeuralRuntimeTelemetry.shared.record",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLAgentTools.swift": [
+                  "AgenTM5N Neural Runtime",
+                  "Adaptive mode",
               ],
               "Sources/AgenTM5N/Services/CoreMLModelLab.swift": [
                   "benchmarkModes",
@@ -184,6 +204,12 @@ jobs:
                   "testLowConfidenceAdaptiveDecisionFallsBackToAutomatic",
                   "testHighConfidenceAdaptiveDecisionSelectsRecommendedMode",
                   "testAdaptiveAutomaticRecommendationDoesNotNeedFailover",
+              ],
+              "Tests/AgenTM5NTests/CoreMLNeuralRuntimeOrchestratorTests.swift": [
+                  "testWorkspaceSearchEmbeddingIsOneShot",
+                  "testWorkspaceIndexEmbeddingUsesActualBatchSize",
+                  "testManualWorkloadSizedRoutePreservesSelectedMode",
+                  "testAdaptiveWorkloadSizedRouteUsesDecisionPredictionCount",
               ],
           }
 
