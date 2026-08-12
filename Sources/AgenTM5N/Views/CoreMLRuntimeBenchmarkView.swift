@@ -2,24 +2,24 @@ import SwiftUI
 
 struct CoreMLRuntimeBenchmarkView: View {
   let descriptor: CoreMLModelDescriptor
+  @Binding var report: CoreMLRuntimeBenchmarkReport?
 
   @State private var isRunning = false
-  @State private var report: CoreMLRuntimeBenchmarkReport?
 
   var body: some View {
     GroupBox(
       L10n.text(
-        de: "ANE Runtime Benchmark · Build 32",
-        en: "ANE Runtime Benchmark · Build 32",
-        fr: "ANE Runtime Benchmark · Build 32"
+        de: "ANE Runtime Benchmark · Build 33",
+        en: "ANE Runtime Benchmark · Build 33",
+        fr: "ANE Runtime Benchmark · Build 33"
       )
     ) {
       VStack(alignment: .leading, spacing: 14) {
         Text(
           L10n.text(
-            de: "Misst echte Core-ML-Vorhersagen mit Automatisch, CPU+GPU und CPU+Neural Engine. Erfasst werden Modell-Ladezeit, erste Vorhersage sowie 10 warme Läufe mit Mittelwert, p50 und p95. Die Messung zeigt Inferenzlatenz, nicht die reale NPU-Auslastung.",
-            en: "Measures real Core ML predictions with Automatic, CPU+GPU, and CPU+Neural Engine. It records model load time, first prediction, and 10 warm runs with mean, p50, and p95. The measurement shows inference latency, not actual NPU utilization.",
-            fr: "Mesure de vraies prédictions Core ML avec Automatique, CPU+GPU et CPU+Neural Engine. Le benchmark enregistre le chargement du modèle, la première prédiction et 10 exécutions à chaud avec moyenne, p50 et p95. Il mesure la latence d’inférence, pas l’utilisation réelle du NPU."
+            de: "Misst echte Core-ML-Vorhersagen mit Automatisch, CPU+GPU und CPU+Neural Engine. Erfasst werden Modell-Ladezeit, erste Vorhersage sowie 10 warme Läufe mit Mittelwert, p50 und p95. Die Messung zeigt Inferenzlatenz, nicht die reale NPU-Auslastung. Build 33 speichert diese Messwerte hardware- und OS-spezifisch für den Adaptive Neural Router.",
+            en: "Measures real Core ML predictions with Automatic, CPU+GPU, and CPU+Neural Engine. It records model load time, first prediction, and 10 warm runs with mean, p50, and p95. The measurement shows inference latency, not actual NPU utilization. Build 33 persists these measurements per hardware/OS environment for the Adaptive Neural Router.",
+            fr: "Mesure de vraies prédictions Core ML avec Automatique, CPU+GPU et CPU+Neural Engine. Le benchmark enregistre le chargement du modèle, la première prédiction et 10 exécutions à chaud avec moyenne, p50 et p95. Il mesure la latence d’inférence, pas l’utilisation réelle du NPU. Le Build 33 conserve ces mesures par environnement matériel/OS pour l’Adaptive Neural Router."
           )
         )
         .font(.callout)
@@ -183,9 +183,15 @@ struct CoreMLRuntimeBenchmarkView: View {
     report = nil
     defer { isRunning = false }
 
-    report = await CoreMLRuntimeBenchmark.shared.run(
+    let measured = await CoreMLRuntimeBenchmark.shared.run(
       compiledURL: descriptor.compiledURL,
       warmRuns: 10
+    )
+    report = measured
+    await CoreMLAdaptiveRouter.shared.recordRuntimeBenchmark(
+      measured,
+      compiledURL: descriptor.compiledURL,
+      modelName: descriptor.sourceURL.lastPathComponent
     )
   }
 
