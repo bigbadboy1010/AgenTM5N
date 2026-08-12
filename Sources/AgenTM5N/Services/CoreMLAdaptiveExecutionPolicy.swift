@@ -102,28 +102,60 @@ public enum CoreMLAdaptiveExecutionPolicyStore {
 /// backend.
 public enum CoreMLAdaptiveExecutionPolicy {
   public static func resolve(compiledURL: URL) async -> CoreMLExecutionRoute {
+    await resolve(
+      compiledURL: compiledURL,
+      expectedPredictions: nil
+    )
+  }
+
+  /// Resolves a route using an explicit number of predictions when a real
+  /// workload knows its batch/session size. `nil` preserves the Build-34 UI
+  /// workload preset for generic predictions.
+  public static func resolve(
+    compiledURL: URL,
+    expectedPredictions: Int?
+  ) async -> CoreMLExecutionRoute {
     let strategy = CoreMLAdaptiveExecutionPolicyStore.strategy
     let manualMode = CoreMLRuntimePolicyStore.currentMode
     let preset = CoreMLAdaptiveExecutionPolicyStore.workloadPreset
+    let predictionCount = max(
+      1,
+      expectedPredictions ?? preset.expectedPredictions
+    )
 
     guard strategy == .adaptive else {
       return evaluate(
         strategy: .manual,
         manualMode: manualMode,
-        workloadPreset: preset,
+        expectedPredictions: predictionCount,
         decision: nil
       )
     }
 
     let decision = await CoreMLAdaptiveRouter.shared.decision(
       compiledURL: compiledURL,
-      expectedPredictions: preset.expectedPredictions
+      expectedPredictions: predictionCount
     )
 
     return evaluate(
       strategy: strategy,
       manualMode: manualMode,
-      workloadPreset: preset,
+      expectedPredictions: predictionCount,
+      decision: decision
+    )
+  }
+
+  /// Compatibility overload retained for the Build-34 regression tests and UI.
+  public static func evaluate(
+    strategy: CoreMLExecutionStrategy,
+    manualMode: CoreMLComputeMode,
+    workloadPreset: CoreMLAdaptiveWorkloadPreset,
+    decision: CoreMLAdaptiveRouteDecision?
+  ) -> CoreMLExecutionRoute {
+    evaluate(
+      strategy: strategy,
+      manualMode: manualMode,
+      expectedPredictions: workloadPreset.expectedPredictions,
       decision: decision
     )
   }
@@ -131,13 +163,16 @@ public enum CoreMLAdaptiveExecutionPolicy {
   public static func evaluate(
     strategy: CoreMLExecutionStrategy,
     manualMode: CoreMLComputeMode,
-    workloadPreset: CoreMLAdaptiveWorkloadPreset,
+    expectedPredictions: Int,
     decision: CoreMLAdaptiveRouteDecision?
   ) -> CoreMLExecutionRoute {
+    let predictionCount = max(1, expectedPredictions)
+
     guard strategy == .adaptive else {
       return CoreMLExecutionRoute(
         mode: manualMode,
         source: .manual,
+        expectedPredictions: predictionCount,
         reason: L10n.text(
           de: "Manuelle Core-ML-Rechenrichtlinie aktiv.",
           en: "Manual Core ML compute policy is active.",
@@ -150,7 +185,7 @@ public enum CoreMLAdaptiveExecutionPolicy {
       return CoreMLExecutionRoute(
         mode: .automatic,
         source: .automaticFallback,
-        expectedPredictions: workloadPreset.expectedPredictions,
+        expectedPredictions: predictionCount,
         confidence: .low,
         reason: L10n.text(
           de: "Für dieses Modell und diese Hardware liegt noch kein vollständiges Runtime-Profil vor. Adaptive Execution verwendet deshalb sicherheitshalber Automatisch.",
