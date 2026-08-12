@@ -19,6 +19,7 @@ public enum AgentToolSelectionMode: String, Codable, CaseIterable, Identifiable,
 public enum LocalInferenceRuntime: String, Codable, CaseIterable, Identifiable, Sendable {
   case ollama
   case mlxServer
+  case anemll
 
   public var id: String { rawValue }
 
@@ -28,6 +29,8 @@ public enum LocalInferenceRuntime: String, Codable, CaseIterable, Identifiable, 
       "http://localhost:11434"
     case .mlxServer:
       "http://127.0.0.1:8080"
+    case .anemll:
+      "anemll://neural-engine"
     }
   }
 }
