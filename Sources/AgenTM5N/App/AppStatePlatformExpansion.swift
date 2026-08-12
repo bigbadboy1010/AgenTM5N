@@ -807,6 +807,40 @@ extension AppState {
     }
   }
 
+  func executeDelegatedOllamaToolCall(
+    _ call: ProviderToolCall
+  ) async -> ToolExecutionResult {
+    // Capability denial happens before any approval dialog. A specialist must
+    // never be able to request permission for a capability it does not own.
+    if let denial = capabilityDenialResult(for: call) {
+      return denial
+    }
+
+    let routing = await registryRiskAndSummary(for: call)
+    let allowed = await authorize(
+      call: call,
+      risk: routing.risk,
+      summary: routing.summary
+    )
+
+    guard allowed else {
+      return ToolExecutionResult(
+        success: false,
+        output: "Tool execution denied by the user or permission policy."
+      )
+    }
+
+    // Delegated Ollama tools use the same measured execution path as the main
+    // agent. This preserves capability checks, cache invalidation and audit /
+    // telemetry instead of silently bypassing the central router.
+    return await executeMeasuredTool(
+      call: call,
+      risk: routing.risk
+    ) { [self] in
+      await executeStandaloneWorkflowStep(call)
+    }
+  }
+
   private func runDelegatedOllama(
     configuration delegateConfiguration: AppConfiguration,
     task: String,
@@ -822,8 +856,19 @@ extension AppState {
       apiKey = nil
     }
 
+    let delegatedSystemContent = delegateConfiguration.systemPrompt
+      + "\n\n"
+      + AgentRuntimeContext.providerInstruction()
+      + "\n\n"
+      + """
+      AGENTM5N DELEGATED TOOL SECURITY:
+      - Use only the tools AgenTM5N actually exposes to this specialist.
+      - Never claim that a tool-backed action was executed or succeeded unless the corresponding tool was actually called and returned that result.
+      - A denied or unavailable tool must be reported as denied or unavailable, never as successfully executed.
+      """
+
     var providerMessages = [
-      ProviderMessage(role: .system, content: delegateConfiguration.systemPrompt),
+      ProviderMessage(role: .system, content: delegatedSystemContent),
       ProviderMessage(role: .user, content: task),
     ]
     let tools: [ProviderToolDefinition]
@@ -868,7 +913,7 @@ extension AppState {
       )
       guard useTools, !calls.isEmpty else { break }
       for toolCall in calls {
-        let result = await executeStandaloneWorkflowStep(toolCall)
+        let result = await executeDelegatedOllamaToolCall(toolCall)
         providerMessages.append(
           ProviderMessage(
             role: .tool,
@@ -1069,9 +1114,9 @@ extension AppState {
     AppVersionDescriptor(
       version: Bundle.main.object(
         forInfoDictionaryKey: "CFBundleShortVersionString"
-      ) as? String ?? "1.1.1",
+      ) as? String ?? "1.1.2",
       build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        ?? "25",
+        ?? "30",
       bundleIdentifier: Bundle.main.bundleIdentifier ?? AppPaths.bundleIdentifier
     )
   }

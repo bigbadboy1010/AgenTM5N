@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import AgenTM5N
 
@@ -475,4 +476,74 @@ final class SecurityPolicyTests: XCTestCase {
 
     XCTAssertEqual(resolved.allowedCapabilities, [.workspace])
   }
+
+  func testCoreMLRegistryNormalizationMigratesLegacyComputePolicy() throws {
+    let legacy = Data(
+      """
+      {
+        "version": 1,
+        "activeModelID": null,
+        "models": [
+          {
+            "computeUnits": "CPU + Apple Neural Engine (angefordert)"
+          }
+        ]
+      }
+      """.utf8
+    )
+
+    let normalized = try CoreMLService.normalizeRegistryComputePolicy(in: legacy)
+    let root = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: normalized) as? [String: Any]
+    )
+    let models = try XCTUnwrap(root["models"] as? [[String: Any]])
+    let first = try XCTUnwrap(models.first)
+    let policy = try XCTUnwrap(first["computeUnits"] as? String)
+
+    XCTAssertTrue(policy.contains("GPU"))
+    XCTAssertTrue(policy.contains("Neural Engine"))
+    XCTAssertFalse(policy.contains("angefordert"))
+  }
+
+  @MainActor
+  func testDelegatedOllamaToolExecutionUsesApprovalRouter() async {
+    let state = AppState()
+    state.configuration.permissionMode = .confirm
+
+    let call = ProviderToolCall(
+      function: .init(
+        name: "run_command",
+        arguments: [
+          "command": .string("printf delegated-approval-regression")
+        ]
+      )
+    )
+
+    let task = Task { @MainActor in
+      await state.executeDelegatedOllamaToolCall(call)
+    }
+
+    for _ in 0..<200 {
+      if state.pendingToolApproval != nil {
+        break
+      }
+      await Task.yield()
+    }
+
+    guard let pending = state.pendingToolApproval else {
+      task.cancel()
+      XCTFail("Delegated Ollama execute tool bypassed the approval router")
+      return
+    }
+
+    XCTAssertEqual(pending.call.function.name, "run_command")
+    XCTAssertEqual(pending.risk, .execute)
+
+    state.denyPendingTool()
+
+    let result = await task.value
+    XCTAssertFalse(result.success)
+    XCTAssertTrue(result.output.lowercased().contains("denied"))
+  }
+
 }

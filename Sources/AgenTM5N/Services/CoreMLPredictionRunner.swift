@@ -80,7 +80,28 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
 
     let input = PredictionFeatureProvider(values: featureValues)
     let startedAt = ContinuousClock().now
-    let output = try model.prediction(from: input)
+
+    let output: any MLFeatureProvider
+
+    if #available(macOS 15.0, *),
+      !model.modelDescription.stateDescriptionsByName.isEmpty
+    {
+      // Stateful Core ML models expose their persistent buffers separately
+      // from ordinary inputDescriptionsByName. The caller must not construct
+      // MLState from JSON. Core ML owns and allocates those buffers.
+      //
+      // A fresh state is intentionally created for each generic coreml_predict
+      // invocation. This keeps independent tool calls isolated. A future
+      // autoregressive/session API can explicitly retain MLState across tokens.
+      let state = model.makeState()
+      output = try model.prediction(
+        from: input,
+        using: state
+      )
+    } else {
+      output = try model.prediction(from: input)
+    }
+
     let elapsed = startedAt.duration(to: ContinuousClock().now)
 
     var resultValues: [String: String] = [:]

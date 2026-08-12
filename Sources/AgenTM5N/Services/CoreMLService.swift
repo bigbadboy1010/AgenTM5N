@@ -388,9 +388,38 @@ public actor CoreMLService {
       return CoreMLRegistryDocument()
     }
     let data = try Data(contentsOf: AppPaths.coreMLRegistryFile)
+    let normalizedData = try Self.normalizeRegistryComputePolicy(in: data)
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    return try decoder.decode(CoreMLRegistryDocument.self, from: data)
+    return try decoder.decode(CoreMLRegistryDocument.self, from: normalizedData)
+  }
+
+  static func normalizeRegistryComputePolicy(in data: Data) throws -> Data {
+    guard
+      var root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+      var models = root["models"] as? [[String: Any]]
+    else {
+      return data
+    }
+
+    let currentPolicy = Self.computePolicyDescription
+    var changed = false
+
+    for index in models.indices {
+      let storedPolicy = models[index]["computeUnits"] as? String
+      if storedPolicy != currentPolicy {
+        models[index]["computeUnits"] = currentPolicy
+        changed = true
+      }
+    }
+
+    guard changed else { return data }
+
+    root["models"] = models
+    return try JSONSerialization.data(
+      withJSONObject: root,
+      options: [.sortedKeys]
+    )
   }
 
   private func saveRegistry() throws {
