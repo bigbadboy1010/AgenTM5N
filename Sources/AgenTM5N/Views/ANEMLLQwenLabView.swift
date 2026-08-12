@@ -319,6 +319,11 @@ struct ANEMLLQwenLabView: View {
 
     operatingLayer.configuration.localInferenceRuntime = .anemll
     operatingLayer.configuration.thinkingMode = thinkingEnabled ? .standard : .off
+    operatingLayer.configuration.numPredict = maxTokens
+    operatingLayer.configuration.temperature = temperature
+    if let contextLength = descriptor.contextLength {
+      operatingLayer.configuration.numContext = contextLength
+    }
     try? operatingLayer.save()
     operatingLayer.applyRuntimeCompatibility(to: appState)
 
