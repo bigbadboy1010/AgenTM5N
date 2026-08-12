@@ -58,11 +58,14 @@ public enum CoreMLEmbeddingRunner {
   ) async throws -> [[Float]] {
     guard !texts.isEmpty else { return [] }
 
-    let effectiveWorkload = workload ?? CoreMLNeuralWorkload(
-      kind: .genericPrediction,
-      expectedPredictions: texts.count,
-      itemCount: texts.count
-    )
+    // WorkspaceIndexService is currently the production caller of this direct-
+    // text embedding runner. A single text is a semantic query; multiple texts
+    // form the index batch. Explicit callers can override the workload when the
+    // runner is reused by future neural workloads.
+    let effectiveWorkload = workload
+      ?? (texts.count == 1
+        ? .workspaceEmbeddingQuery
+        : .workspaceEmbeddingBatch(count: texts.count))
     let route = await CoreMLNeuralRuntimeOrchestrator.resolve(
       compiledURL: compiledURL,
       workload: effectiveWorkload
