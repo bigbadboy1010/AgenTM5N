@@ -32,6 +32,10 @@ public enum AppPaths {
     coreMLModelsDirectory.appendingPathComponent("registry.json")
   }
 
+  public static var coreMLRoutingProfilesFile: URL {
+    coreMLModelsDirectory.appendingPathComponent("routing-profiles.json")
+  }
+
   public static var promptAttachmentsDirectory: URL {
     applicationSupportDirectory.appendingPathComponent("PromptAttachments", isDirectory: true)
   }
