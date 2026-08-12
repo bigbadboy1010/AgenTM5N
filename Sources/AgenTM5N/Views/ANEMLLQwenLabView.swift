@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 struct ANEMLLQwenLabView: View {
+  @EnvironmentObject private var appState: AppState
+  @ObservedObject private var operatingLayer = AgentOperatingLayerSettings.shared
   @State private var runtime = ANEMLLRuntimeStore.load()
   @State private var prompt = "Antworte in zwei kurzen Sätzen: Was ist die Apple Neural Engine?"
   @State private var maxTokens = 128
@@ -18,6 +20,7 @@ struct ANEMLLQwenLabView: View {
         header
         runtimeCard
         modelCard
+        persistentChatCard
         generationCard
         if let result {
           resultCard(result)
@@ -34,13 +37,13 @@ struct ANEMLLQwenLabView: View {
 
   private var header: some View {
     VStack(alignment: .leading, spacing: 6) {
-      Text("Qwen3 ANE Runtime Lab · Build 36")
+      Text("Qwen3 ANE Runtime Lab · Build 37")
         .font(.title2.bold())
       Text(
         L10n.text(
-          de: "Führt Qwen3 über die native Swift-Referenzruntime von ANEMLL aus. Python wird für diesen Lauf nicht verwendet. Die angezeigten Token-Raten sind echte End-to-End-Inferenzwerte der ANEMLL-Runtime; sie sind keine direkte Messung der ANE-Hardwareauslastung.",
-          en: "Runs Qwen3 through ANEMLL's native Swift reference runtime. Python is not used for this run. Token rates are real end-to-end ANEMLL inference measurements; they are not direct measurements of ANE hardware utilization.",
-          fr: "Exécute Qwen3 via le runtime Swift natif de référence ANEMLL. Python n’est pas utilisé pour cette exécution. Les débits de tokens sont des mesures d’inférence ANEMLL de bout en bout, pas une mesure directe de l’utilisation matérielle de l’ANE."
+          de: "Führt Qwen3 über die native Swift-Referenzruntime von ANEMLL aus. Build 37 ergänzt einen persistenten Chat-Service: Tokenizer und Core-ML-Modelle bleiben zwischen Nachrichten geladen. Python wird für diesen Lauf nicht verwendet. Token-Raten sind End-to-End-Inferenzwerte und keine direkte Messung der ANE-Hardwareauslastung.",
+          en: "Runs Qwen3 through ANEMLL's native Swift reference runtime. Build 37 adds a persistent chat service so the tokenizer and Core ML models stay loaded between messages. Python is not used. Token rates are end-to-end inference measurements, not direct ANE hardware utilization.",
+          fr: "Exécute Qwen3 via le runtime Swift natif de référence ANEMLL. Le Build 37 ajoute un service de chat persistant afin que le tokenizer et les modèles Core ML restent chargés entre les messages. Python n’est pas utilisé. Les débits de tokens sont des mesures d’inférence de bout en bout, pas une mesure directe de l’ANE."
         )
       )
       .font(.callout)
@@ -147,6 +150,51 @@ struct ANEMLLQwenLabView: View {
         )
         .foregroundStyle(.secondary)
       }
+    }
+  }
+
+  private var persistentChatCard: some View {
+    GroupBox(L10n.text(de: "Persistenter AgenTM5N Chat", en: "Persistent AgenTM5N Chat", fr: "Chat AgenTM5N persistant")) {
+      VStack(alignment: .leading, spacing: 10) {
+        Text(
+          L10n.text(
+            de: "Aktiviert Qwen3/ANEMLL als lokale Runtime des normalen Chat-Fensters. Der native Helper wird beim ersten Prompt gestartet und bleibt danach geladen. Eine neue AgenTM5N-Sitzung erzeugt automatisch einen frischen ANEMLL-Kontext.",
+            en: "Activates Qwen3/ANEMLL as the local runtime for the normal chat window. The native helper starts on the first prompt and remains loaded. A new AgenTM5N session automatically creates a fresh ANEMLL context.",
+            fr: "Active Qwen3/ANEMLL comme runtime local du chat normal. Le helper natif démarre au premier prompt puis reste chargé. Une nouvelle session AgenTM5N crée automatiquement un nouveau contexte ANEMLL."
+          )
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+        Button {
+          activatePersistentChat()
+        } label: {
+          Label(
+            L10n.text(
+              de: "Qwen3/ANE im normalen Chat verwenden",
+              en: "Use Qwen3/ANE in Normal Chat",
+              fr: "Utiliser Qwen3/ANE dans le chat normal"
+            ),
+            systemImage: "bubble.left.and.bubble.right.fill"
+          )
+        }
+        .disabled(descriptor == nil)
+
+        if operatingLayer.configuration.localInferenceRuntime == .anemll,
+          appState.configuration.providerKind == .ollamaLocal
+        {
+          Label(
+            L10n.text(
+              de: "ANEMLL ist als lokale Chat-Runtime aktiv.",
+              en: "ANEMLL is active as the local chat runtime.",
+              fr: "ANEMLL est actif comme runtime de chat local."
+            ),
+            systemImage: "checkmark.circle.fill"
+          )
+          .foregroundStyle(.green)
+        }
+      }
+      .padding(8)
     }
   }
 
@@ -259,6 +307,29 @@ struct ANEMLLQwenLabView: View {
         }
       }
       .padding(8)
+    }
+  }
+
+  @MainActor
+  private func activatePersistentChat() {
+    guard let descriptor else { return }
+    runtime.defaultMaxTokens = maxTokens
+    runtime.defaultTemperature = temperature
+    ANEMLLRuntimeStore.save(runtime)
+
+    operatingLayer.configuration.localInferenceRuntime = .anemll
+    operatingLayer.configuration.thinkingMode = thinkingEnabled ? .standard : .off
+    try? operatingLayer.save()
+    operatingLayer.applyRuntimeCompatibility(to: appState)
+
+    appState.providerChanged(to: .ollamaLocal)
+    appState.configuration.baseURL = LocalInferenceRuntime.anemll.defaultBaseURL
+    appState.configuration.model = descriptor.modelName
+    appState.availableModels = [descriptor.modelName]
+    appState.selectedSection = .chat
+
+    Task {
+      await appState.saveConfiguration()
     }
   }
 
