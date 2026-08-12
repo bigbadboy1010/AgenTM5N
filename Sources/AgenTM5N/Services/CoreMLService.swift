@@ -82,6 +82,7 @@ public actor CoreMLService {
 
   private var registry = CoreMLRegistryDocument()
   private var loadedModels: [UUID: MLModel] = [:]
+  private var loadedModelModes: [UUID: CoreMLComputeMode] = [:]
 
   public init() {}
 
@@ -102,6 +103,7 @@ public actor CoreMLService {
 
     let validIDs = Set(registry.models.map(\.id))
     loadedModels = loadedModels.filter { validIDs.contains($0.key) }
+    loadedModelModes = loadedModelModes.filter { validIDs.contains($0.key) }
     try saveRegistry()
 
     // The CoreML Sources/Compiled folders are private managed stores. Remove
@@ -137,7 +139,7 @@ public actor CoreMLService {
 
     // Keep application startup fast. Large Core ML graphs can require tens of
     // seconds to build their execution plan. Registered models are loaded lazily
-    // when activated, predicted with, or used by a semantic workflow.
+    // when activated, predicted with, analyzed, or used by a semantic workflow.
     return snapshot()
   }
 
@@ -191,9 +193,8 @@ public actor CoreMLService {
         createdManagedURLs.append(compiledCopy.url)
       }
 
-      // Validate the final persistent artifact before changing the registry.
-      // If Core ML cannot build an execution plan, the transaction rolls back
-      // and the copied multi-gigabyte artifact is deleted immediately.
+      // Validate the final persistent artifact with the currently selected
+      // compute policy before changing the registry.
       let loadedModel = try await Self.loadCompiledModel(at: compiledCopy.url)
 
       let importedSourceURL: URL
@@ -232,6 +233,7 @@ public actor CoreMLService {
       registry.activeModelID = record.id
       try saveRegistry()
       loadedModels[record.id] = loadedModel
+      loadedModelModes[record.id] = CoreMLRuntimePolicyStore.currentMode
       return record
     } catch {
       registry = previousRegistry
@@ -271,6 +273,20 @@ public actor CoreMLService {
     jsonInput: String,
     modelQuery: String? = nil
   ) async throws -> CoreMLPredictionResult {
+    try await predict(
+      jsonInput: jsonInput,
+      modelQuery: modelQuery,
+      sessionID: nil,
+      resetSession: false
+    )
+  }
+
+  public func predict(
+    jsonInput: String,
+    modelQuery: String? = nil,
+    sessionID: String?,
+    resetSession: Bool = false
+  ) async throws -> CoreMLPredictionResult {
     guard jsonInput.utf8.count <= Self.maximumJSONInputBytes else {
       throw AgentRuntimeError.inputTooLarge(limit: Self.maximumJSONInputBytes)
     }
@@ -278,7 +294,9 @@ public actor CoreMLService {
     let record = try resolveRecord(query: modelQuery)
     let result = try await CoreMLPredictionRunner.shared.predict(
       compiledURL: record.compiledURL,
-      jsonInput: jsonInput
+      jsonInput: jsonInput,
+      sessionID: sessionID,
+      resetSession: resetSession
     )
 
     registry.activeModelID = record.id
@@ -286,8 +304,31 @@ public actor CoreMLService {
     return result
   }
 
+  public func resetPredictionSession(
+    modelQuery: String? = nil,
+    sessionID: String
+  ) async throws {
+    let record = try resolveRecord(query: modelQuery)
+    await CoreMLPredictionRunner.shared.resetSession(
+      compiledURL: record.compiledURL,
+      sessionID: sessionID
+    )
+  }
+
+  public func computePlan(
+    modelQuery: String? = nil,
+    mode: CoreMLComputeMode = CoreMLRuntimePolicyStore.currentMode
+  ) async throws -> CoreMLComputePlanReport {
+    let record = try resolveRecord(query: modelQuery)
+    return try await CoreMLComputePlanAnalyzer.analyze(
+      compiledURL: record.compiledURL,
+      mode: mode
+    )
+  }
+
   private func model(for id: UUID) async throws -> MLModel {
-    if let loaded = loadedModels[id] {
+    let currentMode = CoreMLRuntimePolicyStore.currentMode
+    if let loaded = loadedModels[id], loadedModelModes[id] == currentMode {
       return loaded
     }
     guard let record = registry.models.first(where: { $0.id == id }) else {
@@ -295,16 +336,13 @@ public actor CoreMLService {
     }
     let loaded = try await Self.loadCompiledModel(at: record.compiledURL)
     loadedModels[id] = loaded
+    loadedModelModes[id] = currentMode
     return loaded
   }
 
   private static func loadCompiledModel(at url: URL) async throws -> MLModel {
     let configuration = MLModelConfiguration()
-    // Allow Core ML to schedule each operator across CPU, GPU and ANE. Some
-    // large stateful transformer graphs cannot build an execution plan when
-    // GPU is excluded by `.cpuAndNeuralEngine`, while `.all` succeeds and
-    // still keeps the Neural Engine available for supported operators.
-    configuration.computeUnits = .all
+    configuration.computeUnits = CoreMLRuntimePolicyStore.computeUnits
     return try await MLModel.load(contentsOf: url, configuration: configuration)
   }
 
@@ -445,11 +483,7 @@ public actor CoreMLService {
   }
 
   private static var computePolicyDescription: String {
-    L10n.text(
-      de: "Alle verfügbaren Core-ML-Recheneinheiten (CPU + GPU + Neural Engine)",
-      en: "All available Core ML compute units (CPU + GPU + Neural Engine)",
-      fr: "Toutes les unités de calcul Core ML disponibles (CPU + GPU + Neural Engine)"
-    )
+    CoreMLRuntimePolicyStore.computePolicyDescription
   }
 
   private static func featureDescriptions(
