@@ -6,9 +6,10 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
-# Build 33 adds adaptive Core ML routing from persisted plan and runtime evidence.
-VERSION="${AGENTM5N_VERSION:-1.3.3}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"
+# Build 34 turns adaptive Core ML routing into real prediction execution with
+# Automatic failover and stable MLState session routing.
+VERSION="${AGENTM5N_VERSION:-1.3.4}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-34}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:--}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
