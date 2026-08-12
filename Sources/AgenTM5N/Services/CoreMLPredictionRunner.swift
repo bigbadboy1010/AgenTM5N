@@ -6,9 +6,10 @@ import Foundation
 /// Xcode 27 exposes async Core ML entry points with strict Sendability rules,
 /// while `MLModel`, `MLFeatureValue`, and `MLFeatureProvider` remain reference
 /// types that should not be transferred between concurrency regions. AgenTM5N
-/// therefore keeps loading, the cache, feature construction, and synchronous
-/// prediction on one dedicated background queue. Only URLs/JSON input and the
-/// Sendable `CoreMLPredictionResult` cross the async boundary.
+/// therefore keeps loading, the cache, feature construction, synchronous
+/// prediction and optional stateful sessions on one dedicated background queue.
+/// Only URLs/JSON input, session identifiers and the Sendable result cross the
+/// async boundary.
 public final class CoreMLPredictionRunner: @unchecked Sendable {
   public static let shared = CoreMLPredictionRunner()
 
@@ -17,12 +18,15 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
     qos: .userInitiated
   )
   private var loadedModels: [String: MLModel] = [:]
+  private var sessionStates: [String: AnyObject] = [:]
 
   public init() {}
 
   public func predict(
     compiledURL: URL,
-    jsonInput: String
+    jsonInput: String,
+    sessionID: String? = nil,
+    resetSession: Bool = false
   ) async throws -> CoreMLPredictionResult {
     try await withCheckedThrowingContinuation { continuation in
       queue.async { [self] in
@@ -30,7 +34,9 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
           continuation.resume(
             returning: try predictOnQueue(
               compiledURL: compiledURL,
-              jsonInput: jsonInput
+              jsonInput: jsonInput,
+              sessionID: sessionID,
+              resetSession: resetSession
             )
           )
         } catch {
@@ -40,10 +46,25 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
     }
   }
 
+  public func resetSession(
+    compiledURL: URL,
+    sessionID: String
+  ) async {
+    await withCheckedContinuation { continuation in
+      queue.async { [self] in
+        sessionStates.removeValue(
+          forKey: sessionKey(compiledURL: compiledURL, sessionID: sessionID)
+        )
+        continuation.resume()
+      }
+    }
+  }
+
   public func clearCache() async {
     await withCheckedContinuation { continuation in
       queue.async { [self] in
         loadedModels.removeAll(keepingCapacity: false)
+        sessionStates.removeAll(keepingCapacity: false)
         continuation.resume()
       }
     }
@@ -51,7 +72,9 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
 
   private func predictOnQueue(
     compiledURL: URL,
-    jsonInput: String
+    jsonInput: String,
+    sessionID: String?,
+    resetSession: Bool
   ) throws -> CoreMLPredictionResult {
     dispatchPrecondition(condition: .onQueue(queue))
 
@@ -85,14 +108,28 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
     if #available(macOS 15.0, *),
       !model.modelDescription.stateDescriptionsByName.isEmpty
     {
-      // Stateful Core ML models expose persistent buffers separately from
-      // ordinary inputDescriptionsByName. Core ML owns and allocates MLState;
-      // JSON input must never attempt to construct those state buffers.
-      //
-      // The generic coreml_predict tool deliberately creates a fresh state per
-      // invocation so independent agent calls remain isolated. A dedicated
-      // autoregressive/session API can retain MLState explicitly in the future.
-      let state = model.makeState()
+      // Generic calls remain isolated by default. Supplying a sessionID creates
+      // an explicit stateful Core ML session and retains MLState/KV-style model
+      // buffers across calls. This is the substrate required for later
+      // tokenizer-aware autoregressive language-model generation.
+      let state: MLState
+      if let sessionID,
+        !sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      {
+        let key = sessionKey(compiledURL: compiledURL, sessionID: sessionID)
+        if resetSession {
+          sessionStates.removeValue(forKey: key)
+        }
+        if let existing = sessionStates[key] as? MLState {
+          state = existing
+        } else {
+          let created = model.makeState()
+          sessionStates[key] = created
+          state = created
+        }
+      } else {
+        state = model.makeState()
+      }
       output = try model.prediction(from: input, using: state)
     } else {
       output = try model.prediction(from: input)
@@ -114,19 +151,30 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
 
   private func cachedModelOnQueue(at url: URL) throws -> MLModel {
     dispatchPrecondition(condition: .onQueue(queue))
-    let key = url.standardizedFileURL.path
+    let mode = CoreMLRuntimePolicyStore.currentMode
+    let key = "\(url.standardizedFileURL.path)|\(mode.rawValue)"
     if let existing = loadedModels[key] {
       return existing
     }
 
+    // Remove models created with another compute policy. This keeps memory
+    // bounded and guarantees a policy switch actually rebuilds Core ML's
+    // execution plan rather than reusing an incompatible cached instance.
+    loadedModels.removeAll(keepingCapacity: false)
+    sessionStates.removeAll(keepingCapacity: false)
+
     let configuration = MLModelConfiguration()
-    // `.all` keeps CPU, GPU and ANE available. This matters for large
-    // stateful transformer graphs that cannot build an execution plan when
-    // GPU is excluded by `.cpuAndNeuralEngine` on current macOS runtimes.
-    configuration.computeUnits = .all
+    configuration.computeUnits = mode.computeUnits
     let model = try MLModel(contentsOf: url, configuration: configuration)
     loadedModels[key] = model
     return model
+  }
+
+  private func sessionKey(
+    compiledURL: URL,
+    sessionID: String
+  ) -> String {
+    "\(compiledURL.standardizedFileURL.path)|\(CoreMLRuntimePolicyStore.currentMode.rawValue)|\(sessionID)"
   }
 
   private static func makeFeatureValue(
