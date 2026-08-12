@@ -7,22 +7,23 @@ struct CoreMLModelLabView: View {
   @State private var currentMode: CoreMLComputeMode?
   @State private var partialResults: [CoreMLModelLabModeResult] = []
   @State private var labReport: CoreMLModelLabReport?
+  @State private var runtimeReport: CoreMLRuntimeBenchmarkReport?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 20) {
       GroupBox(
         L10n.text(
-          de: "ANE Model Lab · Build 32",
-          en: "ANE Model Lab · Build 32",
-          fr: "ANE Model Lab · Build 32"
+          de: "ANE Model Lab · Build 33",
+          en: "ANE Model Lab · Build 33",
+          fr: "ANE Model Lab · Build 33"
         )
       ) {
         VStack(alignment: .leading, spacing: 14) {
           Text(
             L10n.text(
-              de: "Vergleicht dasselbe Core-ML-Modell sequenziell mit Automatisch, CPU+GPU und CPU+Neural Engine. Gemessen wird die Zeit zum Aufbau und Analysieren des MLComputePlan; dies ist keine gemessene Hardware-Auslastung. Der separate Runtime Benchmark darunter misst anschließend echte Vorhersagelatenzen.",
-              en: "Compares the same Core ML model sequentially with Automatic, CPU+GPU, and CPU+Neural Engine. The measured time is MLComputePlan build and analysis time; it is not measured hardware utilization. The separate Runtime Benchmark below then measures real prediction latency.",
-              fr: "Compare séquentiellement le même modèle Core ML avec Automatique, CPU+GPU et CPU+Neural Engine. Le temps mesuré correspond à la construction et à l’analyse de MLComputePlan ; il ne s’agit pas d’une utilisation matérielle mesurée. Le benchmark d’exécution séparé ci-dessous mesure ensuite la latence réelle des prédictions."
+              de: "Vergleicht dasselbe Core-ML-Modell sequenziell mit Automatisch, CPU+GPU und CPU+Neural Engine. Gemessen wird die Zeit zum Aufbau und Analysieren des MLComputePlan; dies ist keine gemessene Hardware-Auslastung. Die Ergebnisse werden in Build 33 zusammen mit dem Runtime Benchmark hardware- und OS-spezifisch für den Adaptive Neural Router gespeichert.",
+              en: "Compares the same Core ML model sequentially with Automatic, CPU+GPU, and CPU+Neural Engine. The measured time is MLComputePlan build and analysis time; it is not measured hardware utilization. Build 33 stores these results together with the runtime benchmark per hardware/OS environment for the Adaptive Neural Router.",
+              fr: "Compare séquentiellement le même modèle Core ML avec Automatique, CPU+GPU et CPU+Neural Engine. Le temps mesuré correspond à la construction et à l’analyse de MLComputePlan ; il ne s’agit pas d’une utilisation matérielle mesurée. Le Build 33 conserve ces résultats avec le benchmark d’exécution par environnement matériel/OS pour l’Adaptive Neural Router."
             )
           )
           .font(.callout)
@@ -87,7 +88,20 @@ struct CoreMLModelLabView: View {
         .padding(8)
       }
 
-      CoreMLRuntimeBenchmarkView(descriptor: descriptor)
+      CoreMLRuntimeBenchmarkView(
+        descriptor: descriptor,
+        report: $runtimeReport
+      )
+
+      if let runtimeReport {
+        CoreMLAdaptiveRouterView(
+          modelLabReport: labReport,
+          runtimeReport: runtimeReport
+        )
+      }
+    }
+    .task(id: descriptor.compiledURL.standardizedFileURL.path) {
+      await restoreRoutingEvidence()
     }
   }
 
@@ -111,7 +125,7 @@ struct CoreMLModelLabView: View {
         }
 
         VStack(alignment: .leading, spacing: 3) {
-          Text(L10n.text(de: "Empfohlener Modus", en: "Recommended Mode", fr: "Mode recommandé"))
+          Text(L10n.text(de: "Plan-Empfehlung", en: "Plan recommendation", fr: "Recommandation du plan"))
             .font(.caption)
             .foregroundStyle(.secondary)
           Text(report.recommendedMode.displayName)
@@ -124,9 +138,9 @@ struct CoreMLModelLabView: View {
 
       Text(
         L10n.text(
-          de: "Der Score ist eine transparente AgenTM5N-Heuristik aus Plan-Erfolg und aufgelöster ANE-Coverage. Er ist weder eine Apple-Kennzahl noch eine Messung der realen NPU-Auslastung.",
-          en: "The score is a transparent AgenTM5N heuristic derived from plan success and resolved ANE coverage. It is neither an Apple metric nor a measurement of real NPU utilization.",
-          fr: "Le score est une heuristique transparente d’AgenTM5N basée sur le succès du plan et la couverture ANE résolue. Ce n’est ni une métrique Apple ni une mesure de l’utilisation réelle du NPU."
+          de: "Der Model-Lab-Score bewertet Plan-Kompatibilität und aufgelöste ANE-Coverage. Für die tatsächliche Laufzeitentscheidung verwendet Build 33 zusätzlich Cold Load, erste Vorhersage und warme p50-Latenz im Adaptive Neural Router.",
+          en: "The Model Lab score evaluates plan compatibility and resolved ANE coverage. For the actual runtime decision, Build 33 additionally uses cold load, first prediction, and warm p50 latency in the Adaptive Neural Router.",
+          fr: "Le score du Model Lab évalue la compatibilité du plan et la couverture ANE résolue. Pour la décision d’exécution réelle, le Build 33 utilise en plus le chargement à froid, la première prédiction et la latence p50 à chaud dans l’Adaptive Neural Router."
         )
       )
       .font(.caption)
@@ -224,10 +238,30 @@ struct CoreMLModelLabView: View {
       partialResults.append(result)
     }
 
-    labReport = CoreMLModelLab.evaluate(
+    let evaluated = CoreMLModelLab.evaluate(
       modelName: descriptor.sourceURL.lastPathComponent,
       results: partialResults
     )
+    labReport = evaluated
+    await CoreMLAdaptiveRouter.shared.recordModelLab(
+      evaluated,
+      compiledURL: descriptor.compiledURL,
+      modelName: descriptor.sourceURL.lastPathComponent
+    )
+  }
+
+  @MainActor
+  private func restoreRoutingEvidence() async {
+    guard
+      let profile = await CoreMLAdaptiveRouter.shared.profile(
+        compiledURL: descriptor.compiledURL
+      )
+    else {
+      return
+    }
+    labReport = profile.modelLabReport
+    partialResults = profile.modelLabReport?.results ?? []
+    runtimeReport = profile.runtimeBenchmarkReport
   }
 
   private func percent(_ value: Double) -> String {
