@@ -153,6 +153,9 @@ public final class OllamaProvider: @unchecked Sendable {
     configuration: AppConfiguration,
     apiKey: String?
   ) async throws -> [String] {
+    if shouldUseANEMLL(configuration) {
+      return try ANEMLLProvider().listModels()
+    }
     if shouldUseMLX(configuration) {
       return try await MLXProvider(session: session).listModels(
         configuration: configuration,
@@ -176,6 +179,11 @@ public final class OllamaProvider: @unchecked Sendable {
     configuration: AppConfiguration,
     apiKey: String?
   ) async throws -> Set<String> {
+    if shouldUseANEMLL(configuration) {
+      // Build 37 Qwen3/ANEMLL chat is text-only. Tool calling is intentionally
+      // deferred to the dedicated agent milestone after the persistent runtime.
+      return []
+    }
     if shouldUseMLX(configuration) {
       // The MLX HTTP server is text-only at the request surface used by
       // AgenTM5N. Tool support is model/template dependent and is handled by
@@ -213,6 +221,13 @@ public final class OllamaProvider: @unchecked Sendable {
     messages: [ProviderMessage],
     tools: [ProviderToolDefinition] = []
   ) -> AsyncThrowingStream<ProviderStreamEvent, Error> {
+    if shouldUseANEMLL(configuration) {
+      return ANEMLLProvider().streamChat(
+        configuration: configuration,
+        messages: messages,
+        tools: tools
+      )
+    }
     if shouldUseMLX(configuration) {
       return MLXProvider(session: session).streamChat(
         configuration: configuration,
@@ -375,6 +390,14 @@ public final class OllamaProvider: @unchecked Sendable {
         task.cancel()
       }
     }
+  }
+
+  private func shouldUseANEMLL(_ configuration: AppConfiguration) -> Bool {
+    configuration.providerKind == .ollamaLocal
+      && configuration.baseURL
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .hasPrefix("anemll://")
   }
 
   private func shouldUseMLX(_ configuration: AppConfiguration) -> Bool {
