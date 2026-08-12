@@ -32,32 +32,32 @@ jobs:
           bash -n scripts/verify-release-dmg.sh
           bash -n scripts/publish-github-release.sh
 
-      - name: Validate Build 32 metadata consistency
+      - name: Validate Build 33 metadata consistency
         shell: python
         run: |
           from pathlib import Path
 
           expected = {
               "scripts/build-app.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.2}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-32}"',
-                  "Build 32 adds real Core ML runtime latency benchmarking",
+                  'VERSION="${AGENTM5N_VERSION:-1.3.3}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"',
+                  "Build 33 adds adaptive Core ML routing",
               ],
               "scripts/release-macos.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.2}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-32}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.3}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"',
               ],
               "scripts/check-release.sh": [
-                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.2}"',
-                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-32}"',
+                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.3}"',
+                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-33}"',
               ],
               "scripts/verify-release-dmg.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.2}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-32}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.3}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"',
               ],
               "scripts/publish-github-release.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.2}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-32}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.3}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"',
                   'TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"',
               ],
           }
@@ -121,10 +121,22 @@ jobs:
                   "warmP95Milliseconds",
                   "configuration.computeUnits = mode.computeUnits",
               ],
+              "Sources/AgenTM5N/Services/CoreMLAdaptiveRouter.swift": [
+                  "aneBreakEvenPredictionsVersusAutomatic",
+                  "estimatedTotalMilliseconds",
+                  "outputsStructurallyEquivalent",
+                  "coreMLRoutingProfilesFile",
+                  "neuralEnginePreferred",
+              ],
               "Sources/AgenTM5N/Views/CoreMLRuntimeBenchmarkView.swift": [
-                  "ANE Runtime Benchmark · Build 32",
+                  "ANE Runtime Benchmark · Build 33",
                   "Runtime Benchmark starten",
                   "not actual NPU utilization",
+              ],
+              "Sources/AgenTM5N/Views/CoreMLAdaptiveRouterView.swift": [
+                  "Adaptive Neural Router · Build 33",
+                  "ANE Break-even vs. Automatisch",
+                  "Automatisch kann selbst ANE verwenden",
               ],
               "Sources/AgenTM5N/Providers/MLXProvider.swift": [
                   "/v1/chat/completions",
@@ -144,6 +156,11 @@ jobs:
                   "testFastestWarmP50IsSelected",
                   "testFailedModeDoesNotPreventSuccessfulComparison",
                   "testDifferentOutputStructuresAreFlagged",
+              ],
+              "Tests/AgenTM5NTests/CoreMLAdaptiveRouterTests.swift": [
+                  "testM5DistilBERTInteractiveWorkloadPrefersAutomatic",
+                  "testM5DistilBERTSustainedWorkloadPrefersANE",
+                  "testDifferentOutputStructuresKeepAutomaticAsSafeChoice",
               ],
           }
 
