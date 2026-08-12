@@ -6,6 +6,8 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
+# Build 31 is the ANE Model Lab milestone on top of the validated Build 30
+# Neural Control Plane baseline.
 VERSION="${AGENTM5N_VERSION:-1.3.1}"
 BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-31}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:--}"
