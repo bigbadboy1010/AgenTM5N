@@ -4,26 +4,45 @@ struct CoreMLAdaptiveRouterView: View {
   let modelLabReport: CoreMLModelLabReport?
   let runtimeReport: CoreMLRuntimeBenchmarkReport
 
-  @State private var workloadPreset: CoreMLAdaptiveWorkloadPreset = .interactive
+  @State private var executionStrategy = CoreMLAdaptiveExecutionPolicyStore.strategy
+  @State private var workloadPreset = CoreMLAdaptiveExecutionPolicyStore.workloadPreset
 
   var body: some View {
     GroupBox(
       L10n.text(
-        de: "Adaptive Neural Router · Build 33",
-        en: "Adaptive Neural Router · Build 33",
-        fr: "Adaptive Neural Router · Build 33"
+        de: "Adaptive Neural Execution · Build 34",
+        en: "Adaptive Neural Execution · Build 34",
+        fr: "Adaptive Neural Execution · Build 34"
       )
     ) {
       VStack(alignment: .leading, spacing: 14) {
         Text(
           L10n.text(
-            de: "Kombiniert MLComputePlan-Evidenz mit real gemessener Vorhersagelatenz. Der Router berücksichtigt neben warmem p50 auch Modell-Ladezeit und erste Vorhersage. Dadurch wird ein schneller ANE-Warm-Pfad nicht automatisch zum besten Modus für kurze Sessions.",
-            en: "Combines MLComputePlan evidence with measured prediction latency. The router considers model load time and first prediction in addition to warm p50. A fast warm ANE path therefore does not automatically become the best mode for short sessions.",
-            fr: "Combine les informations de MLComputePlan avec la latence de prédiction mesurée. Le routeur tient compte du chargement du modèle et de la première prédiction en plus du p50 à chaud. Un chemin ANE rapide à chaud ne devient donc pas automatiquement le meilleur mode pour les sessions courtes."
+            de: "Build 34 macht aus der Build-33-Empfehlung eine echte Ausführungsrichtlinie. Im adaptiven Modus wählt AgenTM5N den Compute-Pfad aus dem hardware- und OS-spezifischen Model-Lab-/Runtime-Profil und verwendet bei fehlender oder schwacher Evidenz sicherheitshalber Automatisch.",
+            en: "Build 34 turns the Build 33 recommendation into a real execution policy. In adaptive mode, AgenTM5N selects the compute path from the hardware/OS-specific Model Lab and runtime profile and safely uses Automatic when evidence is missing or weak.",
+            fr: "Le Build 34 transforme la recommandation du Build 33 en véritable politique d’exécution. En mode adaptatif, AgenTM5N choisit le chemin de calcul à partir du profil Model Lab et runtime propre au matériel/OS et utilise Automatique par sécurité lorsque les données sont absentes ou faibles."
           )
         )
         .font(.callout)
         .foregroundStyle(.secondary)
+
+        Picker(
+          L10n.text(
+            de: "Ausführungsstrategie",
+            en: "Execution Strategy",
+            fr: "Stratégie d’exécution"
+          ),
+          selection: $executionStrategy
+        ) {
+          ForEach(CoreMLExecutionStrategy.allCases) { strategy in
+            Text(strategy.displayName).tag(strategy)
+          }
+        }
+        .pickerStyle(.segmented)
+        .onChange(of: executionStrategy) { _, newValue in
+          CoreMLAdaptiveExecutionPolicyStore.setStrategy(newValue)
+          Task { await CoreMLPredictionRunner.shared.clearCache() }
+        }
 
         Picker(
           L10n.text(
@@ -39,6 +58,11 @@ struct CoreMLAdaptiveRouterView: View {
           }
         }
         .pickerStyle(.segmented)
+        .disabled(executionStrategy != .adaptive)
+        .onChange(of: workloadPreset) { _, newValue in
+          CoreMLAdaptiveExecutionPolicyStore.setWorkloadPreset(newValue)
+          Task { await CoreMLPredictionRunner.shared.clearCache() }
+        }
 
         let decision = CoreMLAdaptiveRouter.evaluate(
           modelLabReport: modelLabReport,
@@ -46,11 +70,64 @@ struct CoreMLAdaptiveRouterView: View {
           expectedPredictions: workloadPreset.expectedPredictions
         )
 
+        executionStatus(decision)
         summary(decision)
         estimateMatrix(decision)
       }
       .padding(8)
     }
+  }
+
+  private func executionStatus(_ decision: CoreMLAdaptiveRouteDecision) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .firstTextBaseline, spacing: 22) {
+        VStack(alignment: .leading, spacing: 3) {
+          Text(
+            L10n.text(
+              de: "Ausführung",
+              en: "Execution",
+              fr: "Exécution"
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          Text(executionStrategy.displayName)
+            .font(.title3.bold())
+        }
+
+        VStack(alignment: .leading, spacing: 3) {
+          Text(
+            executionStrategy == .adaptive
+              ? L10n.text(de: "Nächster Prediction-Pfad", en: "Next Prediction Path", fr: "Prochain chemin de prédiction")
+              : L10n.text(de: "Manuelle Richtlinie", en: "Manual Policy", fr: "Politique manuelle")
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          Text(
+            executionStrategy == .adaptive
+              ? decision.recommendedMode.displayName
+              : CoreMLRuntimePolicyStore.currentMode.displayName
+          )
+          .font(.title3.bold())
+        }
+      }
+
+      if executionStrategy == .adaptive {
+        Label(
+          L10n.text(
+            de: "Adaptive Execution ist aktiv. Schlägt ein spezialisierter adaptiver Pfad bei einer echten Vorhersage fehl, versucht AgenTM5N die Vorhersage einmal automatisch mit Core ML Automatisch erneut.",
+            en: "Adaptive Execution is active. If a specialized adaptive path fails during a real prediction, AgenTM5N retries the prediction once with Core ML Automatic.",
+            fr: "Adaptive Execution est actif. Si un chemin adaptatif spécialisé échoue pendant une vraie prédiction, AgenTM5N relance une fois la prédiction avec Core ML Automatique."
+          ),
+          systemImage: "arrow.triangle.branch"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
   }
 
   private func summary(_ decision: CoreMLAdaptiveRouteDecision) -> some View {
