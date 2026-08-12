@@ -6,6 +6,7 @@ struct NeuralEngineView: View {
   @State private var isImportingModel = false
   @State private var computeMode = CoreMLRuntimePolicyStore.currentMode
   @State private var computePlanReport: CoreMLComputePlanReport?
+  @State private var computePlanError: String?
   @State private var isAnalyzingComputePlan = false
   @State private var persistentSessionEnabled = false
   @State private var sessionID = UUID().uuidString
@@ -108,13 +109,7 @@ struct NeuralEngineView: View {
   }
 
   private var neuralRuntimeCard: some View {
-    GroupBox(
-      L10n.text(
-        de: "Neural Compute Runtime 2.0",
-        en: "Neural Compute Runtime 2.0",
-        fr: "Neural Compute Runtime 2.0"
-      )
-    ) {
+    GroupBox("Neural Compute Runtime 2.0") {
       VStack(alignment: .leading, spacing: 14) {
         Picker(
           L10n.text(de: "Rechenrichtlinie", en: "Compute Policy", fr: "Politique de calcul"),
@@ -128,6 +123,8 @@ struct NeuralEngineView: View {
         .onChange(of: computeMode) { _, newMode in
           CoreMLRuntimePolicyStore.set(newMode)
           computePlanReport = nil
+          computePlanError = nil
+          appState.dismissError()
           Task { await CoreMLPredictionRunner.shared.clearCache() }
         }
 
@@ -138,9 +135,9 @@ struct NeuralEngineView: View {
         if computeMode == .neuralEnginePreferred {
           Label(
             L10n.text(
-              de: "Dieser Modus bedeutet CPU + Apple Neural Engine, nicht „ANE only“. Nicht unterstützte Operatoren dürfen weiterhin auf der CPU laufen.",
-              en: "This mode means CPU + Apple Neural Engine, not ANE-only. Unsupported operators may still run on the CPU.",
-              fr: "Ce mode signifie CPU + Apple Neural Engine, et non ANE uniquement. Les opérateurs non pris en charge peuvent toujours utiliser le CPU."
+              de: "CPU + Apple Neural Engine, nicht „ANE only“. Die GPU ist ausgeschlossen; Modelle, die GPU-Operatoren benötigen, können in diesem Modus keinen Execution Plan aufbauen.",
+              en: "CPU + Apple Neural Engine, not ANE-only. The GPU is excluded; models that require GPU operations may be unable to build an execution plan in this mode.",
+              fr: "CPU + Apple Neural Engine, pas ANE uniquement. Le GPU est exclu ; les modèles nécessitant des opérations GPU peuvent ne pas construire de plan d’exécution dans ce mode."
             ),
             systemImage: "info.circle"
           )
@@ -181,7 +178,25 @@ struct NeuralEngineView: View {
             }
           }
 
+          if let computePlanError {
+            planErrorCard(computePlanError)
+          }
+
           if let report = computePlanReport {
+            if report.computeMode == .automatic,
+              report.neuralEngineSupportedOperations == 0
+            {
+              Label(
+                L10n.text(
+                  de: "Für dieses Modell meldet Core ML im automatischen Compute Plan keine ANE-unterstützte Operation. \(report.preferredGPUOperations) Operationen werden bevorzugt der GPU zugeordnet; \(report.unknownPreferredOperations) weitere konnten keinem bevorzugten Gerät zugeordnet werden. Dieses Modell ist daher kein geeigneter Kandidat für den CPU+ANE-Modus.",
+                  en: "For this model Core ML reports no ANE-supported operation in the automatic compute plan. \(report.preferredGPUOperations) operations prefer the GPU and \(report.unknownPreferredOperations) additional operations have no determined preferred device. This model is therefore not a suitable CPU+ANE candidate.",
+                  fr: "Pour ce modèle, Core ML ne signale aucune opération compatible ANE dans le plan automatique. \(report.preferredGPUOperations) opérations préfèrent le GPU et \(report.unknownPreferredOperations) opérations supplémentaires n’ont pas de périphérique préféré déterminé. Ce modèle n’est donc pas un bon candidat CPU+ANE."
+                ),
+                systemImage: "exclamationmark.triangle.fill"
+              )
+              .font(.callout)
+              .foregroundStyle(.orange)
+            }
             computePlanDetails(report)
           }
         } else {
@@ -197,6 +212,40 @@ struct NeuralEngineView: View {
       }
       .padding(8)
     }
+  }
+
+  private func planErrorCard(_ message: String) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label(
+        L10n.text(
+          de: "Compute-Plan nicht verfügbar",
+          en: "Compute plan unavailable",
+          fr: "Plan de calcul indisponible"
+        ),
+        systemImage: "exclamationmark.triangle.fill"
+      )
+      .font(.headline)
+      .foregroundStyle(.orange)
+
+      Text(message)
+        .font(.caption)
+        .textSelection(.enabled)
+
+      if computeMode == .neuralEnginePreferred {
+        Button(
+          L10n.text(
+            de: "Auf Automatisch zurücksetzen",
+            en: "Return to Automatic",
+            fr: "Revenir à Automatique"
+          )
+        ) {
+          computeMode = .automatic
+        }
+      }
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
   }
 
   private func computePlanDetails(_ report: CoreMLComputePlanReport) -> some View {
@@ -220,7 +269,12 @@ struct NeuralEngineView: View {
           Text("\(report.preferredCPUOperations) / \(report.preferredGPUOperations) / \(report.preferredNeuralEngineOperations)")
         }
         GridRow {
-          Text(L10n.text(de: "Stateful", en: "Stateful", fr: "Avec état"))
+          Text(L10n.text(de: "Unbestimmt", en: "Undetermined", fr: "Indéterminé"))
+            .foregroundStyle(.secondary)
+          Text("\(report.unknownPreferredOperations)")
+        }
+        GridRow {
+          Text(L10n.text(de: "Stateful erkannt", en: "Stateful detected", fr: "État détecté"))
             .foregroundStyle(.secondary)
           Text(report.stateful ? "Ja" : "Nein")
         }
@@ -237,31 +291,27 @@ struct NeuralEngineView: View {
         + report.unknownEstimatedWeight
       if totalWeight > 0 {
         VStack(alignment: .leading, spacing: 5) {
-          Text(L10n.text(de: "Geschätzte relative Rechenlast", en: "Estimated Relative Compute Cost", fr: "Coût de calcul relatif estimé"))
-            .font(.headline)
-          Text("CPU \(weight(report.cpuEstimatedWeight)) · GPU \(weight(report.gpuEstimatedWeight)) · ANE \(weight(report.neuralEngineEstimatedWeight))")
-            .font(.system(.caption, design: .monospaced))
           Text(
             L10n.text(
-              de: "Diese Werte stammen aus dem Core-ML-Compute-Plan. Sie beschreiben die erwartete Planung und relative Kosten, nicht eine gemessene Hardware-Auslastung.",
-              en: "These values come from the Core ML compute plan. They describe expected scheduling and relative cost, not measured hardware utilization.",
-              fr: "Ces valeurs proviennent du plan de calcul Core ML. Elles décrivent la planification attendue et le coût relatif, pas une utilisation matérielle mesurée."
+              de: "Geschätzte relative Rechenlast",
+              en: "Estimated Relative Compute Cost",
+              fr: "Coût de calcul relatif estimé"
+            )
+          )
+          .font(.headline)
+          Text(
+            "CPU \(weight(report.cpuEstimatedWeight)) · GPU \(weight(report.gpuEstimatedWeight)) · ANE \(weight(report.neuralEngineEstimatedWeight)) · ? \(weight(report.unknownEstimatedWeight))"
+          )
+          .font(.system(.caption, design: .monospaced))
+          Text(
+            L10n.text(
+              de: "Diese Werte stammen aus MLComputePlan. Sie beschreiben erwartete Planung und relative Kosten, nicht gemessene Hardware-Auslastung.",
+              en: "These values come from MLComputePlan. They describe anticipated scheduling and relative cost, not measured hardware utilization.",
+              fr: "Ces valeurs proviennent de MLComputePlan. Elles décrivent la planification attendue et le coût relatif, pas l’utilisation matérielle mesurée."
             )
           )
           .font(.caption)
           .foregroundStyle(.secondary)
-        }
-      }
-
-      if !report.stateFeatureNames.isEmpty {
-        VStack(alignment: .leading, spacing: 4) {
-          Text("MLState")
-            .font(.headline)
-          ForEach(report.stateFeatureNames, id: \.self) { name in
-            Text(name)
-              .font(.system(.caption, design: .monospaced))
-              .textSelection(.enabled)
-          }
         }
       }
 
@@ -306,7 +356,11 @@ struct NeuralEngineView: View {
               ProgressView().controlSize(.small)
             } else {
               Label(
-                L10n.text(de: "Core-ML-Modell importieren", en: "Import Core ML Model", fr: "Importer un modèle Core ML"),
+                L10n.text(
+                  de: "Core-ML-Modell importieren",
+                  en: "Import Core ML Model",
+                  fr: "Importer un modèle Core ML"
+                ),
                 systemImage: "square.and.arrow.down"
               )
             }
@@ -314,8 +368,11 @@ struct NeuralEngineView: View {
           .disabled(isImportingModel)
 
           if let descriptor = appState.coreMLDescriptor {
-            Label(L10n.text(de: "Registriert", en: "Registered", fr: "Enregistré"), systemImage: "checkmark.circle.fill")
-              .foregroundStyle(.green)
+            Label(
+              L10n.text(de: "Registriert", en: "Registered", fr: "Enregistré"),
+              systemImage: "checkmark.circle.fill"
+            )
+            .foregroundStyle(.green)
             Text(descriptor.sourceURL.lastPathComponent)
               .font(.system(.caption, design: .monospaced))
               .foregroundStyle(.secondary)
@@ -329,8 +386,14 @@ struct NeuralEngineView: View {
           predictionEditor(descriptor)
         } else {
           VStack(alignment: .leading, spacing: 8) {
-            Text(L10n.text(de: "Unterstützte Formate", en: "Supported Formats", fr: "Formats pris en charge"))
-              .font(.headline)
+            Text(
+              L10n.text(
+                de: "Unterstützte Formate",
+                en: "Supported Formats",
+                fr: "Formats pris en charge"
+              )
+            )
+            .font(.headline)
             Text(".mlmodel  ·  .mlpackage  ·  .mlmodelc")
               .font(.system(.body, design: .monospaced))
             Text(
@@ -352,21 +415,37 @@ struct NeuralEngineView: View {
   private func modelDetails(_ descriptor: CoreMLModelDescriptor) -> some View {
     VStack(alignment: .leading, spacing: 12) {
       LabeledContent(
-        L10n.text(de: "Aktive Rechenrichtlinie", en: "Active Compute Policy", fr: "Politique de calcul active"),
+        L10n.text(
+          de: "Aktive Rechenrichtlinie",
+          en: "Active Compute Policy",
+          fr: "Politique de calcul active"
+        ),
         value: computeMode.computePolicyDescription
       )
 
       VStack(alignment: .leading, spacing: 5) {
-        Text(L10n.text(de: "Importierte Quelle", en: "Imported Source", fr: "Source importée"))
-          .font(.headline)
+        Text(
+          L10n.text(
+            de: "Importierte Quelle",
+            en: "Imported Source",
+            fr: "Source importée"
+          )
+        )
+        .font(.headline)
         Text(descriptor.sourceURL.path)
           .font(.system(.caption, design: .monospaced))
           .textSelection(.enabled)
       }
 
       VStack(alignment: .leading, spacing: 5) {
-        Text(L10n.text(de: "Kompiliertes Modell", en: "Compiled Model", fr: "Modèle compilé"))
-          .font(.headline)
+        Text(
+          L10n.text(
+            de: "Kompiliertes Modell",
+            en: "Compiled Model",
+            fr: "Modèle compilé"
+          )
+        )
+        .font(.headline)
         Text(descriptor.compiledURL.path)
           .font(.system(.caption, design: .monospaced))
           .textSelection(.enabled)
@@ -374,12 +453,24 @@ struct NeuralEngineView: View {
 
       ViewThatFits(in: .horizontal) {
         HStack(alignment: .top, spacing: 32) {
-          featureList(title: L10n.text(de: "Eingaben", en: "Inputs", fr: "Entrées"), values: descriptor.inputs)
-          featureList(title: L10n.text(de: "Ausgaben", en: "Outputs", fr: "Sorties"), values: descriptor.outputs)
+          featureList(
+            title: L10n.text(de: "Eingaben", en: "Inputs", fr: "Entrées"),
+            values: descriptor.inputs
+          )
+          featureList(
+            title: L10n.text(de: "Ausgaben", en: "Outputs", fr: "Sorties"),
+            values: descriptor.outputs
+          )
         }
         VStack(alignment: .leading, spacing: 14) {
-          featureList(title: L10n.text(de: "Eingaben", en: "Inputs", fr: "Entrées"), values: descriptor.inputs)
-          featureList(title: L10n.text(de: "Ausgaben", en: "Outputs", fr: "Sorties"), values: descriptor.outputs)
+          featureList(
+            title: L10n.text(de: "Eingaben", en: "Inputs", fr: "Entrées"),
+            values: descriptor.inputs
+          )
+          featureList(
+            title: L10n.text(de: "Ausgaben", en: "Outputs", fr: "Sorties"),
+            values: descriptor.outputs
+          )
         }
       }
     }
@@ -425,13 +516,18 @@ struct NeuralEngineView: View {
 
       if persistentSessionEnabled {
         HStack {
-          Text("Session")
-            .foregroundStyle(.secondary)
+          Text("Session").foregroundStyle(.secondary)
           Text(sessionID)
             .font(.system(.caption, design: .monospaced))
             .textSelection(.enabled)
           Spacer()
-          Button(L10n.text(de: "State zurücksetzen", en: "Reset State", fr: "Réinitialiser l’état")) {
+          Button(
+            L10n.text(
+              de: "State zurücksetzen",
+              en: "Reset State",
+              fr: "Réinitialiser l’état"
+            )
+          ) {
             Task {
               await CoreMLPredictionRunner.shared.resetSession(
                 compiledURL: descriptor.compiledURL,
@@ -443,9 +539,9 @@ struct NeuralEngineView: View {
         }
         Text(
           L10n.text(
-            de: "Bei stateful Core-ML-Modellen bleibt MLState zwischen Vorhersagen erhalten. Das ist die Basis für KV-Cache-/autoregressive Sessions; ein modellspezifischer Tokenizer und Generation-Adapter ist weiterhin erforderlich.",
-            en: "For stateful Core ML models, MLState persists between predictions. This is the substrate for KV-cache/autoregressive sessions; a model-specific tokenizer and generation adapter is still required.",
-            fr: "Pour les modèles Core ML avec état, MLState persiste entre les prédictions. C’est la base des sessions KV-cache/autoregressives ; un tokenizer et un adaptateur de génération spécifiques au modèle restent nécessaires."
+            de: "Bei stateful Core-ML-Modellen bleibt MLState zwischen Vorhersagen erhalten. Ein modellspezifischer Tokenizer und Generation-Adapter ist für autoregressive LLM-Generation weiterhin erforderlich.",
+            en: "For stateful Core ML models, MLState persists between predictions. A model-specific tokenizer and generation adapter is still required for autoregressive LLM generation.",
+            fr: "Pour les modèles Core ML avec état, MLState persiste entre les prédictions. Un tokenizer et un adaptateur de génération spécifiques au modèle restent nécessaires pour la génération LLM autorégressive."
           )
         )
         .font(.caption)
@@ -459,7 +555,11 @@ struct NeuralEngineView: View {
           ProgressView().controlSize(.small)
         } else {
           Label(
-            L10n.text(de: "Vorhersage ausführen", en: "Run Prediction", fr: "Exécuter la prédiction"),
+            L10n.text(
+              de: "Vorhersage ausführen",
+              en: "Run Prediction",
+              fr: "Exécuter la prédiction"
+            ),
             systemImage: "play.fill"
           )
         }
@@ -513,15 +613,24 @@ struct NeuralEngineView: View {
 
   @MainActor
   private func analyzeComputePlan(_ descriptor: CoreMLModelDescriptor) async {
+    guard !isAnalyzingComputePlan else { return }
     isAnalyzingComputePlan = true
+    computePlanError = nil
+    appState.dismissError()
     defer { isAnalyzingComputePlan = false }
+
     do {
-      computePlanReport = try await CoreMLComputePlanAnalyzer.analyze(
+      let report = try await CoreMLComputePlanAnalyzer.analyze(
         compiledURL: descriptor.compiledURL,
         mode: computeMode
       )
+      computePlanReport = report
+      computePlanError = nil
+      appState.dismissError()
     } catch {
-      appState.errorMessage = error.localizedDescription
+      computePlanReport = nil
+      computePlanError = error.localizedDescription
+      appState.dismissError()
     }
   }
 
@@ -535,7 +644,11 @@ struct NeuralEngineView: View {
 
   private func selectCoreMLModel() {
     let panel = NSOpenPanel()
-    panel.title = L10n.text(de: "Core-ML-Modell auswählen", en: "Select Core ML Model", fr: "Sélectionner un modèle Core ML")
+    panel.title = L10n.text(
+      de: "Core-ML-Modell auswählen",
+      en: "Select Core ML Model",
+      fr: "Sélectionner un modèle Core ML"
+    )
     panel.prompt = L10n.text(de: "Importieren", en: "Import", fr: "Importer")
     panel.message = L10n.text(
       de: "Wähle eine .mlmodel-, .mlpackage- oder .mlmodelc-Datei beziehungsweise ein entsprechendes Paketverzeichnis aus.",
@@ -568,6 +681,7 @@ struct NeuralEngineView: View {
         url.stopAccessingSecurityScopedResource()
       }
       computePlanReport = nil
+      computePlanError = nil
       isImportingModel = false
     }
   }
