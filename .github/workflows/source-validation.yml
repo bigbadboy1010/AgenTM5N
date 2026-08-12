@@ -22,6 +22,8 @@ jobs:
           bash -n scripts/run-dev.sh
           bash -n scripts/verify-release-dmg.sh
           bash -n scripts/verify.sh
+          bash -n scripts/bootstrap-anemll-runtime.sh
+          bash -n scripts/test-anemll-qwen3.sh
           bash -n scripts/lib/xcode-env.sh
       - name: Parse Swift sources
         run: |
