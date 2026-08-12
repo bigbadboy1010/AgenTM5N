@@ -51,7 +51,12 @@ public struct AgentToolCatalogEntry: Codable, Equatable, Sendable {
 /// added tools do not silently become provider-specific.
 public enum AgentToolRegistry {
   public static var allDefinitions: [ProviderToolDefinition] {
-    unique(
+    let operatingConfiguration = AgentOperatingLayerStore.load()
+    if operatingConfiguration.bundledToolsEnabled {
+      BundledToolPackInstaller.ensureInstalled()
+    }
+
+    return unique(
       AgentRuntime.toolDefinitions
         + MacNativeAgentTools.definitions
         + MacNativeMutationAgentTools.definitions
@@ -80,15 +85,24 @@ public enum AgentToolRegistry {
   public static func definitions(
     capabilities: Set<AgentToolCapability>
   ) -> [ProviderToolDefinition] {
-    let names = Set(
+    let staticNames = Set(
       catalog
         .filter { capabilities.contains($0.capability) }
         .map(\.name)
-    ).union(
-      capabilities.contains(.terminal)
-        ? Set(SelfBuiltToolLibrary.shared.records.filter(\.isEnabled).map(\.name))
-        : Set<String>()
     )
+    let dynamicNames = Set(
+      SelfBuiltToolLibrary.shared.records
+        .filter(\.isEnabled)
+        .compactMap { record -> String? in
+          guard let dynamicEntry = entry(named: record.name),
+            capabilities.contains(dynamicEntry.capability)
+          else {
+            return nil
+          }
+          return record.name
+        }
+    )
+    let names = staticNames.union(dynamicNames)
     return allDefinitions.filter { names.contains($0.function.name) }
   }
 
@@ -213,6 +227,9 @@ public enum AgentToolRegistry {
     if let existing = catalog.first(where: { $0.name == name }) {
       return existing
     }
+    if let bundled = BundledToolCatalog.entry(named: name) {
+      return bundled
+    }
     if SelfBuiltToolAgentTools.isDynamicToolName(name) {
       return AgentToolCatalogEntry(
         name: name,
@@ -235,9 +252,15 @@ public enum AgentToolRegistry {
   }
 
   public static func isRemoteOrExternal(_ name: String) -> Bool {
-    if SelfBuiltToolAgentTools.managementNames.contains(name)
-      || SelfBuiltToolAgentTools.isDynamicToolName(name)
+    if SelfBuiltToolAgentTools.managementNames.contains(name) {
+      return true
+    }
+    if SelfBuiltToolAgentTools.isDynamicToolName(name),
+      !BundledToolPackInstaller.isBundledToolName(name)
     {
+      return true
+    }
+    if let bundled = BundledToolCatalog.entry(named: name), bundled.risk == .execute {
       return true
     }
     if name == "run_command"

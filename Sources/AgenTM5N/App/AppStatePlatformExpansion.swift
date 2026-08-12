@@ -169,7 +169,7 @@ extension AppState {
     default:
       return .init(
         success: false,
-        output: "Unsupported AgenTM5N 1.1 platform tool: \(call.function.name)"
+        output: "Unsupported AgenTM5N 1.2 platform tool: \(call.function.name)"
       )
     }
   }
@@ -807,6 +807,35 @@ extension AppState {
     }
   }
 
+  func executeDelegatedOllamaToolCall(
+    _ call: ProviderToolCall
+  ) async -> ToolExecutionResult {
+    if let denial = capabilityDenialResult(for: call) {
+      return denial
+    }
+
+    let routing = await registryRiskAndSummary(for: call)
+    let allowed = await authorize(
+      call: call,
+      risk: routing.risk,
+      summary: routing.summary
+    )
+
+    guard allowed else {
+      return ToolExecutionResult(
+        success: false,
+        output: "Tool execution denied by the user or permission policy."
+      )
+    }
+
+    return await executeMeasuredTool(
+      call: call,
+      risk: routing.risk
+    ) { [self] in
+      await executeStandaloneWorkflowStep(call)
+    }
+  }
+
   private func runDelegatedOllama(
     configuration delegateConfiguration: AppConfiguration,
     task: String,
@@ -822,8 +851,23 @@ extension AppState {
       apiKey = nil
     }
 
+    var operatingConfiguration = AgentOperatingLayerStore.load()
+    operatingConfiguration.normalize()
+    let delegatedSystemContent = delegateConfiguration.systemPrompt
+      + "\n\n"
+      + AgentRuntimeContext.providerInstruction()
+      + "\n\n"
+      + AgentRuntimeContext.currentTemporalContext()
+      + "\n\n"
+      + """
+      AGENTM5N DELEGATED TOOL SECURITY:
+      - Use only the tools AgenTM5N actually exposes to this specialist.
+      - Never claim that a tool-backed action was executed or succeeded unless the corresponding tool was actually called and returned that result.
+      - A denied or unavailable tool must be reported as denied or unavailable, never as successfully executed.
+      """
+
     var providerMessages = [
-      ProviderMessage(role: .system, content: delegateConfiguration.systemPrompt),
+      ProviderMessage(role: .system, content: delegatedSystemContent),
       ProviderMessage(role: .user, content: task),
     ]
     let tools: [ProviderToolDefinition]
@@ -836,10 +880,12 @@ extension AppState {
     } else {
       tools = []
     }
-    let maximumRounds = max(1, min(delegateConfiguration.maxToolIterations, 12))
 
+    let maximumRounds = operatingConfiguration.effectiveToolRoundLimit
+    var completedToolRounds = 0
     var finalContent = ""
-    for _ in 0..<maximumRounds {
+
+    while true {
       try Task.checkCancellation()
       var turnContent = ""
       var turnThinking = ""
@@ -851,6 +897,7 @@ extension AppState {
         tools: tools
       )
       for try await event in stream {
+        try Task.checkCancellation()
         turnContent += event.contentDelta
         turnThinking += event.thinkingDelta
         for toolCall in event.toolCalls where !calls.contains(toolCall) {
@@ -866,9 +913,17 @@ extension AppState {
           toolCalls: calls.isEmpty ? nil : calls
         )
       )
+
       guard useTools, !calls.isEmpty else { break }
+      if let maximumRounds, completedToolRounds >= maximumRounds {
+        finalContent += "\n\nAgent-Limit erreicht: maximal \(maximumRounds) Tool-Runden."
+        break
+      }
+      completedToolRounds += 1
+
       for toolCall in calls {
-        let result = await executeStandaloneWorkflowStep(toolCall)
+        try Task.checkCancellation()
+        let result = await executeDelegatedOllamaToolCall(toolCall)
         providerMessages.append(
           ProviderMessage(
             role: .tool,
@@ -1069,9 +1124,9 @@ extension AppState {
     AppVersionDescriptor(
       version: Bundle.main.object(
         forInfoDictionaryKey: "CFBundleShortVersionString"
-      ) as? String ?? "1.1.1",
+      ) as? String ?? "1.2.0",
       build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        ?? "25",
+        ?? "29",
       bundleIdentifier: Bundle.main.bundleIdentifier ?? AppPaths.bundleIdentifier
     )
   }

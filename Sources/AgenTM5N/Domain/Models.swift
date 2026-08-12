@@ -174,7 +174,7 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     agentEnabled: Bool = true,
     permissionMode: AgentPermissionMode = .confirm,
     workspacePath: String = FileManager.default.homeDirectoryForCurrentUser.path,
-    maxToolIterations: Int = 8
+    maxToolIterations: Int = 64
   ) {
     self.providerKind = providerKind
     self.baseURL = baseURL
@@ -185,7 +185,7 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     self.agentEnabled = agentEnabled
     self.permissionMode = permissionMode
     self.workspacePath = workspacePath
-    self.maxToolIterations = max(1, min(maxToolIterations, 24))
+    self.maxToolIterations = max(1, min(maxToolIterations, 1_000_000_000))
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -220,9 +220,12 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     workspacePath =
       try container.decodeIfPresent(String.self, forKey: .workspacePath)
       ?? FileManager.default.homeDirectoryForCurrentUser.path
-    maxToolIterations = max(
+    let legacyToolIterations = max(
       1,
-      min(try container.decodeIfPresent(Int.self, forKey: .maxToolIterations) ?? 8, 24)
+      try container.decodeIfPresent(Int.self, forKey: .maxToolIterations) ?? 8
+    )
+    maxToolIterations = AgentOperatingLayerStore.runtimeToolRoundLimit(
+      fallback: legacyToolIterations
     )
   }
 
@@ -238,7 +241,7 @@ public struct AppConfiguration: Codable, Equatable, Sendable {
     agentEnabled: true,
     permissionMode: .confirm,
     workspacePath: FileManager.default.homeDirectoryForCurrentUser.path,
-    maxToolIterations: 8
+    maxToolIterations: AgentOperatingLayerStore.runtimeToolRoundLimit(fallback: 64)
   )
 }
 

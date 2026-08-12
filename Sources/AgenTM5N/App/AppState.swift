@@ -1021,7 +1021,7 @@ public final class AppState: ObservableObject {
     }
   }
 
-  private func authorize(
+  func authorize(
     call: ProviderToolCall,
     risk: ToolRisk,
     summary: String
@@ -1139,6 +1139,7 @@ public final class AppState: ObservableObject {
       + """
       AGENTM5N TOOL SECURITY:
       - Use the provider-neutral AgenTM5N tools when they are relevant.
+      - Never claim that a tool-backed action was executed, succeeded, failed, or produced data unless the corresponding AgenTM5N tool was actually called in the current turn and returned that result. If no tool call occurred, state clearly that the action was not executed.
       - Never request or expose password, private-key, passphrase, API-key, token, or other Vault secret values.
       - secret_list returns metadata labels only. Tools that accept secret_ref resolve that label internally inside AgenTM5N.
       - Prefer workspace_semantic_search for meaning-based Workspace Memory retrieval when a semantic index is available.
@@ -1164,7 +1165,17 @@ public final class AppState: ObservableObject {
   private func makeAppleMessages(
     excludingAssistantID: UUID
   ) -> [ChatMessage] {
-    var result = [ChatMessage(role: .system, content: configuration.systemPrompt)]
+    let systemContent = configuration.systemPrompt
+      + "\n\n"
+      + AgentRuntimeContext.providerInstruction()
+      + "\n\n"
+      + """
+      AGENTM5N EXECUTION INTEGRITY:
+      - Never claim that a tool-backed action was executed, succeeded, failed, or produced data unless the corresponding AgenTM5N tool was actually called in the current turn and returned that result.
+      - If no tool call occurred, state clearly that the action was not executed.
+      """
+
+    var result = [ChatMessage(role: .system, content: systemContent)]
     result.append(
       contentsOf: messages.filter {
         $0.id != excludingAssistantID && $0.role != .system
