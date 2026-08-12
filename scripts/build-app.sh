@@ -6,10 +6,9 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
-# Build 35 routes real neural workloads such as Workspace Memory embeddings
-# through the adaptive Core ML execution policy with workload-sized decisions.
-VERSION="${AGENTM5N_VERSION:-1.3.5}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-35}"
+# Build 36 adds the native Swift ANEMLL bridge and Qwen3 generative ANE lab.
+VERSION="${AGENTM5N_VERSION:-1.3.6}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:--}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
