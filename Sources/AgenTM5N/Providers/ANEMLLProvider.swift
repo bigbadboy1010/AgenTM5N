@@ -50,8 +50,7 @@ public final class ANEMLLProvider: @unchecked Sendable {
     for message in messages.reversed() {
       switch message.role {
       case .user:
-        let prompt = PromptAttachmentService.providerPrompt(from: message.content)
-          .trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
         if !prompt.isEmpty {
           return prompt
         }
