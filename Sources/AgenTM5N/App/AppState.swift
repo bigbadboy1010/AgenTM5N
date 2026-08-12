@@ -210,7 +210,7 @@ public final class AppState: ObservableObject {
   }
 
   public func saveConfiguration() async {
-    configuration.maxToolIterations = max(1, min(configuration.maxToolIterations, 24))
+    configuration.maxToolIterations = max(1, configuration.maxToolIterations)
     do {
       try await configurationStore.save(configuration)
       await ToolResultCache.shared.invalidateAll()
