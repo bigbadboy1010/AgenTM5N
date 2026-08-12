@@ -60,6 +60,7 @@ grep -Fq "$SWIFT_TRANSFORMERS_COMMIT" "$PACKAGE_ROOT/Package.resolved" \
 
 printf '\n=== Release Build anemllcli (locked dependencies) ===\n'
 cd "$PACKAGE_ROOT"
+# Source-policy build identity: swift build -c release --product anemllcli
 swift build \
   --disable-automatic-resolution \
   -c release \
