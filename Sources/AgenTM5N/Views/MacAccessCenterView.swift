@@ -1,5 +1,7 @@
 import AppKit
+import ApplicationServices
 import Contacts
+import CoreGraphics
 import EventKit
 import SwiftUI
 
@@ -10,6 +12,8 @@ struct MacAccessCenterView: View {
   @State private var calendarStatus = ""
   @State private var remindersStatus = ""
   @State private var contactsStatus = ""
+  @State private var accessibilityStatus = ""
+  @State private var screenRecordingStatus = ""
 
   private var auditRecords: [ToolExecutionRecord] {
     appState.messages
@@ -21,12 +25,13 @@ struct MacAccessCenterView: View {
     VStack(alignment: .leading, spacing: 18) {
       HStack {
         VStack(alignment: .leading, spacing: 4) {
-          Text("Mac Access Center")
+          Text("Mac Access Center 2.0")
             .font(.title2.bold())
-          Text("Native macOS-Zugriffe, gemeinsame Agent-Berechtigungen und Audit-Status")
+          Text("Native macOS-Zugriffe, Control-Plane-Berechtigungen und gemeinsamer Agent-Audit")
             .foregroundStyle(.secondary)
         }
         Spacer()
+        Button("Aktualisieren", action: refresh)
         Button("Schließen") { dismiss() }
       }
 
@@ -39,8 +44,14 @@ struct MacAccessCenterView: View {
           )
           Divider()
           accessRow(
-            title: "Ollama Local / Cloud",
-            detail: "Tool Calls verwenden denselben Risiko-, Freigabe- und Audit-Mechanismus.",
+            title: "Ollama / MLX / Cloud",
+            detail: "Tool Calls verwenden denselben Risiko-, Freigabe-, Capability- und Audit-Mechanismus.",
+            state: "Aktiv"
+          )
+          Divider()
+          accessRow(
+            title: "Mac Control Plane",
+            detail: "Apps, Fenster, Spotlight, Screenshots, Finder und Shortcuts werden als zentral klassifizierte Agent-Tools ausgeführt.",
             state: "Aktiv"
           )
           Divider()
@@ -53,7 +64,7 @@ struct MacAccessCenterView: View {
         .padding(.vertical, 6)
       }
 
-      GroupBox("macOS Datenschutz") {
+      GroupBox("macOS Datenschutz & Steuerung") {
         VStack(alignment: .leading, spacing: 10) {
           permissionRow(
             systemImage: "calendar",
@@ -77,11 +88,52 @@ struct MacAccessCenterView: View {
           )
           Divider()
           permissionRow(
-            systemImage: "envelope",
-            title: "Apple Mail / Automation",
-            status: "Durch macOS Apple Events geschützt",
+            systemImage: "hand.point.up.left",
+            title: "Bedienungshilfen / Accessibility",
+            status: accessibilityStatus,
+            settingsAnchor: "Privacy_Accessibility"
+          )
+          Divider()
+          permissionRow(
+            systemImage: "rectangle.dashed.badge.record",
+            title: "Bildschirmaufnahme",
+            status: screenRecordingStatus,
+            settingsAnchor: "Privacy_ScreenCapture"
+          )
+          Divider()
+          permissionRow(
+            systemImage: "externaldrive.fill",
+            title: "Festplattenvollzugriff",
+            status: "Von macOS verwaltet – kein verlässlicher öffentlicher Preflight-Status",
+            settingsAnchor: "Privacy_AllFiles"
+          )
+          Divider()
+          permissionRow(
+            systemImage: "gearshape.2",
+            title: "Automation / Apple Events",
+            status: "Pro Ziel-App durch macOS geschützt",
             settingsAnchor: "Privacy_Automation"
           )
+          Divider()
+          permissionRow(
+            systemImage: "envelope",
+            title: "Apple Mail",
+            status: "Über Automation / Apple Events",
+            settingsAnchor: "Privacy_Automation"
+          )
+        }
+        .padding(.vertical, 6)
+      }
+
+      GroupBox("Control-Plane-Fähigkeiten") {
+        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+          controlPlaneRow("Apps", "auflisten · starten · fokussieren")
+          controlPlaneRow("Fenster", "auflisten über Accessibility/System Events")
+          controlPlaneRow("Spotlight", "systemweite Metadatensuche im von macOS erlaubten Bereich")
+          controlPlaneRow("Finder / Dateien", "anzeigen · öffnen · Metadaten")
+          controlPlaneRow("Screen", "Screenshot für Agent/Vision-Pipelines")
+          controlPlaneRow("Shortcuts", "auflisten · ausführen · Text-Input")
+          controlPlaneRow("Persönliche Daten", "Kalender · Kontakte · Mail · Erinnerungen")
         }
         .padding(.vertical, 6)
       }
@@ -107,7 +159,7 @@ struct MacAccessCenterView: View {
       Spacer()
     }
     .padding(24)
-    .frame(minWidth: 760, minHeight: 600)
+    .frame(minWidth: 820, minHeight: 760)
     .onAppear(perform: refresh)
   }
 
@@ -147,10 +199,24 @@ struct MacAccessCenterView: View {
     }
   }
 
+  @ViewBuilder
+  private func controlPlaneRow(_ capability: String, _ detail: String) -> some View {
+    GridRow {
+      Text(capability).fontWeight(.semibold)
+      Text(detail).foregroundStyle(.secondary)
+    }
+  }
+
   private func refresh() {
     calendarStatus = Self.calendarAuthorizationDescription()
     remindersStatus = Self.remindersAuthorizationDescription()
     contactsStatus = Self.contactsAuthorizationDescription()
+    accessibilityStatus = AXIsProcessTrusted()
+      ? "Erlaubt"
+      : "Nicht erlaubt / noch nicht freigegeben"
+    screenRecordingStatus = CGPreflightScreenCaptureAccess()
+      ? "Erlaubt"
+      : "Nicht erlaubt / noch nicht freigegeben"
   }
 
   private static func calendarAuthorizationDescription() -> String {
