@@ -8,8 +8,8 @@ import Foundation
 /// types that should not be transferred between concurrency regions. AgenTM5N
 /// therefore keeps loading, the cache, feature construction, synchronous
 /// prediction and optional stateful sessions on one dedicated background queue.
-/// Only URLs/JSON input, session identifiers, routing metadata and the Sendable
-/// result cross the async boundary.
+/// Only URLs/JSON input, session identifiers and the Sendable result cross the
+/// async boundary.
 public final class CoreMLPredictionRunner: @unchecked Sendable {
   public static let shared = CoreMLPredictionRunner()
 
@@ -73,6 +73,7 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
         loadedModels.removeAll(keepingCapacity: false)
         sessionStates.removeAll(keepingCapacity: false)
         sessionModes.removeAll(keepingCapacity: false)
+        CoreMLAdaptiveExecutionTelemetry.shared.clear()
         continuation.resume()
       }
     }
@@ -222,6 +223,7 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
     }
 
     let elapsed = startedAt.duration(to: ContinuousClock().now)
+    let predictionMilliseconds = Self.milliseconds(from: elapsed)
 
     var resultValues: [String: String] = [:]
     for name in output.featureNames.sorted() {
@@ -241,12 +243,20 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
       routingReason = route.reason
     }
 
+    CoreMLAdaptiveExecutionTelemetry.shared.record(
+      CoreMLExecutionTelemetrySnapshot(
+        compiledPath: compiledURL.standardizedFileURL.path,
+        mode: effectiveMode,
+        source: sessionWasLocked ? .manual : route.source,
+        adaptiveRoutingApplied: route.adaptiveRoutingApplied && !sessionWasLocked,
+        reason: routingReason,
+        predictionMilliseconds: predictionMilliseconds
+      )
+    )
+
     return CoreMLPredictionResult(
       values: resultValues,
-      durationMilliseconds: Self.milliseconds(from: elapsed),
-      executionMode: effectiveMode.displayName,
-      adaptiveRoutingApplied: route.adaptiveRoutingApplied && !sessionWasLocked,
-      routingReason: routingReason
+      durationMilliseconds: predictionMilliseconds
     )
   }
 
