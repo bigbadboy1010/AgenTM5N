@@ -169,7 +169,7 @@ extension AppState {
     default:
       return .init(
         success: false,
-        output: "Unsupported AgenTM5N 1.1 platform tool: \(call.function.name)"
+        output: "Unsupported AgenTM5N 1.2 platform tool: \(call.function.name)"
       )
     }
   }
@@ -810,8 +810,6 @@ extension AppState {
   func executeDelegatedOllamaToolCall(
     _ call: ProviderToolCall
   ) async -> ToolExecutionResult {
-    // Capability denial happens before any approval dialog. A specialist must
-    // never be able to request permission for a capability it does not own.
     if let denial = capabilityDenialResult(for: call) {
       return denial
     }
@@ -830,9 +828,6 @@ extension AppState {
       )
     }
 
-    // Delegated Ollama tools use the same measured execution path as the main
-    // agent. This preserves capability checks, cache invalidation and audit /
-    // telemetry instead of silently bypassing the central router.
     return await executeMeasuredTool(
       call: call,
       risk: routing.risk
@@ -856,9 +851,13 @@ extension AppState {
       apiKey = nil
     }
 
+    var operatingConfiguration = AgentOperatingLayerStore.load()
+    operatingConfiguration.normalize()
     let delegatedSystemContent = delegateConfiguration.systemPrompt
       + "\n\n"
       + AgentRuntimeContext.providerInstruction()
+      + "\n\n"
+      + AgentRuntimeContext.currentTemporalContext()
       + "\n\n"
       + """
       AGENTM5N DELEGATED TOOL SECURITY:
@@ -881,10 +880,12 @@ extension AppState {
     } else {
       tools = []
     }
-    let maximumRounds = max(1, min(delegateConfiguration.maxToolIterations, 12))
 
+    let maximumRounds = operatingConfiguration.effectiveToolRoundLimit
+    var completedToolRounds = 0
     var finalContent = ""
-    for _ in 0..<maximumRounds {
+
+    while true {
       try Task.checkCancellation()
       var turnContent = ""
       var turnThinking = ""
@@ -896,6 +897,7 @@ extension AppState {
         tools: tools
       )
       for try await event in stream {
+        try Task.checkCancellation()
         turnContent += event.contentDelta
         turnThinking += event.thinkingDelta
         for toolCall in event.toolCalls where !calls.contains(toolCall) {
@@ -911,8 +913,16 @@ extension AppState {
           toolCalls: calls.isEmpty ? nil : calls
         )
       )
+
       guard useTools, !calls.isEmpty else { break }
+      if let maximumRounds, completedToolRounds >= maximumRounds {
+        finalContent += "\n\nAgent-Limit erreicht: maximal \(maximumRounds) Tool-Runden."
+        break
+      }
+      completedToolRounds += 1
+
       for toolCall in calls {
+        try Task.checkCancellation()
         let result = await executeDelegatedOllamaToolCall(toolCall)
         providerMessages.append(
           ProviderMessage(
@@ -1114,9 +1124,9 @@ extension AppState {
     AppVersionDescriptor(
       version: Bundle.main.object(
         forInfoDictionaryKey: "CFBundleShortVersionString"
-      ) as? String ?? "1.1.2",
+      ) as? String ?? "1.2.0",
       build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        ?? "30",
+        ?? "29",
       bundleIdentifier: Bundle.main.bundleIdentifier ?? AppPaths.bundleIdentifier
     )
   }
