@@ -6,9 +6,9 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
-# Build 36 adds the native Swift ANEMLL bridge and Qwen3 generative ANE lab.
-VERSION="${AGENTM5N_VERSION:-1.3.6}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"
+# Build 37 adds persistent Qwen3/ANEMLL chat with model reuse between turns.
+VERSION="${AGENTM5N_VERSION:-1.3.7}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-37}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:--}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
