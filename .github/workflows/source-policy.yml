@@ -35,37 +35,38 @@ jobs:
           bash -n scripts/bootstrap-anemll-runtime.sh
           bash -n scripts/test-anemll-qwen3.sh
 
-      - name: Validate Build 36 metadata consistency
+      - name: Validate Build 37 metadata consistency
         shell: python
         run: |
           from pathlib import Path
 
           expected = {
               "scripts/build-app.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.6}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"',
-                  "Build 36 adds the native Swift ANEMLL bridge",
+                  'VERSION="${AGENTM5N_VERSION:-1.3.7}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-37}"',
+                  "Build 37 adds persistent Qwen3/ANEMLL chat",
               ],
               "scripts/release-macos.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.6}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.7}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-37}"',
               ],
               "scripts/check-release.sh": [
-                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.6}"',
-                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-36}"',
+                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.7}"',
+                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-37}"',
               ],
               "scripts/verify-release-dmg.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.6}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.7}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-37}"',
               ],
               "scripts/publish-github-release.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.6}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.7}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-37}"',
                   'TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"',
               ],
               "scripts/bootstrap-anemll-runtime.sh": [
                   "fb42f60b2e7a7b4709052c7146d37480bf21941e",
-                  "swift build -c release --product anemllcli",
+                  "swift build",
+                  "--product anemllcli",
                   "codesign --force --sign - --options runtime",
               ],
           }
@@ -159,14 +160,43 @@ jobs:
                   "withTaskCancellationHandler",
                   "parseMetrics",
               ],
+              "Sources/AgenTM5N/Services/ANEMLLPersistentRuntimeService.swift": [
+                  "ANEMLLPersistentRuntimeService",
+                  "ANEMLLInteractiveProtocol",
+                  "readUntilPrompt",
+                  "conversationTurns",
+                  "shouldRestart",
+                  "withTaskCancellationHandler",
+                  "requestTimeoutSeconds",
+              ],
               "Sources/AgenTM5N/Providers/ANEMLLProvider.swift": [
-                  "ANEMLLNativeRuntime.complete",
+                  "persistentRuntime.complete",
                   "ANEMLLRuntimeTelemetry.shared.record",
                   "latestUserPrompt",
+                  "ANEMLL BUILD 37 RUNTIME",
+                  "streamChat",
+                  "requestTimeoutSeconds",
+              ],
+              "Sources/AgenTM5N/Providers/OllamaProvider.swift": [
+                  "shouldUseANEMLL",
+                  "ANEMLLProvider().streamChat",
+                  "ANEMLLProvider().listModels",
+                  "shouldUseMLX",
+              ],
+              "Sources/AgenTM5N/Domain/AgentOperatingLayerSettings.swift": [
+                  "case anemll",
+                  '"anemll://neural-engine"',
+                  "LocalInferenceRuntime",
+              ],
+              "Sources/AgenTM5N/Views/SettingsView.swift": [
+                  "ANEMLL / Neural Engine",
+                  "Persistent Swift / ANEMLL",
+                  "Tool Calling ist Roadmap Build 39",
               ],
               "Sources/AgenTM5N/Views/ANEMLLQwenLabView.swift": [
-                  "Qwen3 ANE Runtime Lab · Build 36",
+                  "Qwen3 ANE Runtime Lab · Build 37",
                   "Qwen3 nativ testen",
+                  "Qwen3/ANE im normalen Chat verwenden",
                   "ANEMLLNativeRuntime.complete",
               ],
               "Sources/AgenTM5N/App/AgenTM5NApp.swift": [
@@ -247,6 +277,10 @@ jobs:
                   "testQwenBundleInspectorFindsSplitComponentsAndPrefersLUTHead",
                   "testSwiftCLIMetricsParserReadsDecodePrefillTTFTAndTokens",
                   "testQwenBundleInspectorRejectsMissingTokenizer",
+                  "testInteractiveProtocolParsesAssistantResponseAndMetricsBoundary",
+                  "testInteractiveProtocolNormalizesMultilinePromptToSingleTransportLine",
+                  "testInteractiveProtocolProtectsSlashCommands",
+                  "testPersistentSessionSignatureDetectsRuntimeConfigurationChanges",
               ],
               "scripts/test-anemll-qwen3.sh": [
                   "NATIVE QWEN3 GATE: OK",
@@ -268,4 +302,4 @@ jobs:
       - name: Note target-Mac gate
         run: |
           echo "Static source policy passed."
-          echo "Full Swift/Xcode/FoundationModels/CoreML/ANEMLL verification remains mandatory on the target Apple Silicon Mac via scripts/verify.sh plus the native Qwen3 smoke gate."
+          echo "Full Swift/Xcode/FoundationModels/CoreML/ANEMLL verification remains mandatory on the target Apple Silicon Mac via scripts/verify.sh plus the persistent Qwen3 chat gate."
