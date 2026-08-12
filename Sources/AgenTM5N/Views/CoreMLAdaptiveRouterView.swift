@@ -1,11 +1,15 @@
 import SwiftUI
 
 struct CoreMLAdaptiveRouterView: View {
+  let descriptor: CoreMLModelDescriptor
   let modelLabReport: CoreMLModelLabReport?
   let runtimeReport: CoreMLRuntimeBenchmarkReport
 
   @State private var executionStrategy = CoreMLAdaptiveExecutionPolicyStore.strategy
   @State private var workloadPreset = CoreMLAdaptiveExecutionPolicyStore.workloadPreset
+  @State private var isProbing = false
+  @State private var probeTelemetry: CoreMLExecutionTelemetrySnapshot?
+  @State private var probeError: String?
 
   var body: some View {
     GroupBox(
@@ -41,6 +45,7 @@ struct CoreMLAdaptiveRouterView: View {
         .pickerStyle(.segmented)
         .onChange(of: executionStrategy) { _, newValue in
           CoreMLAdaptiveExecutionPolicyStore.setStrategy(newValue)
+          resetProbe()
           Task { await CoreMLPredictionRunner.shared.clearCache() }
         }
 
@@ -61,6 +66,7 @@ struct CoreMLAdaptiveRouterView: View {
         .disabled(executionStrategy != .adaptive)
         .onChange(of: workloadPreset) { _, newValue in
           CoreMLAdaptiveExecutionPolicyStore.setWorkloadPreset(newValue)
+          resetProbe()
           Task { await CoreMLPredictionRunner.shared.clearCache() }
         }
 
@@ -71,6 +77,7 @@ struct CoreMLAdaptiveRouterView: View {
         )
 
         executionStatus(decision)
+        executionProbe
         summary(decision)
         estimateMatrix(decision)
       }
@@ -124,6 +131,112 @@ struct CoreMLAdaptiveRouterView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
       }
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+  }
+
+  private var executionProbe: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 12) {
+        Button {
+          Task { await runProbe() }
+        } label: {
+          if isProbing {
+            HStack(spacing: 8) {
+              ProgressView().controlSize(.small)
+              Text(
+                L10n.text(
+                  de: "Adaptive Prediction läuft…",
+                  en: "Adaptive prediction running…",
+                  fr: "Prédiction adaptative en cours…"
+                )
+              )
+            }
+          } else {
+            Label(
+              L10n.text(
+                de: "Adaptive Execution testen",
+                en: "Test Adaptive Execution",
+                fr: "Tester Adaptive Execution"
+              ),
+              systemImage: "bolt.horizontal.circle"
+            )
+          }
+        }
+        .disabled(isProbing)
+
+        Text(
+          L10n.text(
+            de: "führt eine echte Core-ML-Prediction über CoreMLPredictionRunner aus",
+            en: "runs a real Core ML prediction through CoreMLPredictionRunner",
+            fr: "exécute une vraie prédiction Core ML via CoreMLPredictionRunner"
+          )
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      if let telemetry = probeTelemetry {
+        Grid(alignment: .leading, horizontalSpacing: 22, verticalSpacing: 7) {
+          GridRow {
+            Text(
+              L10n.text(
+                de: "Tatsächlich ausgeführter Modus",
+                en: "Actually executed mode",
+                fr: "Mode réellement exécuté"
+              )
+            )
+            .foregroundStyle(.secondary)
+            Text(telemetry.mode.displayName).bold()
+          }
+          GridRow {
+            Text(
+              L10n.text(
+                de: "Routing-Quelle",
+                en: "Routing source",
+                fr: "Source du routage"
+              )
+            )
+            .foregroundStyle(.secondary)
+            Text(routeSourceName(telemetry.source))
+          }
+          GridRow {
+            Text(
+              L10n.text(
+                de: "Prediction-Latenz",
+                en: "Prediction latency",
+                fr: "Latence de prédiction"
+              )
+            )
+            .foregroundStyle(.secondary)
+            Text("\(milliseconds(telemetry.predictionMilliseconds)) ms")
+              .monospacedDigit()
+          }
+        }
+
+        Text(telemetry.reason)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      if let probeError {
+        Label(probeError, systemImage: "exclamationmark.triangle.fill")
+          .font(.caption)
+          .foregroundStyle(.orange)
+          .textSelection(.enabled)
+      }
+
+      Text(
+        L10n.text(
+          de: "Der Probe-Input ist deterministisch und dient nur der Routing-/Latenzvalidierung. Für Transformer-Eingänge werden wie im Runtime Benchmark [CLS]=101, [SEP]=102 und eine passende attention_mask erzeugt; dies ersetzt keinen produktiven Tokenizer.",
+          en: "The probe input is deterministic and only validates routing and latency. For transformer inputs it uses the same [CLS]=101, [SEP]=102 and attention_mask convention as the Runtime Benchmark; it does not replace a production tokenizer.",
+          fr: "L’entrée du test est déterministe et sert uniquement à valider le routage et la latence. Pour les entrées Transformer, elle utilise la même convention [CLS]=101, [SEP]=102 et attention_mask que le benchmark d’exécution ; elle ne remplace pas un tokenizer de production."
+        )
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -267,7 +380,68 @@ struct CoreMLAdaptiveRouterView: View {
     .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
   }
 
+  @MainActor
+  private func runProbe() async {
+    guard !isProbing else { return }
+    isProbing = true
+    probeTelemetry = nil
+    probeError = nil
+    defer { isProbing = false }
+
+    do {
+      let input = try await CoreMLSyntheticPredictionInput.shared.makeJSON(
+        compiledURL: descriptor.compiledURL
+      )
+      _ = try await CoreMLPredictionRunner.shared.predict(
+        compiledURL: descriptor.compiledURL,
+        jsonInput: input
+      )
+      guard
+        let telemetry = CoreMLAdaptiveExecutionTelemetry.shared.snapshot(
+          compiledURL: descriptor.compiledURL
+        )
+      else {
+        throw ProbeError.telemetryUnavailable
+      }
+      probeTelemetry = telemetry
+    } catch {
+      probeError = error.localizedDescription
+    }
+  }
+
+  @MainActor
+  private func resetProbe() {
+    probeTelemetry = nil
+    probeError = nil
+  }
+
+  private func routeSourceName(_ source: CoreMLExecutionRouteSource) -> String {
+    switch source {
+    case .manual:
+      return L10n.text(de: "Manuell / Session fixiert", en: "Manual / session pinned", fr: "Manuel / session fixée")
+    case .adaptive:
+      return L10n.text(de: "Adaptive Route", en: "Adaptive route", fr: "Route adaptative")
+    case .automaticFallback:
+      return L10n.text(de: "Automatischer Fallback", en: "Automatic fallback", fr: "Repli automatique")
+    }
+  }
+
   private func milliseconds(_ value: Double) -> String {
     value.formatted(.number.precision(.fractionLength(2)))
+  }
+}
+
+private enum ProbeError: LocalizedError {
+  case telemetryUnavailable
+
+  var errorDescription: String? {
+    switch self {
+    case .telemetryUnavailable:
+      return L10n.text(
+        de: "Die Prediction war abgeschlossen, aber es wurde keine Execution-Telemetrie aufgezeichnet.",
+        en: "The prediction completed, but no execution telemetry was recorded.",
+        fr: "La prédiction s’est terminée, mais aucune télémétrie d’exécution n’a été enregistrée."
+      )
+    }
   }
 }
