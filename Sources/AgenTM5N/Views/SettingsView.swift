@@ -38,7 +38,10 @@ struct SettingsView: View {
     .onChange(of: operatingLayer.configuration.maxToolRounds) { _, _ in
       operatingLayer.applyRuntimeCompatibility(to: appState)
     }
-    .onChange(of: operatingLayer.configuration.localInferenceRuntime) { _, runtime in
+    .onChange(of: operatingLayer.configuration.localInferenceRuntime) { previous, runtime in
+      if previous == .anemll, runtime != .anemll {
+        Task { await ANEMLLPersistentRuntimeService.shared.shutdown() }
+      }
       guard appState.configuration.providerKind == .ollamaLocal else { return }
       appState.configuration.baseURL = runtime.defaultBaseURL
       appState.availableModels = []
