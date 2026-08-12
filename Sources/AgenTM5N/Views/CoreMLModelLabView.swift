@@ -13,17 +13,17 @@ struct CoreMLModelLabView: View {
     VStack(alignment: .leading, spacing: 20) {
       GroupBox(
         L10n.text(
-          de: "ANE Model Lab · Build 33",
-          en: "ANE Model Lab · Build 33",
-          fr: "ANE Model Lab · Build 33"
+          de: "ANE Model Lab · Build 34",
+          en: "ANE Model Lab · Build 34",
+          fr: "ANE Model Lab · Build 34"
         )
       ) {
         VStack(alignment: .leading, spacing: 14) {
           Text(
             L10n.text(
-              de: "Vergleicht dasselbe Core-ML-Modell sequenziell mit Automatisch, CPU+GPU und CPU+Neural Engine. Gemessen wird die Zeit zum Aufbau und Analysieren des MLComputePlan; dies ist keine gemessene Hardware-Auslastung. Die Ergebnisse werden in Build 33 zusammen mit dem Runtime Benchmark hardware- und OS-spezifisch für den Adaptive Neural Router gespeichert.",
-              en: "Compares the same Core ML model sequentially with Automatic, CPU+GPU, and CPU+Neural Engine. The measured time is MLComputePlan build and analysis time; it is not measured hardware utilization. Build 33 stores these results together with the runtime benchmark per hardware/OS environment for the Adaptive Neural Router.",
-              fr: "Compare séquentiellement le même modèle Core ML avec Automatique, CPU+GPU et CPU+Neural Engine. Le temps mesuré correspond à la construction et à l’analyse de MLComputePlan ; il ne s’agit pas d’une utilisation matérielle mesurée. Le Build 33 conserve ces résultats avec le benchmark d’exécution par environnement matériel/OS pour l’Adaptive Neural Router."
+              de: "Vergleicht dasselbe Core-ML-Modell sequenziell mit Automatisch, CPU+GPU und CPU+Neural Engine. Gemessen wird die Zeit zum Aufbau und Analysieren des MLComputePlan; dies ist keine gemessene Hardware-Auslastung. Die Ergebnisse werden zusammen mit dem Runtime Benchmark hardware- und OS-spezifisch für Adaptive Neural Execution gespeichert.",
+              en: "Compares the same Core ML model sequentially with Automatic, CPU+GPU, and CPU+Neural Engine. The measured time is MLComputePlan build and analysis time; it is not measured hardware utilization. The results are stored together with the runtime benchmark per hardware/OS environment for Adaptive Neural Execution.",
+              fr: "Compare séquentiellement le même modèle Core ML avec Automatique, CPU+GPU et CPU+Neural Engine. Le temps mesuré correspond à la construction et à l’analyse de MLComputePlan ; il ne s’agit pas d’une utilisation matérielle mesurée. Les résultats sont conservés avec le benchmark d’exécution par environnement matériel/OS pour Adaptive Neural Execution."
             )
           )
           .font(.callout)
@@ -95,6 +95,7 @@ struct CoreMLModelLabView: View {
 
       if let runtimeReport {
         CoreMLAdaptiveRouterView(
+          descriptor: descriptor,
           modelLabReport: labReport,
           runtimeReport: runtimeReport
         )
@@ -138,9 +139,9 @@ struct CoreMLModelLabView: View {
 
       Text(
         L10n.text(
-          de: "Der Model-Lab-Score bewertet Plan-Kompatibilität und aufgelöste ANE-Coverage. Für die tatsächliche Laufzeitentscheidung verwendet Build 33 zusätzlich Cold Load, erste Vorhersage und warme p50-Latenz im Adaptive Neural Router.",
-          en: "The Model Lab score evaluates plan compatibility and resolved ANE coverage. For the actual runtime decision, Build 33 additionally uses cold load, first prediction, and warm p50 latency in the Adaptive Neural Router.",
-          fr: "Le score du Model Lab évalue la compatibilité du plan et la couverture ANE résolue. Pour la décision d’exécution réelle, le Build 33 utilise en plus le chargement à froid, la première prédiction et la latence p50 à chaud dans l’Adaptive Neural Router."
+          de: "Der Model-Lab-Score bewertet Plan-Kompatibilität und aufgelöste ANE-Coverage. Für die tatsächliche Laufzeitentscheidung verwendet Adaptive Neural Execution zusätzlich Cold Load, erste Vorhersage und warme p50-Latenz.",
+          en: "The Model Lab score evaluates plan compatibility and resolved ANE coverage. For the actual runtime decision, Adaptive Neural Execution additionally uses cold load, first prediction, and warm p50 latency.",
+          fr: "Le score du Model Lab évalue la compatibilité du plan et la couverture ANE résolue. Pour la décision d’exécution réelle, Adaptive Neural Execution utilise en plus le chargement à froid, la première prédiction et la latence p50 à chaud."
         )
       )
       .font(.caption)
