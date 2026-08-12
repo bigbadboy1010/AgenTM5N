@@ -18,6 +18,12 @@ struct NeuralEngineView: View {
         hardwareCard
         appleModelCard
         neuralRuntimeCard
+
+        if let descriptor = appState.coreMLDescriptor {
+          CoreMLModelLabView(descriptor: descriptor)
+            .id(descriptor.compiledURL.standardizedFileURL.path)
+        }
+
         coreMLCard
       }
       .padding(20)
@@ -32,6 +38,7 @@ struct NeuralEngineView: View {
         Image(systemName: "character.bubble")
           .font(.title2)
           .foregroundStyle(.secondary)
+
         VStack(alignment: .leading, spacing: 4) {
           Text(SystemLanguage.current.displayName)
             .font(.headline)
@@ -58,8 +65,14 @@ struct NeuralEngineView: View {
           Text(appState.hardwareProfile.chipName)
         }
         GridRow {
-          Text(L10n.text(de: "Gemeinsamer Speicher", en: "Unified Memory", fr: "Mémoire unifiée"))
-            .foregroundStyle(.secondary)
+          Text(
+            L10n.text(
+              de: "Gemeinsamer Speicher",
+              en: "Unified Memory",
+              fr: "Mémoire unifiée"
+            )
+          )
+          .foregroundStyle(.secondary)
           Text(appState.hardwareProfile.memoryDescription)
         }
         GridRow {
@@ -98,7 +111,14 @@ struct NeuralEngineView: View {
           )
         )
         .foregroundStyle(.secondary)
-        Button(L10n.text(de: "Im Chat auswählen", en: "Select in Chat", fr: "Sélectionner dans le chat")) {
+
+        Button(
+          L10n.text(
+            de: "Im Chat auswählen",
+            en: "Select in Chat",
+            fr: "Sélectionner dans le chat"
+          )
+        ) {
           appState.providerChanged(to: .appleOnDevice)
           appState.selectedSection = .chat
         }
@@ -183,20 +203,7 @@ struct NeuralEngineView: View {
           }
 
           if let report = computePlanReport {
-            if report.computeMode == .automatic,
-              report.neuralEngineSupportedOperations == 0
-            {
-              Label(
-                L10n.text(
-                  de: "Unter den \(max(0, report.totalOperations - report.unknownPreferredOperations)) Operationen, für die MLComputePlan eine Gerätezuordnung bestimmen konnte, wurde keine ANE-Unterstützung gemeldet. \(report.preferredGPUOperations) Operationen bevorzugen die GPU; bei \(report.unknownPreferredOperations) Operationen konnte Core ML die Gerätezuordnung nicht bestimmen. Das ist ein negativer ANE-Hinweis, aber wegen der unbestimmten Operationen kein vollständiger Ausschluss. Der CPU+ANE-Modus muss separat validiert werden.",
-                  en: "Among the \(max(0, report.totalOperations - report.unknownPreferredOperations)) operations for which MLComputePlan could determine device usage, no ANE support was reported. \(report.preferredGPUOperations) operations prefer the GPU, while Core ML could not determine device usage for \(report.unknownPreferredOperations) operations. This is negative evidence for ANE suitability, but not a complete exclusion because of the undetermined operations. CPU+ANE must be validated separately.",
-                  fr: "Parmi les \(max(0, report.totalOperations - report.unknownPreferredOperations)) opérations pour lesquelles MLComputePlan a pu déterminer l’utilisation du matériel, aucune prise en charge ANE n’a été signalée. \(report.preferredGPUOperations) opérations préfèrent le GPU et Core ML n’a pas pu déterminer l’utilisation du matériel pour \(report.unknownPreferredOperations) opérations. C’est un indice défavorable pour l’ANE, mais pas une exclusion complète ; le mode CPU+ANE doit être validé séparément."
-                ),
-                systemImage: "exclamationmark.triangle.fill"
-              )
-              .font(.callout)
-              .foregroundStyle(.orange)
-            }
+            automaticANEDiagnostic(report)
             computePlanDetails(report)
           }
         } else {
@@ -211,6 +218,24 @@ struct NeuralEngineView: View {
         }
       }
       .padding(8)
+    }
+  }
+
+  @ViewBuilder
+  private func automaticANEDiagnostic(_ report: CoreMLComputePlanReport) -> some View {
+    if report.computeMode == .automatic,
+      report.neuralEngineSupportedOperations == 0
+    {
+      Label(
+        L10n.text(
+          de: "Unter den \(max(0, report.totalOperations - report.unknownPreferredOperations)) Operationen, für die MLComputePlan eine Gerätezuordnung bestimmen konnte, wurde keine ANE-Unterstützung gemeldet. \(report.preferredGPUOperations) Operationen bevorzugen die GPU; bei \(report.unknownPreferredOperations) Operationen konnte Core ML die Gerätezuordnung nicht bestimmen. Das ist ein negativer ANE-Hinweis, aber wegen der unbestimmten Operationen kein vollständiger Ausschluss. Das ANE Model Lab validiert CPU+ANE separat.",
+          en: "Among the \(max(0, report.totalOperations - report.unknownPreferredOperations)) operations for which MLComputePlan could determine device usage, no ANE support was reported. \(report.preferredGPUOperations) operations prefer the GPU, while Core ML could not determine device usage for \(report.unknownPreferredOperations) operations. This is negative evidence for ANE suitability, but not a complete exclusion because of the undetermined operations. The ANE Model Lab validates CPU+ANE separately.",
+          fr: "Parmi les \(max(0, report.totalOperations - report.unknownPreferredOperations)) opérations pour lesquelles MLComputePlan a pu déterminer l’utilisation du matériel, aucune prise en charge ANE n’a été signalée. \(report.preferredGPUOperations) opérations préfèrent le GPU et Core ML n’a pas pu déterminer l’utilisation du matériel pour \(report.unknownPreferredOperations) opérations. C’est un indice défavorable pour l’ANE, mais pas une exclusion complète ; ANE Model Lab valide CPU+ANE séparément."
+        ),
+        systemImage: "exclamationmark.triangle.fill"
+      )
+      .font(.callout)
+      .foregroundStyle(.orange)
     }
   }
 
