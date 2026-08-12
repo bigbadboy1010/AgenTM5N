@@ -6,10 +6,12 @@ on:
       - main
       - agent/v1.1.0-platform-expansion
       - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
   pull_request:
     branches:
       - main
       - agent/v1.1.0-platform-expansion
+      - agent/v1.2.0-agent-operating-layer
 
 permissions:
   contents: read
@@ -30,50 +32,33 @@ jobs:
           bash -n scripts/verify-release-dmg.sh
           bash -n scripts/publish-github-release.sh
 
-      - name: Validate Build 29 metadata consistency
+      - name: Validate Build 32 metadata consistency
         shell: python
         run: |
           from pathlib import Path
 
           expected = {
               "scripts/build-app.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.2}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-32}"',
+                  "Build 32 adds real Core ML runtime latency benchmarking",
               ],
               "scripts/release-macos.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.2}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-32}"',
               ],
               "scripts/check-release.sh": [
-                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.2}"',
+                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-32}"',
               ],
               "scripts/verify-release-dmg.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.2}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-32}"',
               ],
               "scripts/publish-github-release.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.2}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-32}"',
                   'TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"',
-              ],
-              "README.md": [
-                  "1.2.0 Build 29 candidate",
-                  "AgenTM5N-1.2.0-build29.dmg",
-                  "agent/v1.2.0-agent-operating-layer",
-              ],
-              "VALIDATION.md": [
-                  "1.2.0 Build 29 candidate",
-                  "AgenTM5N-1.2.0-build29.dmg",
-                  "agent/v1.2.0-agent-operating-layer",
-              ],
-              "CHANGELOG-1.2.0.md": [
-                  "AgenTM5N 1.2.0",
-                  "Build 29 candidate",
-              ],
-              "release-archive/README.md": [
-                  "GitHub Release assets",
-                  "AgenTM5N-<version>-build<build>.dmg.sha256",
               ],
           }
 
@@ -87,7 +72,7 @@ jobs:
           if failures:
               raise SystemExit("\n".join(failures))
 
-      - name: Validate security invariants are represented in source
+      - name: Validate security and neural runtime invariants
         shell: python
         run: |
           from pathlib import Path
@@ -121,7 +106,25 @@ jobs:
               ],
               "Sources/AgenTM5N/Services/CoreMLPredictionRunner.swift": [
                   "loadedModels",
-                  "configuration.computeUnits = .all",
+                  "CoreMLRuntimePolicyStore.currentMode",
+                  "configuration.computeUnits = mode.computeUnits",
+                  "MLState",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLModelLab.swift": [
+                  "benchmarkModes",
+                  "neuralEnginePreferred",
+                  "aneSuitabilityScore",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLRuntimeBenchmark.swift": [
+                  "MLModel.prediction",
+                  "warmP50Milliseconds",
+                  "warmP95Milliseconds",
+                  "configuration.computeUnits = mode.computeUnits",
+              ],
+              "Sources/AgenTM5N/Views/CoreMLRuntimeBenchmarkView.swift": [
+                  "ANE Runtime Benchmark · Build 32",
+                  "Runtime Benchmark starten",
+                  "not actual NPU utilization",
               ],
               "Sources/AgenTM5N/Providers/MLXProvider.swift": [
                   "/v1/chat/completions",
@@ -137,6 +140,11 @@ jobs:
                   "testUnlimitedToolBudgetHasNoFiniteOperatingLimit",
                   "testStagnationGuardBlocksOnlyAfterConfiguredThreshold",
               ],
+              "Tests/AgenTM5NTests/CoreMLRuntimeBenchmarkTests.swift": [
+                  "testFastestWarmP50IsSelected",
+                  "testFailedModeDoesNotPreventSuccessfulComparison",
+                  "testDifferentOutputStructuresAreFlagged",
+              ],
           }
 
           failures = []
@@ -144,7 +152,7 @@ jobs:
               text = Path(filename).read_text()
               for needle in needles:
                   if needle not in text:
-                      failures.append(f"{filename}: security/source invariant missing {needle!r}")
+                      failures.append(f"{filename}: security/neural invariant missing {needle!r}")
 
           if failures:
               raise SystemExit("\n".join(failures))
