@@ -46,8 +46,11 @@ public final class CoreMLSyntheticPredictionInput: @unchecked Sendable {
   }
 
   private static func makeJSONOnQueue(compiledURL: URL) throws -> String {
+    // Input discovery is not itself the benchmarked prediction. Use Core ML's
+    // broad Automatic policy so a GPU- or ANE-oriented model is not rejected
+    // merely while its feature schema is being inspected.
     let configuration = MLModelConfiguration()
-    configuration.computeUnits = .cpuOnly
+    configuration.computeUnits = .all
     let model = try MLModel(contentsOf: compiledURL, configuration: configuration)
 
     var object: [String: Any] = [:]
