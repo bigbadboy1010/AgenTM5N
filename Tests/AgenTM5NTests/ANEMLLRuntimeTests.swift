@@ -73,6 +73,56 @@ final class ANEMLLRuntimeTests: XCTestCase {
     XCTAssertEqual(metrics.chatMetrics.generatedTokens, 128)
   }
 
+  func testInteractiveProtocolParsesAssistantResponseAndMetricsBoundary() throws {
+    let output = """
+    \u{001B}[92mAssistant:\u{001B}[0m Die Neural Engine führt lokale ML-Workloads effizient aus.
+    84.7 t/s, TTFT: 14.8ms (1900.2 t/s), 32 tokens [Stop: eos] [History: 77 tokens]
+    \u{001B}[92mYou:\u{001B}[0m 
+    """
+
+    let turn = try ANEMLLInteractiveProtocol.parseTurn(output)
+    XCTAssertEqual(
+      turn.response,
+      "Die Neural Engine führt lokale ML-Workloads effizient aus."
+    )
+    XCTAssertTrue(turn.diagnosticOutput.contains("84.7 t/s"))
+    XCTAssertTrue(ANEMLLInteractiveProtocol.containsPromptMarker(output))
+  }
+
+  func testInteractiveProtocolNormalizesMultilinePromptToSingleTransportLine() throws {
+    let prompt = try ANEMLLInteractiveProtocol.normalizePrompt("Zeile eins\nZeile zwei\r\nZeile drei")
+    XCTAssertFalse(prompt.contains("\n"))
+    XCTAssertFalse(prompt.contains("\r"))
+    XCTAssertTrue(prompt.contains("\u{2028}"))
+  }
+
+  func testInteractiveProtocolProtectsSlashCommands() throws {
+    let prompt = try ANEMLLInteractiveProtocol.normalizePrompt("/t")
+    XCTAssertFalse(prompt.hasPrefix("/"))
+    XCTAssertTrue(prompt.hasSuffix("/t"))
+  }
+
+  func testPersistentSessionSignatureDetectsRuntimeConfigurationChanges() {
+    let first = ANEMLLPersistentSessionSignature(
+      helperPath: "/tmp/anemllcli",
+      metaPath: "/tmp/meta.yaml",
+      systemPrompt: "system",
+      thinkingEnabled: false,
+      maxTokens: 128,
+      temperature: 0
+    )
+    let second = ANEMLLPersistentSessionSignature(
+      helperPath: "/tmp/anemllcli",
+      metaPath: "/tmp/meta.yaml",
+      systemPrompt: "system",
+      thinkingEnabled: false,
+      maxTokens: 256,
+      temperature: 0
+    )
+
+    XCTAssertNotEqual(first, second)
+  }
+
   private func makeBundle() throws -> URL {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("AgenTM5N-ANEMLL-\(UUID().uuidString)", isDirectory: true)
