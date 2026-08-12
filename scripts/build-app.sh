@@ -6,10 +6,9 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
-# Build 32 adds real Core ML runtime latency benchmarking on top of the
-# validated Build 31 ANE Model Lab milestone.
-VERSION="${AGENTM5N_VERSION:-1.3.2}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-32}"
+# Build 33 adds adaptive Core ML routing from persisted plan and runtime evidence.
+VERSION="${AGENTM5N_VERSION:-1.3.3}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:--}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
