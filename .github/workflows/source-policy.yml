@@ -32,34 +32,41 @@ jobs:
           bash -n scripts/release-macos.sh
           bash -n scripts/verify-release-dmg.sh
           bash -n scripts/publish-github-release.sh
+          bash -n scripts/bootstrap-anemll-runtime.sh
+          bash -n scripts/test-anemll-qwen3.sh
 
-      - name: Validate Build 35 metadata consistency
+      - name: Validate Build 36 metadata consistency
         shell: python
         run: |
           from pathlib import Path
 
           expected = {
               "scripts/build-app.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.5}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-35}"',
-                  "Build 35 routes real neural workloads",
+                  'VERSION="${AGENTM5N_VERSION:-1.3.6}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"',
+                  "Build 36 adds the native Swift ANEMLL bridge",
               ],
               "scripts/release-macos.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.5}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-35}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.6}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"',
               ],
               "scripts/check-release.sh": [
-                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.5}"',
-                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-35}"',
+                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.6}"',
+                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-36}"',
               ],
               "scripts/verify-release-dmg.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.5}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-35}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.6}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"',
               ],
               "scripts/publish-github-release.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.5}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-35}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.6}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-36}"',
                   'TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"',
+              ],
+              "scripts/bootstrap-anemll-runtime.sh": [
+                  "fb42f60b2e7a7b4709052c7146d37480bf21941e",
+                  "swift build -c release --product anemllcli",
+                  "codesign --force --sign - --options runtime",
               ],
           }
 
@@ -141,6 +148,31 @@ jobs:
                   "configuration.computeUnits = mode.computeUnits",
                   "CoreMLNeuralRuntimeTelemetry.shared.record",
               ],
+              "Sources/AgenTM5N/Services/ANEMLLRuntime.swift": [
+                  "ANEMLLModelBundleInspector",
+                  "qwen_embeddings",
+                  "ffn",
+                  "lm_head",
+                  "AGENTM5N_ANEMLLCLI",
+                  "AGENTM5N_ANEMLL_META",
+                  "--save",
+                  "withTaskCancellationHandler",
+                  "parseMetrics",
+              ],
+              "Sources/AgenTM5N/Providers/ANEMLLProvider.swift": [
+                  "ANEMLLNativeRuntime.complete",
+                  "ANEMLLRuntimeTelemetry.shared.record",
+                  "latestUserPrompt",
+              ],
+              "Sources/AgenTM5N/Views/ANEMLLQwenLabView.swift": [
+                  "Qwen3 ANE Runtime Lab · Build 36",
+                  "Qwen3 nativ testen",
+                  "ANEMLLNativeRuntime.complete",
+              ],
+              "Sources/AgenTM5N/App/AgenTM5NApp.swift": [
+                  "anemll-qwen3-runtime",
+                  "ANEMLLRuntimeCommands",
+              ],
               "Sources/AgenTM5N/Services/CoreMLAgentTools.swift": [
                   "AgenTM5N Neural Runtime",
                   "Adaptive mode",
@@ -211,6 +243,16 @@ jobs:
                   "testManualWorkloadSizedRoutePreservesSelectedMode",
                   "testAdaptiveWorkloadSizedRouteUsesDecisionPredictionCount",
               ],
+              "Tests/AgenTM5NTests/ANEMLLRuntimeTests.swift": [
+                  "testQwenBundleInspectorFindsSplitComponentsAndPrefersLUTHead",
+                  "testSwiftCLIMetricsParserReadsDecodePrefillTTFTAndTokens",
+                  "testQwenBundleInspectorRejectsMissingTokenizer",
+              ],
+              "scripts/test-anemll-qwen3.sh": [
+                  "NATIVE QWEN3 GATE: OK",
+                  "--save",
+                  "TTFT",
+              ],
           }
 
           failures = []
@@ -226,4 +268,4 @@ jobs:
       - name: Note target-Mac gate
         run: |
           echo "Static source policy passed."
-          echo "Full Swift/Xcode/FoundationModels/CoreML/MLX verification remains mandatory on the target Apple Silicon Mac via scripts/verify.sh and VALIDATION.md."
+          echo "Full Swift/Xcode/FoundationModels/CoreML/ANEMLL verification remains mandatory on the target Apple Silicon Mac via scripts/verify.sh plus the native Qwen3 smoke gate."
