@@ -129,9 +129,7 @@ public final class CoreMLRuntimeBenchmark: @unchecked Sendable {
         < ($1.warmP50Milliseconds ?? .greatestFiniteMagnitude)
     }?.mode
 
-    let signatures = Set(
-      successful.compactMap(\.outputSignature)
-    )
+    let signatures = Set(successful.compactMap(\.outputSignature))
     let equivalent = !successful.isEmpty
       && successful.allSatisfy { $0.outputSignature != nil }
       && signatures.count == 1
@@ -242,7 +240,7 @@ public final class CoreMLRuntimeBenchmark: @unchecked Sendable {
 
   private static func makeSyntheticInput(
     for model: MLModel
-  ) throws -> PredictionFeatureProvider {
+  ) throws -> RuntimeBenchmarkFeatureProvider {
     var values: [String: MLFeatureValue] = [:]
 
     for (name, description) in model.modelDescription.inputDescriptionsByName {
@@ -265,19 +263,19 @@ public final class CoreMLRuntimeBenchmark: @unchecked Sendable {
           dataType: constraint.dataType
         )
         for index in 0..<array.count {
-          array[index] = 0
+          array[index] = NSNumber(value: 0)
         }
 
         let normalized = name.lowercased()
           .replacingOccurrences(of: "-", with: "_")
         if normalized.contains("input_ids") || normalized.contains("inputids") {
-          if array.count > 0 { array[0] = 101 }
-          if array.count > 1 { array[1] = 102 }
+          if array.count > 0 { array[0] = NSNumber(value: 101) }
+          if array.count > 1 { array[1] = NSNumber(value: 102) }
         } else if normalized.contains("attention_mask")
           || normalized.contains("attentionmask")
         {
-          if array.count > 0 { array[0] = 1 }
-          if array.count > 1 { array[1] = 1 }
+          if array.count > 0 { array[0] = NSNumber(value: 1) }
+          if array.count > 1 { array[1] = NSNumber(value: 1) }
         }
         values[name] = MLFeatureValue(multiArray: array)
       default:
@@ -288,7 +286,7 @@ public final class CoreMLRuntimeBenchmark: @unchecked Sendable {
       }
     }
 
-    return PredictionFeatureProvider(values: values)
+    return RuntimeBenchmarkFeatureProvider(values: values)
   }
 
   private static func outputSignature(
@@ -326,5 +324,22 @@ public final class CoreMLRuntimeBenchmark: @unchecked Sendable {
     let seconds = Double(components.seconds)
     let attoseconds = Double(components.attoseconds)
     return seconds * 1_000 + attoseconds / 1_000_000_000_000_000
+  }
+}
+
+private final class RuntimeBenchmarkFeatureProvider: NSObject, MLFeatureProvider {
+  private let values: [String: MLFeatureValue]
+
+  init(values: [String: MLFeatureValue]) {
+    self.values = values
+    super.init()
+  }
+
+  var featureNames: Set<String> {
+    Set(values.keys)
+  }
+
+  func featureValue(for featureName: String) -> MLFeatureValue? {
+    values[featureName]
   }
 }
