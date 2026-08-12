@@ -12,6 +12,7 @@ on:
       - main
       - agent/v1.1.0-platform-expansion
       - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
 
 permissions:
   contents: read
@@ -32,32 +33,32 @@ jobs:
           bash -n scripts/verify-release-dmg.sh
           bash -n scripts/publish-github-release.sh
 
-      - name: Validate Build 33 metadata consistency
+      - name: Validate Build 34 metadata consistency
         shell: python
         run: |
           from pathlib import Path
 
           expected = {
               "scripts/build-app.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.3}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"',
-                  "Build 33 adds adaptive Core ML routing",
+                  'VERSION="${AGENTM5N_VERSION:-1.3.4}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-34}"',
+                  "Build 34 turns adaptive Core ML routing into real prediction execution",
               ],
               "scripts/release-macos.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.3}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.4}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-34}"',
               ],
               "scripts/check-release.sh": [
-                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.3}"',
-                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-33}"',
+                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.3.4}"',
+                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-34}"',
               ],
               "scripts/verify-release-dmg.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.3}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.4}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-34}"',
               ],
               "scripts/publish-github-release.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.3.3}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-33}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.3.4}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-34}"',
                   'TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"',
               ],
           }
@@ -105,10 +106,24 @@ jobs:
                   "model-\\(contentHash)",
               ],
               "Sources/AgenTM5N/Services/CoreMLPredictionRunner.swift": [
-                  "loadedModels",
-                  "CoreMLRuntimePolicyStore.currentMode",
+                  "CoreMLAdaptiveExecutionPolicy.resolve",
+                  "route.allowsAutomaticFailover",
+                  "sessionModes",
                   "configuration.computeUnits = mode.computeUnits",
+                  "CoreMLAdaptiveExecutionTelemetry.shared.record",
                   "MLState",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLAdaptiveExecutionPolicy.swift": [
+                  "CoreMLExecutionStrategy",
+                  "automaticFallback",
+                  "workloadPreset",
+                  "decision.confidence != .low",
+                  "automaticFailover",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLAdaptiveExecutionTelemetry.swift": [
+                  "CoreMLExecutionTelemetrySnapshot",
+                  "NSLock",
+                  "adaptiveRoutingApplied",
               ],
               "Sources/AgenTM5N/Services/CoreMLModelLab.swift": [
                   "benchmarkModes",
@@ -134,9 +149,10 @@ jobs:
                   "not actual NPU utilization",
               ],
               "Sources/AgenTM5N/Views/CoreMLAdaptiveRouterView.swift": [
-                  "Adaptive Neural Router · Build 33",
+                  "Adaptive Neural Execution · Build 34",
+                  "Ausführungsstrategie",
+                  "Adaptive Execution ist aktiv",
                   "ANE Break-even vs. Automatisch",
-                  "Automatisch kann selbst ANE verwenden",
               ],
               "Sources/AgenTM5N/Providers/MLXProvider.swift": [
                   "/v1/chat/completions",
@@ -161,6 +177,13 @@ jobs:
                   "testM5DistilBERTInteractiveWorkloadPrefersAutomatic",
                   "testM5DistilBERTSustainedWorkloadPrefersANE",
                   "testDifferentOutputStructuresKeepAutomaticAsSafeChoice",
+              ],
+              "Tests/AgenTM5NTests/CoreMLAdaptiveExecutionPolicyTests.swift": [
+                  "testManualStrategyPreservesSelectedComputeMode",
+                  "testAdaptiveStrategyWithoutProfileFallsBackToAutomatic",
+                  "testLowConfidenceAdaptiveDecisionFallsBackToAutomatic",
+                  "testHighConfidenceAdaptiveDecisionSelectsRecommendedMode",
+                  "testAdaptiveAutomaticRecommendationDoesNotNeedFailover",
               ],
           }
 
