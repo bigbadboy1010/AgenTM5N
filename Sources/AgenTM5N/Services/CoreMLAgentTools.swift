@@ -18,7 +18,7 @@ public enum CoreMLAgentTools {
     ),
     ProviderToolDefinition(
       name: "coreml_predict",
-      description: "Run a local Core ML prediction with all available CPU, GPU and Apple Neural Engine compute units; Core ML decides operator placement. Use coreml_describe_model first. Scalar Double, Int64 and String features are supported; MultiArray inputs use nested numeric JSON arrays; image inputs use a local image-file path string matching the model's image constraint.",
+      description: "Run a local Core ML prediction through AgenTM5N Neural Runtime. Manual mode preserves the selected Core ML compute policy; Adaptive mode uses the hardware/OS-specific routing profile and safely falls back to Core ML Automatic when specialized execution fails. Use coreml_describe_model first. Scalar Double, Int64 and String features are supported; MultiArray inputs use nested numeric JSON arrays; image inputs use a local image-file path string matching the model's image constraint.",
       parameters: objectSchema(
         required: ["input"],
         properties: [
