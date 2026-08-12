@@ -188,9 +188,9 @@ struct NeuralEngineView: View {
             {
               Label(
                 L10n.text(
-                  de: "Für dieses Modell meldet Core ML im automatischen Compute Plan keine ANE-unterstützte Operation. \(report.preferredGPUOperations) Operationen werden bevorzugt der GPU zugeordnet; \(report.unknownPreferredOperations) weitere konnten keinem bevorzugten Gerät zugeordnet werden. Dieses Modell ist daher kein geeigneter Kandidat für den CPU+ANE-Modus.",
-                  en: "For this model Core ML reports no ANE-supported operation in the automatic compute plan. \(report.preferredGPUOperations) operations prefer the GPU and \(report.unknownPreferredOperations) additional operations have no determined preferred device. This model is therefore not a suitable CPU+ANE candidate.",
-                  fr: "Pour ce modèle, Core ML ne signale aucune opération compatible ANE dans le plan automatique. \(report.preferredGPUOperations) opérations préfèrent le GPU et \(report.unknownPreferredOperations) opérations supplémentaires n’ont pas de périphérique préféré déterminé. Ce modèle n’est donc pas un bon candidat CPU+ANE."
+                  de: "Unter den \(max(0, report.totalOperations - report.unknownPreferredOperations)) Operationen, für die MLComputePlan eine Gerätezuordnung bestimmen konnte, wurde keine ANE-Unterstützung gemeldet. \(report.preferredGPUOperations) Operationen bevorzugen die GPU; bei \(report.unknownPreferredOperations) Operationen konnte Core ML die Gerätezuordnung nicht bestimmen. Das ist ein negativer ANE-Hinweis, aber wegen der unbestimmten Operationen kein vollständiger Ausschluss. Der CPU+ANE-Modus muss separat validiert werden.",
+                  en: "Among the \(max(0, report.totalOperations - report.unknownPreferredOperations)) operations for which MLComputePlan could determine device usage, no ANE support was reported. \(report.preferredGPUOperations) operations prefer the GPU, while Core ML could not determine device usage for \(report.unknownPreferredOperations) operations. This is negative evidence for ANE suitability, but not a complete exclusion because of the undetermined operations. CPU+ANE must be validated separately.",
+                  fr: "Parmi les \(max(0, report.totalOperations - report.unknownPreferredOperations)) opérations pour lesquelles MLComputePlan a pu déterminer l’utilisation du matériel, aucune prise en charge ANE n’a été signalée. \(report.preferredGPUOperations) opérations préfèrent le GPU et Core ML n’a pas pu déterminer l’utilisation du matériel pour \(report.unknownPreferredOperations) opérations. C’est un indice défavorable pour l’ANE, mais pas une exclusion complète ; le mode CPU+ANE doit être validé séparément."
                 ),
                 systemImage: "exclamationmark.triangle.fill"
               )
@@ -274,9 +274,22 @@ struct NeuralEngineView: View {
           Text("\(report.unknownPreferredOperations)")
         }
         GridRow {
-          Text(L10n.text(de: "Stateful erkannt", en: "Stateful detected", fr: "État détecté"))
+          Text(L10n.text(de: "Device-Zuordnung", en: "Device resolution", fr: "Résolution matériel"))
             .foregroundStyle(.secondary)
-          Text(report.stateful ? "Ja" : "Nein")
+          Text("\(max(0, report.totalOperations - report.unknownPreferredOperations)) / \(report.totalOperations)")
+        }
+        GridRow {
+          Text(L10n.text(de: "Stateful-Struktur", en: "Stateful structure", fr: "Structure avec état"))
+            .foregroundStyle(.secondary)
+          Text(
+            report.stateful
+              ? L10n.text(de: "Erkannt", en: "Detected", fr: "Détectée")
+              : L10n.text(
+                de: "Nicht eindeutig aus MLComputePlan ableitbar",
+                en: "Not conclusively derivable from MLComputePlan",
+                fr: "Non déductible de façon concluante via MLComputePlan"
+              )
+          )
         }
         GridRow {
           Text(L10n.text(de: "Verfügbare Devices", en: "Available Devices", fr: "Périphériques disponibles"))
