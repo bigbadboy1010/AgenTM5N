@@ -8,8 +8,8 @@ import Foundation
 /// types that should not be transferred between concurrency regions. AgenTM5N
 /// therefore keeps loading, the cache, feature construction, synchronous
 /// prediction and optional stateful sessions on one dedicated background queue.
-/// Only URLs/JSON input, session identifiers and the Sendable result cross the
-/// async boundary.
+/// Only URLs/JSON input, session identifiers, routing metadata and the Sendable
+/// result cross the async boundary.
 public final class CoreMLPredictionRunner: @unchecked Sendable {
   public static let shared = CoreMLPredictionRunner()
 
@@ -19,6 +19,7 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
   )
   private var loadedModels: [String: MLModel] = [:]
   private var sessionStates: [String: AnyObject] = [:]
+  private var sessionModes: [String: CoreMLComputeMode] = [:]
 
   public init() {}
 
@@ -28,15 +29,20 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
     sessionID: String? = nil,
     resetSession: Bool = false
   ) async throws -> CoreMLPredictionResult {
-    try await withCheckedThrowingContinuation { continuation in
+    let route = await CoreMLAdaptiveExecutionPolicy.resolve(
+      compiledURL: compiledURL
+    )
+
+    return try await withCheckedThrowingContinuation { continuation in
       queue.async { [self] in
         do {
           continuation.resume(
-            returning: try predictOnQueue(
+            returning: try predictWithFailoverOnQueue(
               compiledURL: compiledURL,
               jsonInput: jsonInput,
               sessionID: sessionID,
-              resetSession: resetSession
+              resetSession: resetSession,
+              route: route
             )
           )
         } catch {
@@ -52,8 +58,9 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
   ) async {
     await withCheckedContinuation { continuation in
       queue.async { [self] in
-        sessionStates.removeValue(
-          forKey: sessionKey(compiledURL: compiledURL, sessionID: sessionID)
+        clearSessionOnQueue(
+          compiledURL: compiledURL,
+          sessionID: sessionID
         )
         continuation.resume()
       }
@@ -65,8 +72,58 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
       queue.async { [self] in
         loadedModels.removeAll(keepingCapacity: false)
         sessionStates.removeAll(keepingCapacity: false)
+        sessionModes.removeAll(keepingCapacity: false)
         continuation.resume()
       }
+    }
+  }
+
+  private func predictWithFailoverOnQueue(
+    compiledURL: URL,
+    jsonInput: String,
+    sessionID: String?,
+    resetSession: Bool,
+    route: CoreMLExecutionRoute
+  ) throws -> CoreMLPredictionResult {
+    dispatchPrecondition(condition: .onQueue(queue))
+
+    do {
+      return try predictOnQueue(
+        compiledURL: compiledURL,
+        jsonInput: jsonInput,
+        sessionID: sessionID,
+        resetSession: resetSession,
+        route: route
+      )
+    } catch {
+      let primaryError = error
+      guard route.allowsAutomaticFailover else {
+        throw primaryError
+      }
+
+      // A failed specialized execution must not leave a partially mutated
+      // MLState session behind. Drop the failed model instance/session state and
+      // retry exactly once with Core ML Automatic.
+      discardModelOnQueue(at: compiledURL, mode: route.mode)
+      if let normalizedSessionID = normalizedSessionID(sessionID) {
+        clearSessionOnQueue(
+          compiledURL: compiledURL,
+          sessionID: normalizedSessionID
+        )
+      }
+
+      let fallbackRoute = CoreMLAdaptiveExecutionPolicy.automaticFailover(
+        from: route,
+        error: primaryError
+      )
+
+      return try predictOnQueue(
+        compiledURL: compiledURL,
+        jsonInput: jsonInput,
+        sessionID: sessionID,
+        resetSession: true,
+        route: fallbackRoute
+      )
     }
   }
 
@@ -74,7 +131,8 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
     compiledURL: URL,
     jsonInput: String,
     sessionID: String?,
-    resetSession: Bool
+    resetSession: Bool,
+    route: CoreMLExecutionRoute
   ) throws -> CoreMLPredictionResult {
     dispatchPrecondition(condition: .onQueue(queue))
 
@@ -89,7 +147,35 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
       throw CoreMLServiceError.invalidJSON
     }
 
-    let model = try cachedModelOnQueue(at: compiledURL)
+    let normalizedSession = normalizedSessionID(sessionID)
+    if resetSession, let normalizedSession {
+      clearSessionOnQueue(
+        compiledURL: compiledURL,
+        sessionID: normalizedSession
+      )
+    }
+
+    let effectiveMode = selectedModeOnQueue(
+      compiledURL: compiledURL,
+      sessionID: normalizedSession,
+      requestedMode: route.mode
+    )
+    let model = try cachedModelOnQueue(
+      at: compiledURL,
+      mode: effectiveMode
+    )
+
+    if let normalizedSession {
+      // Route locking is deliberately committed only after the model loaded
+      // successfully. A persistent session therefore cannot be stranded on a
+      // compute mode that failed during model construction.
+      sessionModes[
+        sessionSelectionKey(
+          compiledURL: compiledURL,
+          sessionID: normalizedSession
+        )
+      ] = effectiveMode
+    }
 
     var featureValues: [String: MLFeatureValue] = [:]
     for (name, description) in model.modelDescription.inputDescriptionsByName {
@@ -110,16 +196,16 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
     {
       // Generic calls remain isolated by default. Supplying a sessionID creates
       // an explicit stateful Core ML session and retains MLState/KV-style model
-      // buffers across calls. This is the substrate required for later
-      // tokenizer-aware autoregressive language-model generation.
+      // buffers across calls. The selected compute route is locked for that
+      // session until reset so an active KV/state context cannot silently move
+      // between backends.
       let state: MLState
-      if let sessionID,
-        !sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      {
-        let key = sessionKey(compiledURL: compiledURL, sessionID: sessionID)
-        if resetSession {
-          sessionStates.removeValue(forKey: key)
-        }
+      if let normalizedSession {
+        let key = sessionStateKey(
+          compiledURL: compiledURL,
+          mode: effectiveMode,
+          sessionID: normalizedSession
+        )
         if let existing = sessionStates[key] as? MLState {
           state = existing
         } else {
@@ -143,26 +229,41 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
       resultValues[name] = Self.describe(value)
     }
 
+    let sessionWasLocked = effectiveMode != route.mode
+    let routingReason: String
+    if sessionWasLocked {
+      routingReason = route.reason + " " + L10n.text(
+        de: "Die bestehende MLState-Session bleibt bis zum Reset auf \(effectiveMode.displayName) fixiert.",
+        en: "The existing MLState session remains pinned to \(effectiveMode.displayName) until reset.",
+        fr: "La session MLState existante reste fixée sur \(effectiveMode.displayName) jusqu’à sa réinitialisation."
+      )
+    } else {
+      routingReason = route.reason
+    }
+
     return CoreMLPredictionResult(
       values: resultValues,
-      durationMilliseconds: Self.milliseconds(from: elapsed)
+      durationMilliseconds: Self.milliseconds(from: elapsed),
+      executionMode: effectiveMode.displayName,
+      adaptiveRoutingApplied: route.adaptiveRoutingApplied && !sessionWasLocked,
+      routingReason: routingReason
     )
   }
 
-  private func cachedModelOnQueue(at url: URL) throws -> MLModel {
+  private func cachedModelOnQueue(
+    at url: URL,
+    mode: CoreMLComputeMode
+  ) throws -> MLModel {
     dispatchPrecondition(condition: .onQueue(queue))
-    let mode = CoreMLRuntimePolicyStore.currentMode
-    let key = "\(url.standardizedFileURL.path)|\(mode.rawValue)"
+    let key = modelKey(url: url, mode: mode)
     if let existing = loadedModels[key] {
       return existing
     }
 
-    // Remove models created with another compute policy. This keeps memory
-    // bounded and guarantees a policy switch actually rebuilds Core ML's
-    // execution plan rather than reusing an incompatible cached instance.
-    loadedModels.removeAll(keepingCapacity: false)
-    sessionStates.removeAll(keepingCapacity: false)
-
+    // Models are cached per compiled artifact and compute policy. Build 34 no
+    // longer globally destroys every model/session merely because another mode
+    // is requested; explicit policy/workload changes clear the cache from the
+    // UI, while persistent MLState sessions remain stable on their pinned mode.
     let configuration = MLModelConfiguration()
     configuration.computeUnits = mode.computeUnits
     let model = try MLModel(contentsOf: url, configuration: configuration)
@@ -170,11 +271,78 @@ public final class CoreMLPredictionRunner: @unchecked Sendable {
     return model
   }
 
-  private func sessionKey(
+  private func selectedModeOnQueue(
+    compiledURL: URL,
+    sessionID: String?,
+    requestedMode: CoreMLComputeMode
+  ) -> CoreMLComputeMode {
+    dispatchPrecondition(condition: .onQueue(queue))
+    guard let sessionID else { return requestedMode }
+    return sessionModes[
+      sessionSelectionKey(
+        compiledURL: compiledURL,
+        sessionID: sessionID
+      )
+    ] ?? requestedMode
+  }
+
+  private func discardModelOnQueue(
+    at url: URL,
+    mode: CoreMLComputeMode
+  ) {
+    dispatchPrecondition(condition: .onQueue(queue))
+    loadedModels.removeValue(forKey: modelKey(url: url, mode: mode))
+
+    let statePrefix = "\(url.standardizedFileURL.path)|\(mode.rawValue)|"
+    sessionStates = sessionStates.filter { key, _ in
+      !key.hasPrefix(statePrefix)
+    }
+  }
+
+  private func clearSessionOnQueue(
+    compiledURL: URL,
+    sessionID: String
+  ) {
+    dispatchPrecondition(condition: .onQueue(queue))
+    let path = compiledURL.standardizedFileURL.path
+    let suffix = "|\(sessionID)"
+    sessionStates = sessionStates.filter { key, _ in
+      !(key.hasPrefix("\(path)|") && key.hasSuffix(suffix))
+    }
+    sessionModes.removeValue(
+      forKey: sessionSelectionKey(
+        compiledURL: compiledURL,
+        sessionID: sessionID
+      )
+    )
+  }
+
+  private func modelKey(
+    url: URL,
+    mode: CoreMLComputeMode
+  ) -> String {
+    "\(url.standardizedFileURL.path)|\(mode.rawValue)"
+  }
+
+  private func sessionStateKey(
+    compiledURL: URL,
+    mode: CoreMLComputeMode,
+    sessionID: String
+  ) -> String {
+    "\(compiledURL.standardizedFileURL.path)|\(mode.rawValue)|\(sessionID)"
+  }
+
+  private func sessionSelectionKey(
     compiledURL: URL,
     sessionID: String
   ) -> String {
-    "\(compiledURL.standardizedFileURL.path)|\(CoreMLRuntimePolicyStore.currentMode.rawValue)|\(sessionID)"
+    "\(compiledURL.standardizedFileURL.path)|session|\(sessionID)"
+  }
+
+  private func normalizedSessionID(_ sessionID: String?) -> String? {
+    guard let sessionID else { return nil }
+    let normalized = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+    return normalized.isEmpty ? nil : normalized
   }
 
   private static func makeFeatureValue(
