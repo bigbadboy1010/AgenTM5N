@@ -9,6 +9,9 @@ struct AgenTM5NApp: App {
       StartupGateView()
         .environmentObject(appState)
         .frame(minWidth: 760, minHeight: 520)
+        .task {
+          ANEMLLPortableRuntimeBootstrap.configureBundledRuntimeIfNeeded()
+        }
     }
     .defaultSize(width: 1_280, height: 820)
     .commands {
