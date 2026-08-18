@@ -42,7 +42,7 @@ fail() {
 [ "$(uname -s)" = "Darwin" ] \
   || fail "Der signierte/notarisierte Release muss auf macOS erzeugt werden."
 
-for command in security codesign diskutil hdiutil ditto plutil xcrun spctl shasum find; do
+for command in security codesign diskutil hdiutil ditto plutil xcrun spctl shasum find file; do
   command -v "$command" >/dev/null 2>&1 || fail "Benötigtes Tool fehlt: $command"
 done
 
@@ -143,7 +143,37 @@ done < <(
 [ -x "$HELPER_DEST_DIR/anemllcli" ] || fail "Gebündelter ANEMLL Helper fehlt."
 [ -f "$MODEL_DEST_DIR/meta.yaml" ] || fail "Gebündelte Qwen3 meta.yaml fehlt."
 
-printf '\n=== 5. Nested Helper + App neu signieren ===\n'
+printf '\n=== 5. Nested ANEMLL Code + App neu signieren ===\n'
+
+# Sign any nested Mach-O code first. This keeps the ordering deterministic if
+# ANEMLL/SwiftPM adds dylibs or executables to resource bundles in the future.
+while IFS= read -r -d '' candidate; do
+  if file -b "$candidate" 2>/dev/null | grep -q 'Mach-O'; then
+    printf 'Sign Mach-O: %s\n' "$candidate"
+    codesign \
+      --force \
+      --sign "$SIGNING_IDENTITY" \
+      --options runtime \
+      --timestamp \
+      "$candidate"
+  fi
+done < <(find "$HELPER_DEST_DIR" -type f -print0)
+
+# SwiftPM ships tokenizer/Hub resources as nested .bundle code objects.
+# They must be signed independently before the enclosing app is signed;
+# otherwise codesign --deep rejects the app as containing unsigned code.
+while IFS= read -r -d '' resource_bundle; do
+  printf 'Sign SwiftPM bundle: %s\n' "$resource_bundle"
+  codesign \
+    --force \
+    --sign "$SIGNING_IDENTITY" \
+    --timestamp \
+    "$resource_bundle"
+  codesign --verify --strict --verbose=2 "$resource_bundle"
+done < <(find "$HELPER_DEST_DIR" -type d -name '*.bundle' -print0)
+
+# Explicitly sign the helper last within its subtree in case it was already
+# encountered by the Mach-O pass above.
 codesign \
   --force \
   --sign "$SIGNING_IDENTITY" \
