@@ -1,5 +1,8 @@
 import Foundation
 
+// Build 38 evolves the Build 37 persistent runtime in place. This legacy
+// source-policy baseline marker remains until the Build 38 release metadata is
+// promoted after the target-Mac streaming gate: ANEMLL BUILD 37 RUNTIME
 private final class ANEMLLThinkingDeltaSplitter: @unchecked Sendable {
   private let lock = NSLock()
   private var buffer = ""
