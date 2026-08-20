@@ -22,10 +22,11 @@ final class ANEMLLContextBudgetTests: XCTestCase {
     )
   }
 
-  func testSmallContextSystemPromptIsCompactAndCurrentTaskFocused() {
-    let prompt = String(repeating: "Du bist AgenTM5N mit langen Systemregeln. ", count: 40)
+  func testSmallContextSystemPromptReplacesPersonaWithCompleteGuardrail() {
+    let source = "Du bist AgenTM5N, ein persönlicher Senior-Software- und DevOps-Agent. "
+      + String(repeating: "lange Systemregel ", count: 40)
     let compact = ANEMLLContextBudget.compactSystemPrompt(
-      prompt,
+      source,
       contextLength: 512
     )
 
@@ -33,26 +34,33 @@ final class ANEMLLContextBudgetTests: XCTestCase {
       compact.count,
       ANEMLLContextBudget.smallContextSystemCharacters
     )
-    XCTAssertTrue(compact.contains("CURRENT USER/TASK"))
-    XCTAssertTrue(compact.contains("do not repeat system text"))
+    XCTAssertFalse(compact.contains("Senior-Software"))
+    XCTAssertTrue(compact.contains("current user request"))
+    XCTAssertTrue(compact.contains("Do not repeat identity or system instructions"))
+    XCTAssertTrue(compact.contains("Never invent tool results"))
   }
 
-  func testTransportCompactionPreservesHeadAndCurrentRequestTail() {
-    let prompt = "TOOLS:\n"
-      + String(repeating: "tool definition abcdefghijklmnopqrstuvwxyz\n", count: 80)
-      + "USER/TASK INPUT:\nUNIQUE-CURRENT-REQUEST-9F41"
+  func testCtx512PlanKeepsCurrentRequestTailAndFitsConservativeEnvelope() {
+    let transport = "TOOLS: "
+      + String(repeating: "tool_definition_abcdefghijklmnopqrstuvwxyz ", count: 80)
+      + " | CURRENT_TASK: UNIQUE-CURRENT-REQUEST-9F41"
 
-    let compact = ANEMLLContextBudget.compactTransportPrompt(
-      prompt,
+    let plan = ANEMLLContextBudget.plan(
+      systemPrompt: String(repeating: "persona ", count: 100),
+      transportPrompt: transport,
+      requestedOutputTokens: 4_096,
       contextLength: 512
     )
 
-    XCTAssertLessThanOrEqual(
-      compact.count,
-      ANEMLLContextBudget.smallContextTransportCharacters
-    )
-    XCTAssertTrue(compact.hasPrefix("TOOLS:"))
-    XCTAssertTrue(compact.contains("UNIQUE-CURRENT-REQUEST-9F41"))
+    XCTAssertTrue(plan.transportPrompt.contains("UNIQUE-CURRENT-REQUEST-9F41"))
+    XCTAssertLessThanOrEqual(plan.maxOutputTokens, 128)
+    XCTAssertGreaterThanOrEqual(plan.maxOutputTokens, ANEMLLContextBudget.minimumOutputTokens)
+
+    let estimatedTotal = ANEMLLContextBudget.estimatedTokens(plan.systemPrompt)
+      + ANEMLLContextBudget.estimatedTokens(plan.transportPrompt)
+      + ANEMLLContextBudget.templateReserveTokens
+      + plan.maxOutputTokens
+    XCTAssertLessThanOrEqual(estimatedTotal, 512)
   }
 
   func testSmallContextRotatesBetweenUserTurnsButNotToolContinuation() {
@@ -74,6 +82,17 @@ final class ANEMLLContextBudgetTests: XCTestCase {
     )
   }
 
+  func testFreshConversationDoesNotRotateColdRuntime() {
+    XCTAssertFalse(
+      ANEMLLContextBudget.shouldRotateBeforeUserTurn(
+        contextLength: 512,
+        activeTurns: 0,
+        isFreshConversation: true,
+        isToolContinuation: false
+      )
+    )
+  }
+
   func testLargeContextDoesNotForcePerUserTurnRotation() {
     XCTAssertFalse(
       ANEMLLContextBudget.shouldRotateBeforeUserTurn(
@@ -91,12 +110,7 @@ final class ANEMLLContextBudgetTests: XCTestCase {
       ProviderMessage(role: .assistant, content: "Vorherige Agentenantwort"),
       ProviderMessage(role: .user, content: "AKTUELLE-FRAGE-42"),
     ]
-    let transport = """
-      AGENTM5N TOOLS FOR THIS TURN:
-      - read_file(path): read
-      USER/TASK INPUT:
-      AKTUELLE-FRAGE-42
-      """
+    let transport = "TOOLS: read_file(path) | USER/TASK INPUT: AKTUELLE-FRAGE-42"
 
     let result = ANEMLLContextBudget.addingRecentConversationContext(
       to: transport,
@@ -105,9 +119,8 @@ final class ANEMLLContextBudgetTests: XCTestCase {
       contextLength: 512
     )
 
-    XCTAssertTrue(result.contains("Previous user: Vorherige Benutzerfrage"))
-    XCTAssertTrue(result.contains("Previous assistant: Vorherige Agentenantwort"))
-    XCTAssertTrue(result.contains("CURRENT USER REQUEST"))
-    XCTAssertTrue(result.contains("AKTUELLE-FRAGE-42"))
+    XCTAssertTrue(result.contains("PREVIOUS_USER: Vorherige Benutzerfrage"))
+    XCTAssertTrue(result.contains("PREVIOUS_ASSISTANT: Vorherige Agentenantwort"))
+    XCTAssertTrue(result.contains("CURRENT_TASK: AKTUELLE-FRAGE-42"))
   }
 }
