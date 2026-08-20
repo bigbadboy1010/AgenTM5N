@@ -3,11 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="AgenTM5N"
-# Carry-forward source-policy markers until Build 39 release promotion:
-# VERSION="${AGENTM5N_VERSION:-1.3.7}"
-# BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-37}"
-VERSION="${AGENTM5N_VERSION:-1.3.8}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-38}"
+VERSION="${AGENTM5N_VERSION:-1.3.9}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-39}"
 DMG_PATH="${AGENTM5N_DMG_PATH:-$ROOT_DIR/dist/$APP_NAME-$VERSION-build$BUILD_NUMBER.dmg}"
 MOUNT_POINT="$(mktemp -d -t agentm5n-release-mount)"
 ATTACHED=0
