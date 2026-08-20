@@ -118,7 +118,9 @@ public enum InferenceResourceGovernorError: LocalizedError, Equatable {
 /// active lease. Automatically stealing an old lease could create exactly the
 /// overlap this guard is designed to prevent if the original runtime is still
 /// computing. Callers use `withLease` so success, error, and cancellation all
-/// release the exact lease in one structured scope.
+/// release the exact lease in one structured scope. ANEMLL is the one special
+/// cleanup case: if its helper cannot confirm exit even after SIGKILL, release
+/// deliberately retains the lease so a second heavy runtime cannot start.
 public actor InferenceResourceGovernor {
   public static let shared = InferenceResourceGovernor()
 
@@ -140,8 +142,14 @@ public actor InferenceResourceGovernor {
     operation: @Sendable () async throws -> T
   ) async throws -> T {
     let lease = try acquire(runtime: runtime, ownerID: ownerID)
-    defer { release(lease) }
-    return try await operation()
+    do {
+      let result = try await operation()
+      await release(lease)
+      return result
+    } catch {
+      await release(lease)
+      throw error
+    }
   }
 
   func acquire(
@@ -173,10 +181,21 @@ public actor InferenceResourceGovernor {
 
   /// Releases only the exact lease and owner that are currently active. A stale
   /// task may never unlock a newer execution by presenting an old token.
-  func release(_ lease: InferenceResourceLease) {
+  ///
+  /// For ANEMLL, an unconfirmed helper shutdown is treated as a hard residency
+  /// uncertainty. The lease remains active until process recovery is confirmed
+  /// rather than allowing another heavy runtime to overlap unknown model memory.
+  func release(_ lease: InferenceResourceLease) async {
     guard activeLease?.id == lease.id,
       activeLease?.ownerID == lease.ownerID
     else { return }
+
+    if lease.runtime == .anemll,
+      await ANEMLLPersistentRuntimeService.shared.requiresRecovery()
+    {
+      return
+    }
+
     activeLease = nil
   }
 
