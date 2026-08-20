@@ -81,6 +81,20 @@ extension AppState {
   }
 
   private func sendViaTemporaryAppleRoute() {
+    // Hybrid Apple is already an automatic local runtime decision even while
+    // Phase-2 ModelProfile routing remains disabled. Apply the same fail-closed
+    // thermal/memory/swap admission boundary before switching this single turn.
+    let snapshot = AutomaticSystemResourceSampler.capture()
+    do {
+      try AutomaticInferenceAdmissionGate.validate(
+        profile: ModelProfileCatalog.appleBuiltIn,
+        snapshot: snapshot
+      )
+    } catch {
+      errorMessage = error.localizedDescription
+      return
+    }
+
     // Capture the current user configuration by value and derive an Apple route
     // inside TurnExecutionPlan. AppConfiguration remains untouched and therefore
     // requires no polling restore task after generation.
