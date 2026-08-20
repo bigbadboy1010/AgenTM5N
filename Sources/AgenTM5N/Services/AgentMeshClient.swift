@@ -6,6 +6,7 @@ public enum AgentMeshClientError: LocalizedError {
   case invalidResponse
   case http(Int, String)
   case remoteIdentityChanged
+  case unexpectedPeerKind
 
   public var errorDescription: String? {
     switch self {
@@ -13,6 +14,7 @@ public enum AgentMeshClientError: LocalizedError {
     case .invalidResponse: "Ungueltige Agent-Mesh-Antwort."
     case .http(let status, let code): "Agent Mesh HTTP \(status): \(code)"
     case .remoteIdentityChanged: "Die kryptografische Identitaet des Remote-Peers hat sich geaendert."
+    case .unexpectedPeerKind: "Der Remote-Endpunkt meldet einen anderen Agent-Mesh-Peer-Typ als erwartet."
     }
   }
 }
@@ -49,9 +51,11 @@ public final class AgentMeshClient: @unchecked Sendable {
   public func enroll(
     endpoint: String,
     callbackEndpoint: String,
-    kind: AgentMeshPeerKind = .agentM5N
+    expectedRemoteKind: AgentMeshPeerKind = .agentM5N
   ) async throws -> AgentMeshPeerRecord {
-    let local = try identity.descriptor(kind: kind)
+    // This process is always an AgenTM5N node. The expected remote kind only
+    // validates the peer/adapter and must never mutate our own identity type.
+    let local = try identity.descriptor(kind: .agentM5N)
     let payload = AgentMeshEnrollmentRequest(
       node: local,
       callbackEndpoint: callbackEndpoint
@@ -69,6 +73,9 @@ public final class AgentMeshClient: @unchecked Sendable {
     let enrollment = try Self.decoder.decode(AgentMeshEnrollmentResponse.self, from: data)
     guard enrollment.node.protocolVersion == AgentMeshProtocol.version else {
       throw AgentMeshSecurityError.protocolMismatch(enrollment.node.protocolVersion)
+    }
+    guard enrollment.node.kind == expectedRemoteKind else {
+      throw AgentMeshClientError.unexpectedPeerKind
     }
 
     if let existing = try await peerStore.peer(id: enrollment.node.nodeID),
