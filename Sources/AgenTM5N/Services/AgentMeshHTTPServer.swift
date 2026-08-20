@@ -234,47 +234,49 @@ public final class AgentMeshHTTPServer: @unchecked Sendable {
 
   private func receive(_ connection: NWConnection) {
     let state = AgentMeshHTTPReceiveState()
+    receiveNext(connection, state: state)
+  }
 
-    func next() {
-      connection.receive(
-        minimumIncompleteLength: 1,
-        maximumLength: 64 * 1_024
-      ) { [weak self] data, _, isComplete, error in
-        guard let self else { connection.cancel(); return }
-        if let error {
+  private func receiveNext(
+    _ connection: NWConnection,
+    state: AgentMeshHTTPReceiveState
+  ) {
+    connection.receive(
+      minimumIncompleteLength: 1,
+      maximumLength: 64 * 1_024
+    ) { [weak self] data, _, isComplete, error in
+      guard let self else { connection.cancel(); return }
+      if let error {
+        self.send(
+          AgentMeshHTTPResponse(status: 400, reason: "Bad Request", body: Self.errorBody(error)),
+          on: connection
+        )
+        return
+      }
+      do {
+        if let data, !data.isEmpty, let request = try state.append(data) {
+          Task {
+            let response = await self.route(request)
+            self.send(response, on: connection)
+          }
+          return
+        }
+        if isComplete {
+          state.markFinished()
           self.send(
-            AgentMeshHTTPResponse(status: 400, reason: "Bad Request", body: Self.errorBody(error)),
+            AgentMeshHTTPResponse(status: 400, reason: "Bad Request", body: Self.errorBody(AgentMeshHTTPServerError.malformedRequest)),
             on: connection
           )
           return
         }
-        do {
-          if let data, !data.isEmpty, let request = try state.append(data) {
-            Task {
-              let response = await self.route(request)
-              self.send(response, on: connection)
-            }
-            return
-          }
-          if isComplete {
-            state.markFinished()
-            self.send(
-              AgentMeshHTTPResponse(status: 400, reason: "Bad Request", body: Self.errorBody(AgentMeshHTTPServerError.malformedRequest)),
-              on: connection
-            )
-            return
-          }
-          next()
-        } catch {
-          self.send(
-            AgentMeshHTTPResponse(status: 413, reason: "Payload Too Large", body: Self.errorBody(error)),
-            on: connection
-          )
-        }
+        self.receiveNext(connection, state: state)
+      } catch {
+        self.send(
+          AgentMeshHTTPResponse(status: 413, reason: "Payload Too Large", body: Self.errorBody(error)),
+          on: connection
+        )
       }
     }
-
-    next()
   }
 
   private func send(_ response: AgentMeshHTTPResponse, on connection: NWConnection) {
@@ -383,7 +385,8 @@ public final class AgentMeshHTTPServer: @unchecked Sendable {
   private func handleEnrollment(_ request: AgentMeshHTTPRequest) async throws -> AgentMeshHTTPResponse {
     guard request.body.count <= 128 * 1_024 else { throw AgentMeshHTTPServerError.requestTooLarge }
     let enrollment = try Self.decoder.decode(AgentMeshEnrollmentRequest.self, from: request.body)
-    guard enrollment.node.nodeID != identity.nodeID() else {
+    let localNodeID = try identity.nodeID()
+    guard enrollment.node.nodeID != localNodeID else {
       throw AgentMeshHTTPServerError.malformedRequest
     }
     let peer = try await peerStore.registerPending(
