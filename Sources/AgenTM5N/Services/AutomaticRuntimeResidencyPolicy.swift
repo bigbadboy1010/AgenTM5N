@@ -20,24 +20,27 @@ public enum AutomaticRuntimeResidencyPolicy {
     origin: TurnExecutionOrigin,
     runtime: ModelProfileRuntime?
   ) -> AutomaticRuntimeResidencyAction {
-    guard origin == .automaticModelProfile else {
+    switch origin {
+    case .manualProvider:
       return .preserveUserConfiguration
-    }
-    guard let runtime else { return .none }
-
-    switch runtime {
-    case .anemll:
-      return .evictANEMLLAfterTurn
-    case .ollamaLocal:
-      return .shortOllamaKeepAlive(
-        seconds: defaultAutomaticOllamaKeepAliveSeconds
-      )
-    case .mlx:
-      return .observeOnly(.mlx)
-    case .appleFoundationModels:
+    case .hybridAppleOnDevice:
       return .observeOnly(.appleFoundationModels)
-    case .ollamaCloud:
-      return .none
+    case .automaticModelProfile:
+      guard let runtime else { return .none }
+      switch runtime {
+      case .anemll:
+        return .evictANEMLLAfterTurn
+      case .ollamaLocal:
+        return .shortOllamaKeepAlive(
+          seconds: defaultAutomaticOllamaKeepAliveSeconds
+        )
+      case .mlx:
+        return .observeOnly(.mlx)
+      case .appleFoundationModels:
+        return .observeOnly(.appleFoundationModels)
+      case .ollamaCloud:
+        return .none
+      }
     }
   }
 
