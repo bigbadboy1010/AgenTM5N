@@ -49,7 +49,11 @@ final class ANEMLLPersistentProtocolHardeningTests: XCTestCase {
 
   func testIncompleteUTF8IsNotLossilyDecoded() {
     let full = Data("Grüße".utf8)
-    let split = full.dropLast(1)
+
+    // Remove the final ASCII "e" and the final byte of the two-byte "ß"
+    // scalar. The remaining bytes genuinely end inside a UTF-8 scalar.
+    let split = full.prefix(full.count - 2)
+
     XCTAssertNil(String(data: Data(split), encoding: .utf8))
     XCTAssertEqual(String(data: full, encoding: .utf8), "Grüße")
   }
