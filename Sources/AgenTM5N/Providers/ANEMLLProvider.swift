@@ -136,6 +136,7 @@ public final class ANEMLLProvider: @unchecked Sendable {
     tools _: [ProviderToolDefinition] = []
   ) -> AsyncThrowingStream<ProviderStreamEvent, Error> {
     AsyncThrowingStream { continuation in
+      let streamID = ANEMLLStreamingTelemetry.shared.begin()
       let task = Task {
         do {
           let request = try makeRequest(configuration: configuration, messages: messages)
@@ -151,6 +152,13 @@ public final class ANEMLLProvider: @unchecked Sendable {
             runtimeConfiguration: request.runtime,
             onAssistantDelta: { delta in
               let separated = splitter.consume(delta)
+              let visibleCount = separated.content.count + separated.thinking.count
+              if visibleCount > 0 {
+                ANEMLLStreamingTelemetry.shared.recordDelta(
+                  streamID: streamID,
+                  characterCount: visibleCount
+                )
+              }
               guard !separated.content.isEmpty || !separated.thinking.isEmpty else {
                 return
               }
@@ -165,7 +173,12 @@ public final class ANEMLLProvider: @unchecked Sendable {
           try Task.checkCancellation()
 
           let tail = splitter.finish()
-          if !tail.content.isEmpty || !tail.thinking.isEmpty {
+          let tailCount = tail.content.count + tail.thinking.count
+          if tailCount > 0 {
+            ANEMLLStreamingTelemetry.shared.recordDelta(
+              streamID: streamID,
+              characterCount: tailCount
+            )
             continuation.yield(
               ProviderStreamEvent(
                 contentDelta: tail.content,
@@ -175,6 +188,12 @@ public final class ANEMLLProvider: @unchecked Sendable {
           }
 
           ANEMLLRuntimeTelemetry.shared.record(result)
+          let activeTurns = await persistentRuntime.activeTurns()
+          ANEMLLStreamingTelemetry.shared.complete(
+            streamID: streamID,
+            metrics: result.metrics,
+            activeTurns: activeTurns
+          )
           continuation.yield(
             ProviderStreamEvent(
               isFinished: true,
@@ -183,8 +202,18 @@ public final class ANEMLLProvider: @unchecked Sendable {
           )
           continuation.finish()
         } catch is CancellationError {
+          let activeTurns = await persistentRuntime.activeTurns()
+          ANEMLLStreamingTelemetry.shared.cancel(
+            streamID: streamID,
+            activeTurns: activeTurns
+          )
           continuation.finish()
         } catch {
+          let activeTurns = await persistentRuntime.activeTurns()
+          ANEMLLStreamingTelemetry.shared.fail(
+            streamID: streamID,
+            activeTurns: activeTurns
+          )
           continuation.finish(throwing: error)
         }
       }
@@ -197,10 +226,12 @@ public final class ANEMLLProvider: @unchecked Sendable {
   public func resetConversation() async {
     await persistentRuntime.resetConversation()
     ANEMLLRuntimeTelemetry.shared.clear()
+    ANEMLLStreamingTelemetry.shared.clear()
   }
 
   public func shutdown() async {
     await persistentRuntime.shutdown()
+    ANEMLLStreamingTelemetry.shared.clear()
   }
 
   private func makeRequest(
