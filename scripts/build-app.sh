@@ -40,9 +40,23 @@ fi
 agentm5n_configure_xcode
 cd "$ROOT_DIR"
 
+# Resource-safe default for 16 GB Apple-silicon development machines. A clean
+# release build can otherwise create enough concurrent compiler processes to
+# saturate unified memory and trigger heavy swap/thermal pressure.
+SWIFT_JOBS="${AGENTM5N_SWIFT_JOBS:-4}"
+case "$SWIFT_JOBS" in
+  ''|*[!0-9]*)
+    echo "AGENTM5N_SWIFT_JOBS muss eine positive Ganzzahl sein." >&2
+    exit 2
+    ;;
+esac
+if [ "$SWIFT_JOBS" -lt 1 ]; then SWIFT_JOBS=1; fi
+if [ "$SWIFT_JOBS" -gt 16 ]; then SWIFT_JOBS=16; fi
+printf 'SwiftPM Parallelität: %s Jobs\n' "$SWIFT_JOBS"
+
 swift package resolve
-swift build -c release --arch arm64
-BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
+swift build -c release --arch arm64 --jobs "$SWIFT_JOBS"
+BIN_DIR="$(swift build -c release --arch arm64 --jobs "$SWIFT_JOBS" --show-bin-path)"
 BINARY="$BIN_DIR/$APP_NAME"
 
 if [ ! -x "$BINARY" ]; then
