@@ -246,7 +246,10 @@ public struct HybridInferenceRouter: Sendable {
     if containsAny(text, ["terminal", "shell", "befehl", "command", "docker", "container", "compose", "systemctl", "journalctl"]) {
       capabilities.formUnion([.terminal, .system])
     }
-    if containsAny(text, ["ssh", "scp", "remote host", "remote server"]), !explicitMeshIntent(text) {
+    // Capability detection describes what the task actually needs and must not
+    // depend on the route requested by the user. Mesh support is evaluated
+    // separately below; SSH remains explicitly blocked for Mesh v1.
+    if containsAny(text, ["ssh", "scp", "remote host", "remote server"]) {
       capabilities.insert(.ssh)
     }
     if containsAny(text, ["kalender", "calendar", "termin", "kontakte", "kontakt", "contacts", "contact", "mail", "email", "e-mail"]) {
@@ -261,7 +264,7 @@ public struct HybridInferenceRouter: Sendable {
     if containsAny(text, ["pdf", "docx", "xlsx", "pptx", "dokument", "document"]) {
       capabilities.formUnion([.documents, .attachments])
     }
-    if containsAny(text, ["http", "https", "rest api", "webhook"]), !explicitMeshIntent(text) {
+    if containsAny(text, ["http", "https", "rest api", "webhook"]) {
       capabilities.insert(.http)
     }
     if containsAny(text, ["secret", "passwort", "password", "token", "api key", "apikey"]) {
