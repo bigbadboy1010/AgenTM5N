@@ -11,6 +11,7 @@ struct AgenTM5NApp: App {
         .frame(minWidth: 760, minHeight: 520)
         .task {
           ANEMLLPortableRuntimeBootstrap.configureBundledRuntimeIfNeeded()
+          await HybridRoutingController.shared.bootstrap()
         }
     }
     .defaultSize(width: 1_280, height: 820)
