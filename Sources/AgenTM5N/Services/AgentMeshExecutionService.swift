@@ -87,16 +87,21 @@ public actor AgentMeshAuditStore {
 
   public func record(_ entry: AgentMeshAuditEntry) {
     do {
-      try FileManager.default.createDirectory(
-        at: fileURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true
+      let manager = FileManager.default
+      let directory = fileURL.deletingLastPathComponent()
+      try manager.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
       )
+      try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+
       let encoder = JSONEncoder()
       encoder.dateEncodingStrategy = .iso8601
       encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
       var data = try encoder.encode(entry)
       data.append(0x0A)
-      if FileManager.default.fileExists(atPath: fileURL.path) {
+      if manager.fileExists(atPath: fileURL.path) {
         let handle = try FileHandle(forWritingTo: fileURL)
         try handle.seekToEnd()
         try handle.write(contentsOf: data)
@@ -104,9 +109,10 @@ public actor AgentMeshAuditStore {
       } else {
         try data.write(to: fileURL, options: [.atomic])
       }
+      try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     } catch {
-      // Deliberately content-free and best-effort. Do not produce a secondary
-      // exception containing task prompts, tool arguments, outputs or secrets.
+      // Content-free best effort. Never include prompts, arguments, outputs or
+      // secrets in a secondary audit failure path.
     }
   }
 }
@@ -120,8 +126,6 @@ public enum AgentMeshRemoteApproval {
     risk: ToolRisk,
     summary: String
   ) -> Bool {
-    guard risk != .read else { return true }
-
     let alert = NSAlert()
     alert.alertStyle = risk == .execute ? .critical : .warning
     alert.messageText = L10n.text(
@@ -236,7 +240,8 @@ public actor AgentMeshExecutionService {
     You are AgenTM5N executing a delegated Agent Mesh task from authenticated peer \(peer.name).
     Peer fingerprint: \(peer.fingerprint).
     Work only inside the capabilities explicitly advertised for this task. Never invent tool results.
-    Remote write/execute operations are locally approved outside the model. Complete the requested task and return a concise result to the calling peer.
+    Remote writes, execution and personal-data access require local approval outside the model.
+    Complete the requested task and return a concise result to the calling peer.
     """
     var messages: [ProviderMessage] = [
       ProviderMessage(role: .system, content: system),
@@ -347,6 +352,20 @@ public actor AgentMeshExecutionService {
       )
     }
 
+    // Re-check trust immediately before every remote-requested tool. Revoking a
+    // peer therefore closes the execution boundary even for a task that was
+    // already running when the trust record changed.
+    guard let currentPeer = try? await AgentMeshPeerStore.shared.trustedPeer(id: peer.id),
+      currentPeer != nil
+    else {
+      await sink(.toolDenied, call.function.name)
+      return ProviderMessage(
+        role: .tool,
+        content: AgentMeshSecurityError.peerNotTrusted.localizedDescription,
+        toolName: call.function.name
+      )
+    }
+
     guard isSupported(call.function.name) else {
       await sink(.toolDenied, call.function.name)
       return ProviderMessage(
@@ -360,11 +379,16 @@ public actor AgentMeshExecutionService {
     let summary = resolvedSummary(call)
     await sink(.toolRequested, "\(call.function.name) [\(risk.rawValue)]")
 
+    let personalData = entry.capability == .macPersonal || entry.capability == .reminders
+    let requiresLocalApproval = risk != .read || personalData
     let allowed: Bool
-    if risk == .read {
-      allowed = true
-    } else {
-      await sink(.approvalRequired, "\(call.function.name) requires local approval")
+    if requiresLocalApproval {
+      await sink(
+        .approvalRequired,
+        personalData
+          ? "\(call.function.name) requires local approval for personal data"
+          : "\(call.function.name) requires local approval"
+      )
       allowed = await MainActor.run {
         AgentMeshRemoteApproval.authorize(
           peer: peer,
@@ -374,6 +398,8 @@ public actor AgentMeshExecutionService {
           summary: summary
         )
       }
+    } else {
+      allowed = true
     }
 
     await audit.record(
@@ -401,8 +427,6 @@ public actor AgentMeshExecutionService {
     } else if MacNativeMutationAgentTools.handles(call) {
       result = await MacNativeMutationAgentTools.execute(call: call)
     } else {
-      // Never inherit local Full Access for remote callers. The peer capability
-      // scope plus AgentRuntime's normal workspace sandbox is always enforced.
       result = await runtime.execute(
         call: call,
         workspacePath: configuration.workspacePath,
