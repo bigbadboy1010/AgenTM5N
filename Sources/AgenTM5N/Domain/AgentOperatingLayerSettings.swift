@@ -304,6 +304,16 @@ public enum AgentOperatingLayerStore {
   }
 }
 
+public enum AgentOperatingLayerExecutionContext {
+  @TaskLocal public static var configurationOverride: AgentOperatingLayerConfiguration?
+
+  public static func current() -> AgentOperatingLayerConfiguration {
+    var value = configurationOverride ?? AgentOperatingLayerStore.load()
+    value.normalize()
+    return value
+  }
+}
+
 @MainActor
 public final class AgentOperatingLayerSettings: ObservableObject {
   public static let shared = AgentOperatingLayerSettings()
