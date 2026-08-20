@@ -9,15 +9,27 @@ public final class AgentMeshController: ObservableObject {
   @Published public private(set) var peers: [AgentMeshPeerRecord] = []
   @Published public private(set) var listenerRunning = false
   @Published public private(set) var remoteTaskEvents: [AgentMeshTaskEvent] = []
+  @Published public private(set) var remoteTaskSnapshot: AgentMeshTaskSnapshot?
   @Published public private(set) var remoteTaskResult = ""
   @Published public private(set) var statusMessage = "Agent Mesh bereit"
 
-  @Published public var listenPort: Int {
+  @Published public var port: Int {
     didSet {
-      listenPort = max(1, min(listenPort, 65_535))
-      UserDefaults.standard.set(listenPort, forKey: Self.portKey)
+      let bounded = max(1, min(port, 65_535))
+      if bounded != port {
+        port = bounded
+        return
+      }
+      UserDefaults.standard.set(port, forKey: Self.portKey)
     }
   }
+
+  /// Compatibility alias for older Build-40 call sites.
+  public var listenPort: Int {
+    get { port }
+    set { port = newValue }
+  }
+
   @Published public var advertisedEndpoint: String {
     didSet {
       UserDefaults.standard.set(advertisedEndpoint, forKey: Self.endpointKey)
@@ -51,14 +63,16 @@ public final class AgentMeshController: ObservableObject {
     self.peerStore = peerStore
     self.server = server
     self.client = client
+
     let defaults = UserDefaults.standard
     let storedPort = defaults.integer(forKey: Self.portKey)
-    listenPort = storedPort == 0 ? AgentMeshProtocol.defaultPort : storedPort
-    advertisedEndpoint = defaults.string(forKey: Self.endpointKey) ?? "http://127.0.0.1:\(AgentMeshProtocol.defaultPort)"
+    port = storedPort == 0 ? Int(AgentMeshProtocol.defaultPort) : storedPort
+    advertisedEndpoint = defaults.string(forKey: Self.endpointKey)
+      ?? "http://127.0.0.1:\(AgentMeshProtocol.defaultPort)"
     autoStart = defaults.bool(forKey: Self.autoStartKey)
 
     Task { @MainActor [weak self] in
-      await self?.bootstrap()
+      await self?.refresh()
     }
   }
 
@@ -66,22 +80,44 @@ public final class AgentMeshController: ObservableObject {
     followTask?.cancel()
   }
 
-  public func bootstrap() async {
+  public func bootstrap(configuration: AppConfiguration) async {
+    await updateConfiguration(configuration)
     await refresh()
-    if autoStart {
+    if autoStart, !listenerRunning {
       do {
-        try await startListener()
+        try await start(configuration: configuration)
       } catch {
         statusMessage = error.localizedDescription
       }
     }
   }
 
+  /// Compatibility entry point for callers that only need peer/listener state.
+  public func bootstrap() async {
+    await refresh()
+  }
+
+  public func updateConfiguration(_ configuration: AppConfiguration) async {
+    await AgentMeshExecutionService.shared.configure(configuration)
+  }
+
+  public func start(configuration: AppConfiguration) async throws {
+    await updateConfiguration(configuration)
+    try await startListener()
+  }
+
   public func startListener() async throws {
-    try server.start(port: listenPort)
+    guard let resolvedPort = UInt16(exactly: port) else {
+      throw AgentMeshHTTPServerError.invalidPort
+    }
+    try await server.start(port: resolvedPort)
     listenerRunning = server.isRunning
     node = try identity.descriptor()
-    statusMessage = "Agent Mesh lauscht auf Port \(listenPort)."
+    statusMessage = "Agent Mesh lauscht auf Port \(port)."
+  }
+
+  public func stop() {
+    stopListener()
   }
 
   public func stopListener() {
@@ -162,14 +198,18 @@ public final class AgentMeshController: ObservableObject {
     guard let peer = peers.first(where: { $0.id == peerID }), peer.status == .trusted else {
       throw AgentMeshSecurityError.peerNotTrusted
     }
+
     followTask?.cancel()
     remoteTaskEvents = []
+    remoteTaskSnapshot = nil
     remoteTaskResult = ""
+
     let request = AgentMeshTaskRequest(
       prompt: taskPrompt,
       requestedCapabilities: peer.allowedCapabilities
     )
     let snapshot = try await client.submit(request, to: peer)
+    remoteTaskSnapshot = snapshot
     statusMessage = "Remote Task \(snapshot.id.uuidString.prefix(8)) gestartet."
 
     followTask = Task { @MainActor [weak self] in
@@ -179,7 +219,9 @@ public final class AgentMeshController: ObservableObject {
           if Task.isCancelled { return }
           remoteTaskEvents.append(event)
         }
+
         let terminal = try await client.snapshot(taskID: request.id, peer: peer)
+        remoteTaskSnapshot = terminal
         remoteTaskResult = terminal.result ?? terminal.error ?? ""
         statusMessage = "Remote Task: \(terminal.status.rawValue)"
       } catch is CancellationError {
