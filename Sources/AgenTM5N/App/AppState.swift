@@ -315,15 +315,44 @@ public final class AppState: ObservableObject {
   }
 
   public func sendMessage() {
+    sendMessage(using: configuration, origin: .manualProvider)
+  }
+
+  func sendMessage(
+    using executionConfiguration: AppConfiguration,
+    origin: TurnExecutionOrigin
+  ) {
     let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty, generationPhase.acceptsNewTurn, !isGenerating else { return }
 
+    let operatingConfiguration = AgentOperatingLayerStore.load()
     let turnID = UUID()
+    let plan: TurnExecutionPlan
+    switch origin {
+    case .manualProvider:
+      plan = .manual(
+        turnID: turnID,
+        configuration: executionConfiguration,
+        operatingConfiguration: operatingConfiguration
+      )
+    case .hybridAppleOnDevice:
+      plan = .hybridAppleOnDevice(
+        turnID: turnID,
+        configuration: executionConfiguration,
+        operatingConfiguration: operatingConfiguration
+      )
+    case .automaticModelProfile:
+      // Phase-2 profile-aware automatic routing is intentionally disabled on
+      // the Build-42 safety branch. Keep the origin representable without
+      // creating a hidden automatic execution path.
+      return
+    }
+
     inputText = ""
     generationPhase = .running(turnID: turnID)
     isGenerating = true
     generationTask = Task { [weak self] in
-      await self?.performSend(text: text, turnID: turnID)
+      await self?.performSend(text: text, plan: plan)
     }
   }
 
@@ -528,14 +557,12 @@ public final class AppState: ObservableObject {
     errorMessage = nil
   }
 
-  private func performSend(text: String, turnID: UUID) async {
+  private func performSend(text: String, plan: TurnExecutionPlan) async {
     latestMetrics = nil
 
-    let operatingConfiguration = AgentOperatingLayerStore.load()
-    let heavyRuntime = HeavyInferenceRuntime(
-      providerKind: configuration.providerKind,
-      localInferenceRuntime: operatingConfiguration.localInferenceRuntime
-    )
+    let executionConfiguration = plan.configuration
+    let turnID = plan.turnID
+    let heavyRuntime = plan.heavyRuntime
     var lease: InferenceResourceLease?
 
     if let heavyRuntime {
@@ -563,15 +590,21 @@ public final class AppState: ObservableObject {
     messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
 
     do {
-      switch configuration.providerKind {
+      switch executionConfiguration.providerKind {
       case .ollamaLocal, .ollamaCloud:
-        try await performOllamaSend(assistantID: assistantID)
+        try await performOllamaSend(
+          assistantID: assistantID,
+          configuration: executionConfiguration
+        )
 
       case .appleOnDevice:
         if PromptAttachmentService.hasImageAttachments(in: text) {
           throw PromptAttachmentError.imageProviderUnsupported
         }
-        let providerMessages = makeAppleMessages(excludingAssistantID: assistantID)
+        let providerMessages = makeAppleMessages(
+          excludingAssistantID: assistantID,
+          configuration: executionConfiguration
+        )
         let bridgeSessionID = UUID()
         await AgentToolExecutionBridge.shared.install(
           sessionID: bridgeSessionID,
@@ -582,7 +615,7 @@ public final class AppState: ObservableObject {
         )
         do {
           let event = try await appleProvider.complete(
-            configuration: configuration,
+            configuration: executionConfiguration,
             messages: providerMessages
           )
           await AgentToolExecutionBridge.shared.clear(sessionID: bridgeSessionID)
@@ -648,23 +681,29 @@ public final class AppState: ObservableObject {
     generationTask = nil
   }
 
-  private func performOllamaSend(assistantID: UUID) async throws {
-    let apiKey = try await configuredAPIKey()
-    var providerMessages = makeOllamaMessages(excludingAssistantID: assistantID)
+  private func performOllamaSend(
+    assistantID: UUID,
+    configuration executionConfiguration: AppConfiguration
+  ) async throws {
+    let apiKey = try await configuredAPIKey(for: executionConfiguration)
+    var providerMessages = makeOllamaMessages(
+      excludingAssistantID: assistantID,
+      configuration: executionConfiguration
+    )
 
     if providerMessages.contains(where: {
       PromptAttachmentService.hasImageAttachments(in: $0.content)
     }) {
       let capabilities = try await ollamaProvider.modelCapabilities(
-        configuration: configuration,
+        configuration: executionConfiguration,
         apiKey: apiKey
       )
       guard capabilities.contains("vision") else {
-        throw PromptAttachmentError.modelDoesNotSupportVision(configuration.model)
+        throw PromptAttachmentError.modelDoesNotSupportVision(executionConfiguration.model)
       }
     }
 
-    let tools = configuration.agentEnabled
+    let tools = executionConfiguration.agentEnabled
       ? AgentToolRegistry.ollamaDefinitions
       : []
     var completedToolIterations = 0
@@ -676,7 +715,7 @@ public final class AppState: ObservableObject {
       var turnToolCalls: [ProviderToolCall] = []
 
       let stream = ollamaProvider.streamChat(
-        configuration: configuration,
+        configuration: executionConfiguration,
         apiKey: apiKey,
         messages: providerMessages,
         tools: tools
@@ -698,10 +737,10 @@ public final class AppState: ObservableObject {
         )
       )
 
-      guard configuration.agentEnabled, !turnToolCalls.isEmpty else { break }
-      guard completedToolIterations < configuration.maxToolIterations else {
+      guard executionConfiguration.agentEnabled, !turnToolCalls.isEmpty else { break }
+      guard completedToolIterations < executionConfiguration.maxToolIterations else {
         appendAssistantText(
-          "\n\nAgent-Limit erreicht: maximal \(configuration.maxToolIterations) Tool-Runden.",
+          "\n\nAgent-Limit erreicht: maximal \(executionConfiguration.maxToolIterations) Tool-Runden.",
           to: assistantID
         )
         break
@@ -1211,10 +1250,11 @@ public final class AppState: ObservableObject {
   }
 
   private func makeOllamaMessages(
-    excludingAssistantID: UUID
+    excludingAssistantID: UUID,
+    configuration executionConfiguration: AppConfiguration
   ) -> [ProviderMessage] {
     let runtimeContext = AgentRuntimeContext.currentTemporalContext()
-    let systemContent = configuration.systemPrompt
+    let systemContent = executionConfiguration.systemPrompt
       + "\n\n"
       + AgentRuntimeContext.providerInstruction()
       + "\n\n"
@@ -1247,9 +1287,10 @@ public final class AppState: ObservableObject {
   }
 
   private func makeAppleMessages(
-    excludingAssistantID: UUID
+    excludingAssistantID: UUID,
+    configuration executionConfiguration: AppConfiguration
   ) -> [ChatMessage] {
-    let systemContent = configuration.systemPrompt
+    let systemContent = executionConfiguration.systemPrompt
       + "\n\n"
       + AgentRuntimeContext.providerInstruction()
       + "\n\n"
@@ -1318,8 +1359,14 @@ public final class AppState: ObservableObject {
   }
 
   private func configuredAPIKey() async throws -> String? {
-    guard configuration.providerKind == .ollamaCloud else { return nil }
-    guard let id = configuration.apiKeySecretID else { return nil }
+    try await configuredAPIKey(for: configuration)
+  }
+
+  private func configuredAPIKey(
+    for executionConfiguration: AppConfiguration
+  ) async throws -> String? {
+    guard executionConfiguration.providerKind == .ollamaCloud else { return nil }
+    guard let id = executionConfiguration.apiKeySecretID else { return nil }
     return try await vaultStore.secret(id: id).value
   }
 
