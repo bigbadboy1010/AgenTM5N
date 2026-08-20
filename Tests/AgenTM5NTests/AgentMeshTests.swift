@@ -41,7 +41,8 @@ final class AgentMeshTests: XCTestCase {
     )
 
     XCTAssertEqual(pending.status, .pending)
-    XCTAssertNil(try await store.trustedPeer(id: descriptor.nodeID))
+    let pendingTrustedPeer = try await store.trustedPeer(id: descriptor.nodeID)
+    XCTAssertNil(pendingTrustedPeer)
 
     let trusted = try await store.trust(
       id: descriptor.nodeID,
@@ -49,12 +50,14 @@ final class AgentMeshTests: XCTestCase {
     )
     XCTAssertEqual(trusted.status, .trusted)
     XCTAssertEqual(trusted.allowedCapabilities, [.workspace, .git])
-    XCTAssertNotNil(try await store.trustedPeer(id: descriptor.nodeID))
+    let trustedPeer = try await store.trustedPeer(id: descriptor.nodeID)
+    XCTAssertNotNil(trustedPeer)
 
     let revoked = try await store.revoke(id: descriptor.nodeID)
     XCTAssertEqual(revoked.status, .revoked)
     XCTAssertTrue(revoked.allowedCapabilities.isEmpty)
-    XCTAssertNil(try await store.trustedPeer(id: descriptor.nodeID))
+    let revokedTrustedPeer = try await store.trustedPeer(id: descriptor.nodeID)
+    XCTAssertNil(revokedTrustedPeer)
   }
 
   func testTrustedPeerKeyRotationFailsClosed() async throws {
