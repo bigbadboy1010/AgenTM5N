@@ -79,6 +79,14 @@ public final class AppleFoundationModelsProvider: @unchecked Sendable {
   }
 
   @available(macOS 26.0, *)
+  public func complete(
+    configuration: AppConfiguration,
+    messages: [ProviderMessage]
+  ) async throws -> ProviderStreamEvent {
+    try await completeAvailable(configuration: configuration, messages: messages)
+  }
+
+  @available(macOS 26.0, *)
   private func completeAvailable(
     configuration: AppConfiguration,
     messages: [ProviderMessage]
@@ -108,16 +116,16 @@ public final class AppleFoundationModelsProvider: @unchecked Sendable {
       if let focused = selection.focused {
         switch focused {
         case .document:
-          if Self.isAllowed(.attachments, in: capabilityScope) {
+          if Self.isAllowed(.documents, in: capabilityScope) {
             tools.append(contentsOf: AppleRequiredDocumentTools.makeTools())
           }
         case .clipboard:
           if Self.isAllowed(.system, in: capabilityScope) {
-            tools.append(contentsOf: AppleRequiredClipboardTools.makeTools())
+            tools.append(contentsOf: AppleRequiredClipboardTools.makeReadTools())
           }
         case .calendarCreate:
           if Self.isAllowed(.macPersonal, in: capabilityScope) {
-            tools.append(contentsOf: AppleRequiredCalendarCreateTools.makeTools())
+            tools.append(AppleLocalCalendarCreateTool())
           }
         }
       } else {
@@ -132,7 +140,22 @@ public final class AppleFoundationModelsProvider: @unchecked Sendable {
           tools.append(contentsOf: AppleRoutedEdgeTools.makeTools())
         }
         if selection.knowledgeMemory {
-          tools.append(contentsOf: AppleRoutedKnowledgeMemoryTools.makeTools())
+          if Self.isAllowed(.memory, in: capabilityScope) {
+            tools.append(contentsOf: AppleRoutedKnowledgeMemoryTools.makeMemoryTools())
+            tools.append(contentsOf: AppleRoutedKnowledgeMemoryTools.makeContextTools())
+          }
+          if Self.isAllowed(.knowledge, in: capabilityScope) {
+            tools.append(contentsOf: AppleRoutedKnowledgeMemoryTools.makeKnowledgeTools())
+          }
+          if Self.isAllowed(.attachments, in: capabilityScope) {
+            tools.append(contentsOf: AppleRoutedKnowledgeMemoryTools.makeAttachmentTools())
+          }
+          if Self.isAllowed(.documents, in: capabilityScope) {
+            tools.append(contentsOf: AppleRoutedKnowledgeMemoryTools.makeDocumentTools())
+          }
+          if Self.isAllowed(.coreML, in: capabilityScope) {
+            tools.append(contentsOf: AppleRoutedKnowledgeMemoryTools.makeCoreMLTools())
+          }
         }
         if selection.macNative,
           Self.isAllowed(.macPersonal, in: capabilityScope)
@@ -235,6 +258,13 @@ public final class AppleFoundationModelsProvider: @unchecked Sendable {
       throw error
     }
   }
+  #else
+  public func complete(
+    configuration: AppConfiguration,
+    messages: [ProviderMessage]
+  ) async throws -> ProviderStreamEvent {
+    throw AppleFoundationModelsProviderError.unsupportedPlatform
+  }
   #endif
 
   private static func isAllowed(
@@ -260,7 +290,7 @@ public final class AppleFoundationModelsProvider: @unchecked Sendable {
     if let focused = selection.focused {
       switch focused {
       case .document:
-        routeInstruction = "Use the provided document tool to inspect the requested conversation attachment. Do not answer from guesses."
+        routeInstruction = "Use the provided document generation tool to create the requested file. Do not claim creation unless the tool succeeds."
       case .clipboard:
         routeInstruction = "Use the provided clipboard tool before answering. Do not guess clipboard contents."
       case .calendarCreate:
