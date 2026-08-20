@@ -121,9 +121,11 @@ public enum ANEMLLInteractiveProtocol {
       of: "\n\(promptMarker)",
       range: afterAssistant
     )
-    let responseEnd = metricsRange?.lowerBound
-      ?? nextPrompt?.lowerBound
-      ?? clean.endIndex
+    let responseEnd = earliestIndex(
+      metricsRange?.lowerBound,
+      nextPrompt?.lowerBound,
+      fallback: clean.endIndex
+    )
     let response = String(clean[assistantRange.upperBound..<responseEnd])
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -135,6 +137,49 @@ public enum ANEMLLInteractiveProtocol {
       response: response,
       diagnosticOutput: clean.trimmingCharacters(in: .whitespacesAndNewlines)
     )
+  }
+
+  /// Returns only assistant text that is safe to expose while the upstream CLI
+  /// is still generating. Diagnostic throughput output and the next `You:`
+  /// prompt are deliberately excluded so they can never leak into chat text.
+  public static func streamableAssistantText(_ rawOutput: String) -> String {
+    let clean = stripANSI(rawOutput)
+    guard let assistantRange = clean.range(of: assistantMarker) else {
+      return ""
+    }
+
+    let afterAssistant = assistantRange.upperBound..<clean.endIndex
+    let metricsRange = clean.range(
+      of: "\\n[0-9]+(?:\\.[0-9]+)?\\s+t/s,\\s*TTFT:",
+      options: .regularExpression,
+      range: afterAssistant
+    )
+    let nextPrompt = clean.range(
+      of: "\n\(promptMarker)",
+      range: afterAssistant
+    )
+    var responseEnd = earliestIndex(
+      metricsRange?.lowerBound,
+      nextPrompt?.lowerBound,
+      fallback: clean.endIndex
+    )
+
+    // The metrics line can arrive split across pipe reads. Until its `t/s,
+    // TTFT:` marker is complete, hold back a short numeric-looking final line
+    // so fragments such as `84.7 t/` are not rendered as model text. Once the
+    // next prompt is present, the exact response boundary is authoritative.
+    if metricsRange == nil, nextPrompt == nil {
+      let candidate = String(clean[assistantRange.upperBound..<responseEnd])
+      if let heldBoundary = potentialMetricsBoundary(in: candidate) {
+        responseEnd = clean.index(
+          assistantRange.upperBound,
+          offsetBy: candidate.distance(from: candidate.startIndex, to: heldBoundary)
+        )
+      }
+    }
+
+    return String(clean[assistantRange.upperBound..<responseEnd])
+      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   public static func stripANSI(_ value: String) -> String {
@@ -149,6 +194,38 @@ public enum ANEMLLInteractiveProtocol {
       range: range,
       withTemplate: ""
     )
+  }
+
+  private static func earliestIndex(
+    _ lhs: String.Index?,
+    _ rhs: String.Index?,
+    fallback: String.Index
+  ) -> String.Index {
+    switch (lhs, rhs) {
+    case let (lhs?, rhs?): min(lhs, rhs)
+    case let (lhs?, nil): lhs
+    case let (nil, rhs?): rhs
+    case (nil, nil): fallback
+    }
+  }
+
+  private static func potentialMetricsBoundary(in response: String) -> String.Index? {
+    guard let newline = response.lastIndex(of: "\n") else { return nil }
+    let suffixStart = response.index(after: newline)
+    let suffix = response[suffixStart...]
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !suffix.isEmpty, suffix.count <= 96, suffix.first?.isNumber == true else {
+      return nil
+    }
+
+    let allowedLetters = CharacterSet(charactersIn: "tTsSfFmM")
+    let allowedPunctuation = CharacterSet(charactersIn: ".,/:()[]%+- ")
+    let isMetricsLike = suffix.unicodeScalars.allSatisfy { scalar in
+      CharacterSet.decimalDigits.contains(scalar)
+        || allowedLetters.contains(scalar)
+        || allowedPunctuation.contains(scalar)
+    }
+    return isMetricsLike ? newline : nil
   }
 }
 
@@ -202,6 +279,70 @@ public actor ANEMLLPersistentRuntimeService {
     requestTimeoutSeconds: Int,
     userTurnCount: Int,
     runtimeConfiguration: ANEMLLRuntimeConfiguration
+  ) async throws -> ANEMLLRuntimeResult {
+    try await completeInternal(
+      prompt: prompt,
+      systemPrompt: systemPrompt,
+      thinkingEnabled: thinkingEnabled,
+      maxTokens: maxTokens,
+      temperature: temperature,
+      requestTimeoutSeconds: requestTimeoutSeconds,
+      userTurnCount: userTurnCount,
+      runtimeConfiguration: runtimeConfiguration,
+      onAssistantDelta: nil
+    )
+  }
+
+  public func completeStreaming(
+    prompt: String,
+    systemPrompt: String,
+    thinkingEnabled: Bool,
+    maxTokens: Int,
+    temperature: Double,
+    requestTimeoutSeconds: Int,
+    userTurnCount: Int,
+    runtimeConfiguration: ANEMLLRuntimeConfiguration,
+    onAssistantDelta: @escaping @Sendable (String) -> Void
+  ) async throws -> ANEMLLRuntimeResult {
+    try await completeInternal(
+      prompt: prompt,
+      systemPrompt: systemPrompt,
+      thinkingEnabled: thinkingEnabled,
+      maxTokens: maxTokens,
+      temperature: temperature,
+      requestTimeoutSeconds: requestTimeoutSeconds,
+      userTurnCount: userTurnCount,
+      runtimeConfiguration: runtimeConfiguration,
+      onAssistantDelta: onAssistantDelta
+    )
+  }
+
+  public func resetConversation() {
+    shutdownInternal()
+  }
+
+  public func shutdown() {
+    shutdownInternal()
+  }
+
+  public func isRunning() -> Bool {
+    process?.isRunning == true
+  }
+
+  public func activeTurns() -> Int {
+    conversationTurns
+  }
+
+  private func completeInternal(
+    prompt: String,
+    systemPrompt: String,
+    thinkingEnabled: Bool,
+    maxTokens: Int,
+    temperature: Double,
+    requestTimeoutSeconds: Int,
+    userTurnCount: Int,
+    runtimeConfiguration: ANEMLLRuntimeConfiguration,
+    onAssistantDelta: (@Sendable (String) -> Void)?
   ) async throws -> ANEMLLRuntimeResult {
     let normalizedPrompt = try ANEMLLInteractiveProtocol.normalizePrompt(prompt)
     let helperPath = ANEMLLRuntimeStore.expanded(runtimeConfiguration.helperPath)
@@ -263,7 +404,8 @@ public actor ANEMLLPersistentRuntimeService {
     do {
       output = try await readUntilPrompt(
         handle: outputPipe.fileHandleForReading,
-        timeoutSeconds: timeout
+        timeoutSeconds: timeout,
+        onAssistantDelta: onAssistantDelta
       )
     } catch {
       shutdownInternal()
@@ -302,22 +444,6 @@ public actor ANEMLLPersistentRuntimeService {
       metrics: metrics,
       descriptor: modelDescriptor
     )
-  }
-
-  public func resetConversation() {
-    shutdownInternal()
-  }
-
-  public func shutdown() {
-    shutdownInternal()
-  }
-
-  public func isRunning() -> Bool {
-    process?.isRunning == true
-  }
-
-  public func activeTurns() -> Int {
-    conversationTurns
   }
 
   private func shouldRestart(
@@ -377,7 +503,8 @@ public actor ANEMLLPersistentRuntimeService {
     do {
       startupOutput = try await readUntilPrompt(
         handle: outputPipe.fileHandleForReading,
-        timeoutSeconds: timeoutSeconds
+        timeoutSeconds: timeoutSeconds,
+        onAssistantDelta: nil
       )
     } catch {
       shutdownInternal()
@@ -412,13 +539,15 @@ public actor ANEMLLPersistentRuntimeService {
 
   private func readUntilPrompt(
     handle: FileHandle,
-    timeoutSeconds: Int
+    timeoutSeconds: Int,
+    onAssistantDelta: (@Sendable (String) -> Void)?
   ) async throws -> String {
     let box = processBox
     return try await withTaskCancellationHandler {
       try await withThrowingTaskGroup(of: String.self) { group in
         group.addTask {
           var data = Data()
+          var emittedAssistantText = ""
           let maximumBytes = 8 * 1_024 * 1_024
           while true {
             try Task.checkCancellation()
@@ -431,6 +560,18 @@ public actor ANEMLLPersistentRuntimeService {
             }
             data.append(chunk)
             let output = String(decoding: data, as: UTF8.self)
+
+            if let onAssistantDelta {
+              let visible = ANEMLLInteractiveProtocol.streamableAssistantText(output)
+              if visible.hasPrefix(emittedAssistantText) {
+                let delta = String(visible.dropFirst(emittedAssistantText.count))
+                if !delta.isEmpty {
+                  onAssistantDelta(delta)
+                  emittedAssistantText = visible
+                }
+              }
+            }
+
             if ANEMLLInteractiveProtocol.containsPromptMarker(output) {
               return output
             }
