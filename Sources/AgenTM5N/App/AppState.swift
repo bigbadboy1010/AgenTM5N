@@ -51,7 +51,7 @@ private struct CoreMLToolPredictionDescriptor: Encodable {
 private struct WorkspaceIndexToolStatusDescriptor: Encodable {
   let indexed: Bool
   let mode: String?
-  let modelID: String?
+  let modelID: UUID?
   let modelName: String?
   let warning: String?
   let createdAt: Date?
@@ -75,6 +75,7 @@ public final class AppState: ObservableObject {
   @Published public var configuration: AppConfiguration = .default
   @Published public var messages: [ChatMessage] = []
   @Published public var inputText = ""
+  @Published public private(set) var generationPhase: GenerationPhase = .idle
   @Published public var isGenerating = false
   @Published public var isLoadingModels = false
   @Published public var availableModels: [String] = []
@@ -315,18 +316,29 @@ public final class AppState: ObservableObject {
 
   public func sendMessage() {
     let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, !isGenerating else { return }
+    guard !text.isEmpty, generationPhase.acceptsNewTurn else { return }
+
+    let turnID = UUID()
     inputText = ""
+    generationPhase = .running(turnID: turnID)
+    isGenerating = true
     generationTask = Task { [weak self] in
-      await self?.performSend(text: text)
+      await self?.performSend(text: text, turnID: turnID)
     }
   }
 
   public func stopGeneration() {
+    guard let turnID = generationPhase.turnID else { return }
     resolvePendingApproval(allowed: false)
+    generationPhase = .cancelling(turnID: turnID)
     generationTask?.cancel()
-    generationTask = nil
-    isGenerating = false
+
+    // Do not mark the UI idle yet. ANEMLL cancellation can require helper
+    // teardown; a second heavy turn stays blocked until performSend finishes its
+    // cleanup and releases the resource lease.
+    Task {
+      await ANEMLLPersistentRuntimeService.shared.requestTermination()
+    }
   }
 
   public func approvePendingTool() {
@@ -338,7 +350,9 @@ public final class AppState: ObservableObject {
   }
 
   public func resetConversation() async {
+    let task = generationTask
     stopGeneration()
+    await task?.value
     messages = []
     latestMetrics = nil
     do {
@@ -503,9 +517,35 @@ public final class AppState: ObservableObject {
     errorMessage = nil
   }
 
-  private func performSend(text: String) async {
-    isGenerating = true
+  private func performSend(text: String, turnID: UUID) async {
     latestMetrics = nil
+
+    let operatingConfiguration = AgentOperatingLayerStore.load()
+    let heavyRuntime = HeavyInferenceRuntime(
+      providerKind: configuration.providerKind,
+      localInferenceRuntime: operatingConfiguration.localInferenceRuntime
+    )
+    var lease: InferenceResourceLease?
+
+    if let heavyRuntime {
+      do {
+        lease = try await InferenceResourceGovernor.shared.acquire(
+          runtime: heavyRuntime,
+          ownerID: turnID
+        )
+      } catch {
+        inputText = text
+        present(error)
+        await finishGeneration(
+          turnID: turnID,
+          heavyRuntime: heavyRuntime,
+          lease: nil,
+          cancelled: false
+        )
+        return
+      }
+    }
+
     let userMessage = ChatMessage(role: .user, content: text)
     let assistantID = UUID()
     messages.append(userMessage)
@@ -560,6 +600,39 @@ public final class AppState: ObservableObject {
     }
 
     resolvePendingApproval(allowed: false)
+    await finishGeneration(
+      turnID: turnID,
+      heavyRuntime: heavyRuntime,
+      lease: lease,
+      cancelled: Task.isCancelled || generationPhase == .cancelling(turnID: turnID)
+    )
+  }
+
+  private func finishGeneration(
+    turnID: UUID,
+    heavyRuntime: HeavyInferenceRuntime?,
+    lease: InferenceResourceLease?,
+    cancelled: Bool
+  ) async {
+    guard generationPhase.turnID == turnID else {
+      if let lease {
+        await InferenceResourceGovernor.shared.release(lease)
+      }
+      return
+    }
+
+    generationPhase = .cleaningUp(turnID: turnID)
+
+    if cancelled, heavyRuntime == .anemll {
+      await ANEMLLPersistentRuntimeService.shared.shutdown()
+    }
+
+    if let lease {
+      await InferenceResourceGovernor.shared.release(lease)
+    }
+
+    guard generationPhase.turnID == turnID else { return }
+    generationPhase = .idle
     isGenerating = false
     generationTask = nil
   }
@@ -990,7 +1063,7 @@ public final class AppState: ObservableObject {
     WorkspaceIndexToolStatusDescriptor(
       indexed: status != nil,
       mode: status?.mode.rawValue,
-      modelID: status?.modelID?.uuidString,
+      modelID: status?.modelID,
       modelName: status?.modelName,
       warning: status?.warning,
       createdAt: status?.createdAt,
