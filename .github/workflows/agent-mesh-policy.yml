@@ -98,6 +98,10 @@ jobs:
                   "maximumRemoteToolRounds = 12",
                   "agent-mesh-audit.jsonl",
                   "trustedPeer(id: peer.id)",
+                  "HeavyInferenceRuntime(",
+                  "InferenceResourceGovernor.shared.withLease",
+                  "ownerID: request.id",
+                  'decision: "resource_denied"',
               ],
               "Sources/AgenTM5N/Services/AgentMeshClient.swift": [
                   "identity.descriptor(kind: .agentM5N)",
@@ -177,7 +181,10 @@ jobs:
               if capability in read_scope or capability in devops_scope:
                   raise SystemExit("Default Mesh trust presets must not silently grant personal-data capabilities: " + capability)
 
+          if "InferenceResourceGovernor.shared.withLease" not in execution:
+              raise SystemExit("Remote Mesh inference must share the fail-closed heavy-runtime governor with local chat")
+
       - name: Note target-Mac gate
         run: |
-          echo "Static hardened Agent Mesh security boundary passed."
+          echo "Static hardened Agent Mesh security and resource boundary passed."
           echo "Native macOS build plus a real two-node enrollment/trust/task/approval test remains mandatory."
