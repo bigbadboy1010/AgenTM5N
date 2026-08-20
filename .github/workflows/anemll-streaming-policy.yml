@@ -87,6 +87,13 @@ jobs:
                   if needle not in text:
                       failures.append(f"{filename}: Build 38 invariant missing {needle!r}")
 
+          telemetry = Path("Sources/AgenTM5N/Services/ANEMLLStreamingTelemetry.swift").read_text()
+          for forbidden in ["prompt:", "response:", "contentDelta:", "thinkingDelta:"]:
+              if forbidden in telemetry:
+                  failures.append(
+                      f"ANEMLLStreamingTelemetry.swift: content-bearing telemetry field forbidden {forbidden!r}"
+                  )
+
           if failures:
               raise SystemExit("\n".join(failures))
 
