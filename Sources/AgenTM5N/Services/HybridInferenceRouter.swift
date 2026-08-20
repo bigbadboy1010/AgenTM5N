@@ -96,7 +96,9 @@ public struct HybridInferenceRouter: Sendable {
     operatingConfiguration: AgentOperatingLayerConfiguration,
     routingConfiguration: HybridRoutingConfiguration,
     appleFoundationModelsAvailable: Bool,
-    peers: [AgentMeshPeerRecord]
+    peers: [AgentMeshPeerRecord],
+    modelProfiles: [ModelProfile] = [],
+    hasImageInput: Bool = false
   ) -> HybridRouteDecision {
     let normalizedPrompt = prompt.lowercased()
     let requiredCapabilities = Self.requiredCapabilities(for: normalizedPrompt)
@@ -120,7 +122,48 @@ public struct HybridInferenceRouter: Sendable {
       )
     }
 
+    let eligibleProfiles = Self.eligibleProfiles(
+      modelProfiles,
+      requiredCapabilities: requiredCapabilities,
+      routingConfiguration: routingConfiguration,
+      appleFoundationModelsAvailable: appleFoundationModelsAvailable,
+      hasImageInput: hasImageInput,
+      localOnly: false
+    )
+
+    // Privacy Lock is evaluated before every cloud or Mesh route. Personal
+    // macOS data may still use another validated local model profile, but it
+    // can never be pushed to a remote model merely because that profile has a
+    // higher priority.
     if routingConfiguration.privacyLockEnabled, personal {
+      let localProfiles = Self.eligibleProfiles(
+        modelProfiles,
+        requiredCapabilities: requiredCapabilities,
+        routingConfiguration: routingConfiguration,
+        appleFoundationModelsAvailable: appleFoundationModelsAvailable,
+        hasImageInput: hasImageInput,
+        localOnly: true
+      )
+
+      if let selected = Self.profileCandidate(
+        prompt: normalizedPrompt,
+        candidates: localProfiles,
+        activeConfiguration: activeConfiguration,
+        operatingConfiguration: operatingConfiguration,
+        preferLocal: true,
+        activeIsLocal: activeIsLocal
+      ) {
+        return decisionForProfile(
+          selected,
+          activeConfiguration: activeConfiguration,
+          operatingConfiguration: operatingConfiguration,
+          reason: "Privacy Lock: persönlicher Turn bleibt auf dem lokalen Modellprofil \(selected.name).",
+          confidence: 0.98,
+          privacyLocked: true,
+          requiredCapabilities: requiredCapabilities
+        )
+      }
+
       if activeIsLocal {
         return decisionForActiveProvider(
           configuration: activeConfiguration,
@@ -131,9 +174,19 @@ public struct HybridInferenceRouter: Sendable {
           requiredCapabilities: requiredCapabilities
         )
       }
-      if routingConfiguration.allowAppleOnDevice, appleFoundationModelsAvailable {
+
+      // Backward-compatible fallback for installations that have not loaded a
+      // Model Manager document yet. With Build 42 profiles loaded, the built-in
+      // Apple profile is handled by localProfiles above.
+      if modelProfiles.isEmpty,
+        routingConfiguration.allowAppleOnDevice,
+        appleFoundationModelsAvailable,
+        !hasImageInput
+      {
         return HybridRouteDecision(
           kind: .appleOnDevice,
+          profileID: ModelProfileCatalog.appleBuiltIn.id,
+          profileRuntime: .appleFoundationModels,
           targetName: "Apple On-Device",
           reason: "Privacy Lock: der aktive Provider ist remote; Apple Foundation Models ist als lokaler Ersatz verfügbar.",
           confidence: 1,
@@ -141,10 +194,11 @@ public struct HybridInferenceRouter: Sendable {
           requiredCapabilities: requiredCapabilities
         )
       }
+
       return HybridRouteDecision(
         kind: .blocked,
         targetName: "Blocked by Privacy Lock",
-        reason: "Privacy Lock verhindert eine automatische Remote-Ausführung für persönliche macOS-Daten. Wähle einen lokalen Provider/Runtime-Pfad oder aktiviere Apple On-Device.",
+        reason: "Privacy Lock verhindert eine automatische Remote-Ausführung für persönliche macOS-Daten. Es ist kein kompatibles lokales Modellprofil verfügbar.",
         confidence: 1,
         privacyLocked: true,
         requiredCapabilities: requiredCapabilities
@@ -153,10 +207,13 @@ public struct HybridInferenceRouter: Sendable {
 
     if Self.explicitAppleIntent(normalizedPrompt),
       routingConfiguration.allowAppleOnDevice,
-      appleFoundationModelsAvailable
+      appleFoundationModelsAvailable,
+      !hasImageInput
     {
       return HybridRouteDecision(
         kind: .appleOnDevice,
+        profileID: ModelProfileCatalog.appleBuiltIn.id,
+        profileRuntime: .appleFoundationModels,
         targetName: "Apple On-Device",
         reason: "Der Prompt fordert explizit Apple On-Device/Foundation Models an.",
         confidence: 0.99,
@@ -189,7 +246,7 @@ public struct HybridInferenceRouter: Sendable {
     if meshIntent, routingConfiguration.allowMesh {
       let detail = Self.remoteCapabilitiesSupported(requiredCapabilities)
         ? "Kein vertrauter Peer deckt den benötigten Capability-Scope ab."
-        : "Der Prompt benötigt eine Capability, die Build 40/41 nicht automatisch an Remote-Peers delegiert."
+        : "Der Prompt benötigt eine Capability, die Agent Mesh v1 nicht automatisch an Remote-Peers delegiert."
       return decisionForActiveProvider(
         configuration: activeConfiguration,
         operatingConfiguration: operatingConfiguration,
@@ -199,11 +256,65 @@ public struct HybridInferenceRouter: Sendable {
       )
     }
 
+    if let explicitlyNamed = Self.explicitlyReferencedProfile(
+      in: normalizedPrompt,
+      candidates: eligibleProfiles
+    ) {
+      return decisionForProfile(
+        explicitlyNamed,
+        activeConfiguration: activeConfiguration,
+        operatingConfiguration: operatingConfiguration,
+        reason: "Der Prompt nennt das Modellprofil bzw. Modellziel explizit.",
+        confidence: 0.99,
+        requiredCapabilities: requiredCapabilities
+      )
+    }
+
+    if Self.explicitCloudIntent(normalizedPrompt) {
+      if let cloud = eligibleProfiles.first(where: { $0.runtime == .ollamaCloud }) {
+        return decisionForProfile(
+          cloud,
+          activeConfiguration: activeConfiguration,
+          operatingConfiguration: operatingConfiguration,
+          reason: "Der Prompt fordert explizit einen Cloud-Modellpfad an; das höchste kompatible Cloud-Profil wurde gewählt.",
+          confidence: 0.97,
+          requiredCapabilities: requiredCapabilities
+        )
+      }
+      return decisionForActiveProvider(
+        configuration: activeConfiguration,
+        operatingConfiguration: operatingConfiguration,
+        reason: "Expliziter Cloud-Wunsch, aber kein aktiviertes kompatibles Cloud-Modellprofil mit Vault-Secret-Referenz ist verfügbar.",
+        confidence: 0.9,
+        requiredCapabilities: requiredCapabilities
+      )
+    }
+
+    if let selected = Self.profileCandidate(
+      prompt: normalizedPrompt,
+      candidates: eligibleProfiles,
+      activeConfiguration: activeConfiguration,
+      operatingConfiguration: operatingConfiguration,
+      preferLocal: routingConfiguration.preferLocal,
+      activeIsLocal: activeIsLocal
+    ) {
+      return decisionForProfile(
+        selected,
+        activeConfiguration: activeConfiguration,
+        operatingConfiguration: operatingConfiguration,
+        reason: routingConfiguration.preferLocal
+          ? "Build 42 Profile Router: Local-first und Profilpriorität wählen \(selected.name)."
+          : "Build 42 Profile Router: Profilpriorität wählt \(selected.name).",
+        confidence: 0.9,
+        requiredCapabilities: requiredCapabilities
+      )
+    }
+
     if routingConfiguration.preferLocal, activeIsLocal {
       return decisionForActiveProvider(
         configuration: activeConfiguration,
         operatingConfiguration: operatingConfiguration,
-        reason: "Local-first Policy: der aktive Provider/Runtime-Pfad ist lokal und es gibt keine explizite Remote-Absicht.",
+        reason: "Local-first Policy: der aktive Provider/Runtime-Pfad ist lokal und kein höher priorisiertes kompatibles lokales Modellprofil greift.",
         confidence: 0.92,
         requiredCapabilities: requiredCapabilities
       )
@@ -213,12 +324,15 @@ public struct HybridInferenceRouter: Sendable {
       routingConfiguration.allowAppleOnDevice,
       appleFoundationModelsAvailable,
       activeConfiguration.providerKind == .ollamaCloud,
-      !Self.explicitCloudIntent(normalizedPrompt)
+      !Self.explicitCloudIntent(normalizedPrompt),
+      !hasImageInput
     {
       return HybridRouteDecision(
         kind: .appleOnDevice,
+        profileID: ModelProfileCatalog.appleBuiltIn.id,
+        profileRuntime: .appleFoundationModels,
         targetName: "Apple On-Device",
-        reason: "Local-first Policy: der aktive Provider ist Cloud; ohne explizite Cloud-Absicht wird Apple On-Device bevorzugt.",
+        reason: "Local-first Policy: der aktive Provider ist Cloud; ohne kompatibles geladenes Profil wird Apple On-Device bevorzugt.",
         confidence: 0.82,
         requiredCapabilities: requiredCapabilities
       )
@@ -246,9 +360,6 @@ public struct HybridInferenceRouter: Sendable {
     if containsAny(text, ["terminal", "shell", "befehl", "command", "docker", "container", "compose", "systemctl", "journalctl"]) {
       capabilities.formUnion([.terminal, .system])
     }
-    // Capability detection describes what the task actually needs and must not
-    // depend on the route requested by the user. Mesh support is evaluated
-    // separately below; SSH remains explicitly blocked for Mesh v1.
     if containsAny(text, ["ssh", "scp", "remote host", "remote server"]) {
       capabilities.insert(.ssh)
     }
@@ -312,6 +423,135 @@ public struct HybridInferenceRouter: Sendable {
     )
   }
 
+  private func decisionForProfile(
+    _ profile: ModelProfile,
+    activeConfiguration: AppConfiguration,
+    operatingConfiguration: AgentOperatingLayerConfiguration,
+    reason: String,
+    confidence: Double,
+    privacyLocked: Bool = false,
+    requiredCapabilities: Set<AgentToolCapability>
+  ) -> HybridRouteDecision {
+    let matchesActive = Self.profileMatchesActive(
+      profile,
+      activeConfiguration: activeConfiguration,
+      operatingConfiguration: operatingConfiguration
+    )
+    let kind: HybridRouteKind
+    if matchesActive {
+      kind = .activeProvider
+    } else if profile.runtime == .appleFoundationModels {
+      kind = .appleOnDevice
+    } else {
+      kind = .modelProfile
+    }
+
+    return HybridRouteDecision(
+      kind: kind,
+      profileID: profile.id,
+      profileRuntime: profile.runtime,
+      targetName: profile.name,
+      reason: matchesActive
+        ? reason + " Das Profil entspricht bereits dem aktiven Provider/Runtime-Pfad."
+        : reason,
+      confidence: confidence,
+      privacyLocked: privacyLocked,
+      requiredCapabilities: requiredCapabilities
+    )
+  }
+
+  private static func eligibleProfiles(
+    _ profiles: [ModelProfile],
+    requiredCapabilities: Set<AgentToolCapability>,
+    routingConfiguration: HybridRoutingConfiguration,
+    appleFoundationModelsAvailable: Bool,
+    hasImageInput: Bool,
+    localOnly: Bool
+  ) -> [ModelProfile] {
+    let needsToolCalling = !requiredCapabilities.isEmpty
+    return ModelProfileCatalog.routingCandidates(
+      from: profiles,
+      preferLocal: routingConfiguration.preferLocal || localOnly
+    ).filter { profile in
+      if localOnly, !profile.runtime.isLocal { return false }
+      if profile.runtime == .ollamaCloud, profile.apiKeySecretID == nil { return false }
+      if profile.runtime == .appleFoundationModels,
+        (!routingConfiguration.allowAppleOnDevice || !appleFoundationModelsAvailable)
+      {
+        return false
+      }
+      if hasImageInput, !profile.capabilities.contains(.imageInput) { return false }
+      if needsToolCalling, !profile.capabilities.contains(.toolCalling) { return false }
+      return true
+    }
+  }
+
+  private static func profileCandidate(
+    prompt: String,
+    candidates: [ModelProfile],
+    activeConfiguration: AppConfiguration,
+    operatingConfiguration: AgentOperatingLayerConfiguration,
+    preferLocal: Bool,
+    activeIsLocal: Bool
+  ) -> ModelProfile? {
+    guard !candidates.isEmpty else { return nil }
+
+    if explicitLocalIntent(prompt), let local = candidates.first(where: { $0.runtime.isLocal }) {
+      return local
+    }
+
+    let userProfiles = candidates.filter { $0.id != ModelProfileCatalog.appleBuiltIn.id }
+    if preferLocal, activeIsLocal, !explicitCloudIntent(prompt) {
+      let localUserProfiles = userProfiles.filter(\.runtime.isLocal)
+      guard !localUserProfiles.isEmpty else {
+        return nil
+      }
+      return localUserProfiles[0]
+    }
+
+    return candidates[0]
+  }
+
+  private static func explicitlyReferencedProfile(
+    in prompt: String,
+    candidates: [ModelProfile]
+  ) -> ModelProfile? {
+    candidates.first { profile in
+      let name = profile.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+      let model = profile.modelIdentifier.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+      return (name.count >= 4 && prompt.contains(name))
+        || (model.count >= 4 && prompt.contains(model))
+    }
+  }
+
+  private static func profileMatchesActive(
+    _ profile: ModelProfile,
+    activeConfiguration: AppConfiguration,
+    operatingConfiguration: AgentOperatingLayerConfiguration
+  ) -> Bool {
+    let plan = profile.activationPlan
+    guard plan.providerKind == activeConfiguration.providerKind else { return false }
+    if plan.providerKind == .appleOnDevice {
+      return true
+    }
+    guard plan.model == activeConfiguration.model,
+      normalizedURL(plan.baseURL) == normalizedURL(activeConfiguration.baseURL),
+      plan.apiKeySecretID == activeConfiguration.apiKeySecretID
+    else {
+      return false
+    }
+    if let runtime = plan.localInferenceRuntime {
+      return runtime == operatingConfiguration.localInferenceRuntime
+    }
+    return true
+  }
+
+  private static func normalizedURL(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines)
+      .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+      .lowercased()
+  }
+
   private static func activeProviderName(
     configuration: AppConfiguration,
     operatingConfiguration: AgentOperatingLayerConfiguration
@@ -344,6 +584,13 @@ public struct HybridInferenceRouter: Sendable {
     containsAny(
       prompt,
       ["ollama cloud", "cloud model", "cloud-modell", "in der cloud", "use cloud", "remote model"]
+    )
+  }
+
+  private static func explicitLocalIntent(_ prompt: String) -> Bool {
+    containsAny(
+      prompt,
+      ["lokales modell", "lokaler provider", "local model", "local provider", "on-device model", "on device model"]
     )
   }
 
