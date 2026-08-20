@@ -1,0 +1,105 @@
+name: ANEMLL tool policy
+
+on:
+  push:
+    branches:
+      - agent/v1.3.0-neural-control-plane
+  pull_request:
+    branches:
+      - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
+
+permissions:
+  contents: read
+
+jobs:
+  anemll-tool-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse Build 39 Swift sources
+        run: |
+          swiftc -frontend -parse \
+            Sources/AgenTM5N/Providers/ANEMLLToolProtocol.swift \
+            Sources/AgenTM5N/Providers/ANEMLLProvider.swift \
+            Tests/AgenTM5NTests/ANEMLLToolProtocolTests.swift
+
+      - name: Validate structured tool boundary
+        shell: python
+        run: |
+          from pathlib import Path
+
+          checks = {
+              "Sources/AgenTM5N/Providers/ANEMLLToolProtocol.swift": [
+                  "maximumToolsPerTurn = 6",
+                  "enabledCapabilities",
+                  "BundledToolPackInstaller.isBundledToolName",
+                  "<agentm5n_tool_call>",
+                  "unknownTool",
+                  "multipleToolCalls",
+                  "removingThinkingBlocks",
+                  "maximumToolResultCharacters",
+                  "ANEMLLToolEnvelopeFilter",
+              ],
+              "Sources/AgenTM5N/Providers/ANEMLLProvider.swift": [
+                  "ANEMLLToolProtocol.selectTools",
+                  "ANEMLLToolProtocol.makeTransportRequest",
+                  "ANEMLLToolProtocol.parseToolCalls",
+                  "ProviderStreamEvent(toolCalls: toolCalls)",
+                  "prepareRuntimeTurn",
+                  "ANEMLL BUILD 39 RUNTIME",
+                  "persistentRuntime.completeStreaming",
+              ],
+              "Sources/AgenTM5N/App/AppState.swift": [
+                  "mergeToolCalls(event.toolCalls, into: &turnToolCalls)",
+                  "await executeToolCall(call, assistantID: assistantID)",
+                  "authorize(",
+                  "finishToolRecord",
+              ],
+              "Tests/AgenTM5NTests/ANEMLLToolProtocolTests.swift": [
+                  "testParsesSingleAdvertisedToolCall",
+                  "testRejectsUnadvertisedToolCall",
+                  "testRejectsMultipleToolCallsInOneModelRound",
+                  "testToolCallInsideThinkingBlockIsNeverExecuted",
+                  "testTransportUsesTrailingToolResultInsteadOfRepeatingUserPrompt",
+                  "testToolEnvelopeFilterSuppressesChunkedEnvelope",
+              ],
+          }
+
+          failures = []
+          for filename, needles in checks.items():
+              text = Path(filename).read_text()
+              for needle in needles:
+                  if needle not in text:
+                      failures.append(f"{filename}: Build 39 invariant missing {needle!r}")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Enforce no direct execution from ANEMLL provider
+        shell: python
+        run: |
+          from pathlib import Path
+
+          provider = Path("Sources/AgenTM5N/Providers/ANEMLLProvider.swift").read_text()
+          protocol = Path("Sources/AgenTM5N/Providers/ANEMLLToolProtocol.swift").read_text()
+          forbidden = [
+              "Process()",
+              "NSTask",
+              "executeAuthorizedToolCall(",
+              "AgentRuntime().execute",
+              "vaultStore.secret",
+          ]
+          failures = [needle for needle in forbidden if needle in provider or needle in protocol]
+          if failures:
+              raise SystemExit(
+                  "ANEMLL model/provider layer must never execute tools or resolve secrets directly: "
+                  + ", ".join(failures)
+              )
+
+      - name: Note target-Mac gate
+        run: |
+          echo "Static Build 39 ANEMLL tool boundary passed."
+          echo "Target Apple Silicon validation remains mandatory for real Qwen3 tool selection, approval routing, tool-result continuation, streaming and session recovery."
