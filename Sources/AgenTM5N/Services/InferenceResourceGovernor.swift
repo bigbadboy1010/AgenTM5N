@@ -127,13 +127,18 @@ public actor InferenceResourceGovernor {
   private var activeLease: InferenceResourceLease?
   private let staleAfterSeconds: Int
   private let now: @Sendable () -> Date
+  private let anemllRequiresRecovery: @Sendable () async -> Bool
 
   public init(
     staleAfterSeconds: Int = 330,
-    now: @escaping @Sendable () -> Date = Date.init
+    now: @escaping @Sendable () -> Date = Date.init,
+    anemllRequiresRecovery: @escaping @Sendable () async -> Bool = {
+      await ANEMLLPersistentRuntimeService.shared.requiresRecovery()
+    }
   ) {
     self.staleAfterSeconds = max(30, min(staleAfterSeconds, 3_600))
     self.now = now
+    self.anemllRequiresRecovery = anemllRequiresRecovery
   }
 
   public func withLease<T: Sendable>(
@@ -191,7 +196,7 @@ public actor InferenceResourceGovernor {
     else { return }
 
     if lease.runtime == .anemll,
-      await ANEMLLPersistentRuntimeService.shared.requiresRecovery()
+      await anemllRequiresRecovery()
     {
       return
     }
