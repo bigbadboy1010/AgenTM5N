@@ -6,9 +6,9 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
-# Build 39: target-Mac validated native Qwen3/ANEMLL structured tool calling.
-VERSION="${AGENTM5N_VERSION:-1.3.9}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-39}"
+# Build 41: target-Mac validated Hybrid Neural + Mesh Router normal-chat execution.
+VERSION="${AGENTM5N_VERSION:-1.4.1}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:--}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
