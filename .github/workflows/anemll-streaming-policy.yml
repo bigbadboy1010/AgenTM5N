@@ -23,8 +23,10 @@ jobs:
         run: |
           swiftc -frontend -parse \
             Sources/AgenTM5N/Services/ANEMLLPersistentRuntimeService.swift \
+            Sources/AgenTM5N/Services/ANEMLLStreamingTelemetry.swift \
             Sources/AgenTM5N/Providers/ANEMLLProvider.swift \
-            Tests/AgenTM5NTests/ANEMLLRuntimeTests.swift
+            Tests/AgenTM5NTests/ANEMLLRuntimeTests.swift \
+            Tests/AgenTM5NTests/ANEMLLStreamingTelemetryTests.swift
 
       - name: Validate Build 38 streaming invariants
         shell: python
@@ -42,9 +44,19 @@ jobs:
                   "shouldRestart",
                   "Ausgabe überschreitet 8 MiB",
               ],
+              "Sources/AgenTM5N/Services/ANEMLLStreamingTelemetry.swift": [
+                  "ANEMLLStreamingTelemetrySnapshot",
+                  "firstDeltaLatencyMilliseconds",
+                  "chunkCount",
+                  "characterCount",
+                  "case cancelled",
+                  "stores no prompt",
+              ],
               "Sources/AgenTM5N/Providers/ANEMLLProvider.swift": [
                   "ANEMLLThinkingDeltaSplitter",
                   "persistentRuntime.completeStreaming",
+                  "ANEMLLStreamingTelemetry.shared.begin",
+                  "recordDelta(",
                   "continuation.yield",
                   "isFinished: true",
                   "ANEMLLRuntimeTelemetry.shared.record",
@@ -55,6 +67,11 @@ jobs:
                   "testInteractiveProtocolStreamsAssistantTextBeforeTurnFinishes",
                   "testInteractiveProtocolWithholdsPartialMetricsLineFromStreaming",
                   "testInteractiveProtocolStreamingMatchesFinalParsedResponse",
+              ],
+              "Tests/AgenTM5NTests/ANEMLLStreamingTelemetryTests.swift": [
+                  "testStreamingTelemetryTracksFirstDeltaCountsAndCompletion",
+                  "testStreamingTelemetryIgnoresStaleStreamUpdates",
+                  "testStreamingTelemetryRecordsCancellationWithoutContent",
               ],
               "Sources/AgenTM5N/App/AppState.swift": [
                   "for try await event in stream",
