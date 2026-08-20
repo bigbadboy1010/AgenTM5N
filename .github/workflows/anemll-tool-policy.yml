@@ -19,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Parse Build 39 Swift sources
+      - name: Parse ANEMLL tool sources
         run: |
           swiftc -frontend -parse \
             Sources/AgenTM5N/Providers/ANEMLLToolProtocol.swift \
@@ -34,7 +34,7 @@ jobs:
           checks = {
               "Sources/AgenTM5N/Providers/ANEMLLToolProtocol.swift": [
                   "maximumToolsPerTurn = 4",
-                  "maximumToolResultCharacters = 900",
+                  "maximumToolResultCharacters = 600",
                   "maximumEnvelopeBytes",
                   "enabledCapabilities",
                   "BundledToolPackInstaller.isBundledToolName",
@@ -44,13 +44,15 @@ jobs:
                   "isSubset(of: allowedArguments)",
                   "removingThinkingBlocks",
                   "ANEMLLToolEnvelopeFilter",
+                  "ORIGINAL USER TASK:",
+                  "priority($0, prompt: prompt) < 4",
               ],
               "Sources/AgenTM5N/Providers/ANEMLLProvider.swift": [
                   "ANEMLLToolProtocol.selectTools",
                   "ANEMLLToolProtocol.makeTransportRequest",
                   "ANEMLLToolProtocol.parseToolCalls",
                   "ProviderStreamEvent(toolCalls: toolCalls)",
-                  "prepareRuntimeTurn",
+                  "ANEMLLContextBudget.plan",
                   "ANEMLL BUILD 39 RUNTIME",
                   "persistentRuntime.completeStreaming",
               ],
@@ -66,8 +68,9 @@ jobs:
                   "testRejectsArgumentsOutsideAdvertisedSchema",
                   "testRejectsMultipleToolCallsInOneModelRound",
                   "testToolCallInsideThinkingBlockIsNeverExecuted",
-                  "testTransportUsesTrailingToolResultInsteadOfRepeatingUserPrompt",
+                  "testTransportUsesTrailingToolResultAndPreservesOriginalUserTask",
                   "testToolResultIsBoundedBeforeReturningToSmallContextModel",
+                  "testOrdinaryChatDoesNotAdvertiseUnrelatedTools",
                   "testToolEnvelopeFilterSuppressesChunkedEnvelope",
               ],
           }
@@ -77,7 +80,7 @@ jobs:
               text = Path(filename).read_text()
               for needle in needles:
                   if needle not in text:
-                      failures.append(f"{filename}: Build 39 invariant missing {needle!r}")
+                      failures.append(f"{filename}: ANEMLL tool invariant missing {needle!r}")
 
           if failures:
               raise SystemExit("\n".join(failures))
@@ -103,7 +106,7 @@ jobs:
                   + ", ".join(failures)
               )
 
-      - name: Note target-Mac gate
+      - name: Note native gate
         run: |
-          echo "Static Build 39 ANEMLL tool boundary passed."
-          echo "Target Apple Silicon validation remains mandatory for real Qwen3 tool selection, approval routing, tool-result continuation, streaming and session recovery."
+          echo "Static ANEMLL tool boundary passed."
+          echo "Native macOS CI is authoritative for real build/test/concurrency validation."
