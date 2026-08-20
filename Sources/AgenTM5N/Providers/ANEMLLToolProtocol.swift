@@ -272,6 +272,16 @@ public enum ANEMLLToolProtocol {
     )
     if directoryIntent, name == "list_directory" { return 0 }
 
+    // Generic knowledge prompts such as "What is the difference between RAM
+    // and SSD?" must not trigger a real Mac inspection. Hardware terms only
+    // select system_info when the user asks about this concrete machine.
+    let systemInfoIntent = containsAny(prompt, ["systeminfo", "system info"])
+      || (
+        containsAny(prompt, ["mein mac", "dieser mac", "mein system", "my mac", "this mac", "my system"])
+          && containsAny(prompt, ["chip", "arbeitsspeicher", "ram"])
+      )
+    if systemInfoIntent, name == "system_info" { return 0 }
+
     let exactAffinity: [([String], [String])] = [
       (["kalender", "calendar", "termin", "event"], ["calendar_"]),
       (["mail", "email", "e-mail"], ["mail_"]),
@@ -280,7 +290,6 @@ public enum ANEMLLToolProtocol {
       (["ssh", "server", "remote", "host"], ["ssh_"]),
       (["docker", "container", "compose"], ["docker_"]),
       (["git", "commit", "branch", "diff", "repository", "repo"], ["git_"]),
-      (["systeminfo", "system info", "chip", "arbeitsspeicher", "ram"], ["system_info"]),
       (["prozess", "process", "cpu"], ["process_list"]),
       (["disk", "platte", "speicherplatz"], ["disk_info"]),
       (["network", "netzwerk"], ["network_info"]),
