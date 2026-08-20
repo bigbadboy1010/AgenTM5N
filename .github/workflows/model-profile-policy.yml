@@ -53,7 +53,7 @@ jobs:
                   "estimatedMemoryMB",
                   "priority",
                   "enabled",
-                  "ModelProfileCatalog.routingCandidates",
+                  "routingCandidates(",
                   "fromCurrentConfiguration",
                   "activationPlan",
               ],
