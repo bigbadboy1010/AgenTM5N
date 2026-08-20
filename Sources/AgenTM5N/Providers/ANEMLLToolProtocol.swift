@@ -51,8 +51,9 @@ public struct ANEMLLToolTransportRequest: Equatable, Sendable {
 public enum ANEMLLToolProtocol {
   public static let callPrefix = "<agentm5n_tool_call>"
   public static let callSuffix = "</agentm5n_tool_call>"
-  public static let maximumToolsPerTurn = 6
-  public static let maximumToolResultCharacters = 1_400
+  public static let maximumToolsPerTurn = 4
+  public static let maximumToolResultCharacters = 900
+  public static let maximumEnvelopeBytes = 32 * 1_024
 
   private struct Envelope: Decodable {
     let name: String
@@ -112,7 +113,7 @@ public enum ANEMLLToolProtocol {
       }.joined(separator: "\n\n")
       let prompt = toolCatalogPrefix(tools)
         + resultText
-        + "\n\nContinue the original user task. Use another advertised tool only if necessary; otherwise answer from the real tool result."
+        + "\n\nContinue the original task. Call another advertised tool only if required; otherwise answer from this real result."
       return ANEMLLToolTransportRequest(
         prompt: prompt,
         userTurnCount: max(1, userTurnCount),
@@ -160,15 +161,23 @@ public enum ANEMLLToolProtocol {
     guard payloads.count == 1, let payload = payloads.first else {
       throw ANEMLLToolProtocolError.multipleToolCalls
     }
-    guard let data = payload.data(using: .utf8),
+    guard payload.utf8.count <= maximumEnvelopeBytes,
+      let data = payload.data(using: .utf8),
       let envelope = try? JSONDecoder().decode(Envelope.self, from: data)
     else {
       throw ANEMLLToolProtocolError.malformedEnvelope
     }
 
-    let allowedNames = Set(allowedTools.map { $0.function.name })
-    guard allowedNames.contains(envelope.name) else {
+    guard let allowedDefinition = allowedTools.first(where: {
+      $0.function.name == envelope.name
+    }) else {
       throw ANEMLLToolProtocolError.unknownTool(envelope.name)
+    }
+
+    let arguments = envelope.arguments ?? [:]
+    let allowedArguments = Set(argumentNames(allowedDefinition.function.parameters))
+    guard Set(arguments.keys).isSubset(of: allowedArguments) else {
+      throw ANEMLLToolProtocolError.malformedEnvelope
     }
 
     return [
@@ -176,7 +185,7 @@ public enum ANEMLLToolProtocol {
         function: .init(
           index: 0,
           name: envelope.name,
-          arguments: envelope.arguments ?? [:]
+          arguments: arguments
         )
       )
     ]
@@ -191,17 +200,17 @@ public enum ANEMLLToolProtocol {
         : definition.function.name + "(" + arguments.joined(separator: ",") + ")"
       let description = bounded(
         definition.function.description.replacingOccurrences(of: "\n", with: " "),
-        limit: 96
+        limit: 72
       )
       return "- \(signature): \(description)"
     }.joined(separator: "\n")
 
     return """
-    AGEN TM5N TOOLS AVAILABLE FOR THIS TURN:
+    AGENTM5N TOOLS FOR THIS TURN:
     \(catalog)
-    If a real action or data lookup requires one of these tools, output ONLY one exact envelope and no prose:
+    If a real action or lookup requires a tool, output ONLY one envelope:
     \(callPrefix){"name":"tool_name","arguments":{}}\(callSuffix)
-    Never invent a tool name. Use at most one tool per round. Otherwise answer normally.
+    Never invent names/results. One tool per round. Otherwise answer normally.
 
     USER/TASK INPUT:
     """
