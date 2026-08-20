@@ -30,9 +30,12 @@ printf 'SwiftPM Parallelität: %s Jobs\n' "$SWIFT_JOBS"
 
 swift package resolve
 swift package dump-package >/dev/null
-swift build -c debug --arch arm64 --jobs "$SWIFT_JOBS"
 
-printf '\n=== AgenTM5N Security Regression Tests ===\n'
+# `swift test` compiles the package and the test targets. Running an explicit
+# debug `swift build` immediately beforehand duplicated compiler work after a
+# clean checkout without adding meaningful local verification coverage. Native
+# CI still performs its independent strict-concurrency build gate.
+printf '\n=== AgenTM5N Build + Security Regression Tests ===\n'
 swift test --arch arm64 --jobs "$SWIFT_JOBS"
 
-printf '\nAgenTM5N Debug-Build und Tests erfolgreich.\n'
+printf '\nAgenTM5N Build und Tests erfolgreich.\n'
