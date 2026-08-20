@@ -74,4 +74,57 @@ public struct TurnExecutionPlan: Equatable, Sendable {
       )
     )
   }
+
+  /// Builds a future Phase-2 automatic profile route without mutating persisted
+  /// application settings. Local profiles must first pass the resource admission
+  /// gate. This factory does not itself enable automatic routing; the Build-42
+  /// safety branch keeps `.automaticModelProfile` disabled at the chat entry.
+  public static func automaticModelProfile(
+    turnID: UUID = UUID(),
+    configuration: AppConfiguration,
+    operatingConfiguration: AgentOperatingLayerConfiguration,
+    profile: ModelProfile,
+    resourceSnapshot: AutomaticResourceSnapshot?,
+    admissionPolicy: AutomaticInferenceAdmissionPolicy = .conservative
+  ) throws -> TurnExecutionPlan {
+    try AutomaticInferenceAdmissionGate.validate(
+      profile: profile,
+      snapshot: resourceSnapshot,
+      policy: admissionPolicy
+    )
+
+    let activation = profile.activationPlan
+    let budget = AutomaticInferenceBudget.automatic(
+      runtime: profile.runtime,
+      contextWindow: activation.contextWindow
+    )
+
+    var routeConfiguration = configuration
+    routeConfiguration.providerKind = activation.providerKind
+    routeConfiguration.baseURL = activation.baseURL
+    routeConfiguration.model = activation.model
+    routeConfiguration.apiKeySecretID = activation.apiKeySecretID
+    routeConfiguration.maxToolIterations = min(
+      routeConfiguration.maxToolIterations,
+      budget.maximumToolRounds
+    )
+
+    var routeOperatingConfiguration = operatingConfiguration
+    if let localInferenceRuntime = activation.localInferenceRuntime {
+      routeOperatingConfiguration.localInferenceRuntime = localInferenceRuntime
+    }
+    routeOperatingConfiguration.numContext = activation.contextWindow
+    routeOperatingConfiguration.requestTimeoutSeconds = min(
+      routeOperatingConfiguration.requestTimeoutSeconds,
+      budget.timeoutSeconds
+    )
+
+    return TurnExecutionPlan(
+      turnID: turnID,
+      origin: .automaticModelProfile,
+      configuration: routeConfiguration,
+      operatingConfiguration: routeOperatingConfiguration,
+      automaticBudget: budget
+    )
+  }
 }
