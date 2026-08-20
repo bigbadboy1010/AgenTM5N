@@ -82,14 +82,16 @@ public enum ANEMLLInteractiveProtocol {
       throw ANEMLLRuntimeError.missingPrompt
     }
 
+    // The upstream interactive CLI accepts exactly one physical input line per
+    // turn. U+2028 preserves a semantic line boundary without accidentally
+    // submitting additional CLI turns. The small-context transport no longer
+    // relies on physical newlines for priority semantics.
     value = value
       .replacingOccurrences(of: "\r\n", with: "\n")
       .replacingOccurrences(of: "\r", with: "\n")
       .replacingOccurrences(of: "\n", with: "\u{2028}")
 
     // The upstream interactive CLI reserves slash-prefixed input for commands.
-    // WORD JOINER keeps the user's text intact for the tokenizer while avoiding
-    // accidental command dispatch such as /t.
     if value.hasPrefix("/") {
       value = "\u{2060}" + value
     }
@@ -97,10 +99,18 @@ public enum ANEMLLInteractiveProtocol {
   }
 
   public static func containsPromptMarker(_ rawOutput: String) -> Bool {
+    containsTerminalPrompt(rawOutput, requireCompletedTurn: false)
+  }
+
+  public static func containsTerminalPrompt(
+    _ rawOutput: String,
+    requireCompletedTurn: Bool
+  ) -> Bool {
     let clean = stripANSI(rawOutput)
-    return clean.contains("\n\(promptMarker)")
-      || clean.hasSuffix(promptMarker)
-      || clean.hasSuffix("\(promptMarker) ")
+    let trimmed = clean.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasSuffix(promptMarker) else { return false }
+    guard requireCompletedTurn else { return true }
+    return completedTurnMetricsRange(in: clean) != nil
   }
 
   public static func parseTurn(_ rawOutput: String) throws -> ANEMLLInteractiveTurn {
@@ -112,20 +122,8 @@ public enum ANEMLLInteractiveProtocol {
     }
 
     let afterAssistant = assistantRange.upperBound..<clean.endIndex
-    let metricsRange = clean.range(
-      of: "\\n[0-9]+(?:\\.[0-9]+)?\\s+t/s,\\s*TTFT:",
-      options: .regularExpression,
-      range: afterAssistant
-    )
-    let nextPrompt = clean.range(
-      of: "\n\(promptMarker)",
-      range: afterAssistant
-    )
-    let responseEnd = earliestIndex(
-      metricsRange?.lowerBound,
-      nextPrompt?.lowerBound,
-      fallback: clean.endIndex
-    )
+    let metricsRange = completedTurnMetricsRange(in: clean, range: afterAssistant)
+    let responseEnd = metricsRange?.lowerBound ?? clean.endIndex
     let response = String(clean[assistantRange.upperBound..<responseEnd])
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -140,8 +138,8 @@ public enum ANEMLLInteractiveProtocol {
   }
 
   /// Returns only assistant text that is safe to expose while the upstream CLI
-  /// is still generating. Diagnostic throughput output and the next `You:`
-  /// prompt are deliberately excluded so they can never leak into chat text.
+  /// is still generating. A model-generated literal `You:` is treated as model
+  /// content; only a terminal prompt after the metrics line ends a turn.
   public static func streamableAssistantText(_ rawOutput: String) -> String {
     let clean = stripANSI(rawOutput)
     guard let assistantRange = clean.range(of: assistantMarker) else {
@@ -149,26 +147,10 @@ public enum ANEMLLInteractiveProtocol {
     }
 
     let afterAssistant = assistantRange.upperBound..<clean.endIndex
-    let metricsRange = clean.range(
-      of: "\\n[0-9]+(?:\\.[0-9]+)?\\s+t/s,\\s*TTFT:",
-      options: .regularExpression,
-      range: afterAssistant
-    )
-    let nextPrompt = clean.range(
-      of: "\n\(promptMarker)",
-      range: afterAssistant
-    )
-    var responseEnd = earliestIndex(
-      metricsRange?.lowerBound,
-      nextPrompt?.lowerBound,
-      fallback: clean.endIndex
-    )
+    let metricsRange = completedTurnMetricsRange(in: clean, range: afterAssistant)
+    var responseEnd = metricsRange?.lowerBound ?? clean.endIndex
 
-    // The metrics line can arrive split across pipe reads. Until its `t/s,
-    // TTFT:` marker is complete, hold back a short numeric-looking final line
-    // so fragments such as `84.7 t/` are not rendered as model text. Once the
-    // next prompt is present, the exact response boundary is authoritative.
-    if metricsRange == nil, nextPrompt == nil {
+    if metricsRange == nil {
       let candidate = String(clean[assistantRange.upperBound..<responseEnd])
       if let heldBoundary = potentialMetricsBoundary(in: candidate) {
         responseEnd = clean.index(
@@ -196,17 +178,16 @@ public enum ANEMLLInteractiveProtocol {
     )
   }
 
-  private static func earliestIndex(
-    _ lhs: String.Index?,
-    _ rhs: String.Index?,
-    fallback: String.Index
-  ) -> String.Index {
-    switch (lhs, rhs) {
-    case let (lhs?, rhs?): min(lhs, rhs)
-    case let (lhs?, nil): lhs
-    case let (nil, rhs?): rhs
-    case (nil, nil): fallback
-    }
+  private static func completedTurnMetricsRange(
+    in value: String,
+    range: Range<String.Index>? = nil
+  ) -> Range<String.Index>? {
+    let searchRange = range ?? value.startIndex..<value.endIndex
+    return value.range(
+      of: "\\n[0-9]+(?:\\.[0-9]+)?\\s+t/s,\\s*TTFT:",
+      options: .regularExpression,
+      range: searchRange
+    )
   }
 
   private static func potentialMetricsBoundary(in response: String) -> String.Index? {
@@ -268,6 +249,11 @@ public actor ANEMLLPersistentRuntimeService {
   private var conversationTurns = 0
   private var modelLoadReported = false
 
+  // Swift actors are reentrant across awaits. The helper owns exactly one
+  // stdin/stdout conversation, so we explicitly serialize complete turns.
+  private var turnInFlight = false
+  private var turnWaiters: [CheckedContinuation<Void, Never>] = []
+
   public init() {}
 
   public func complete(
@@ -278,6 +264,8 @@ public actor ANEMLLPersistentRuntimeService {
     temperature: Double,
     requestTimeoutSeconds: Int,
     userTurnCount: Int,
+    isFreshConversation: Bool,
+    isToolContinuation: Bool,
     runtimeConfiguration: ANEMLLRuntimeConfiguration
   ) async throws -> ANEMLLRuntimeResult {
     try await completeInternal(
@@ -288,6 +276,8 @@ public actor ANEMLLPersistentRuntimeService {
       temperature: temperature,
       requestTimeoutSeconds: requestTimeoutSeconds,
       userTurnCount: userTurnCount,
+      isFreshConversation: isFreshConversation,
+      isToolContinuation: isToolContinuation,
       runtimeConfiguration: runtimeConfiguration,
       onAssistantDelta: nil
     )
@@ -301,6 +291,8 @@ public actor ANEMLLPersistentRuntimeService {
     temperature: Double,
     requestTimeoutSeconds: Int,
     userTurnCount: Int,
+    isFreshConversation: Bool,
+    isToolContinuation: Bool,
     runtimeConfiguration: ANEMLLRuntimeConfiguration,
     onAssistantDelta: @escaping @Sendable (String) -> Void
   ) async throws -> ANEMLLRuntimeResult {
@@ -312,16 +304,22 @@ public actor ANEMLLPersistentRuntimeService {
       temperature: temperature,
       requestTimeoutSeconds: requestTimeoutSeconds,
       userTurnCount: userTurnCount,
+      isFreshConversation: isFreshConversation,
+      isToolContinuation: isToolContinuation,
       runtimeConfiguration: runtimeConfiguration,
       onAssistantDelta: onAssistantDelta
     )
   }
 
-  public func resetConversation() {
+  public func resetConversation() async {
+    await acquireTurnPermit()
+    defer { releaseTurnPermit() }
     shutdownInternal()
   }
 
-  public func shutdown() {
+  public func shutdown() async {
+    await acquireTurnPermit()
+    defer { releaseTurnPermit() }
     shutdownInternal()
   }
 
@@ -341,9 +339,15 @@ public actor ANEMLLPersistentRuntimeService {
     temperature: Double,
     requestTimeoutSeconds: Int,
     userTurnCount: Int,
+    isFreshConversation: Bool,
+    isToolContinuation: Bool,
     runtimeConfiguration: ANEMLLRuntimeConfiguration,
     onAssistantDelta: (@Sendable (String) -> Void)?
   ) async throws -> ANEMLLRuntimeResult {
+    await acquireTurnPermit()
+    defer { releaseTurnPermit() }
+    try Task.checkCancellation()
+
     let normalizedPrompt = try ANEMLLInteractiveProtocol.normalizePrompt(prompt)
     let helperPath = ANEMLLRuntimeStore.expanded(runtimeConfiguration.helperPath)
     let manager = FileManager.default
@@ -368,6 +372,15 @@ public actor ANEMLLPersistentRuntimeService {
       maxTokens: boundedMaxTokens,
       temperature: boundedTemperature
     )
+
+    if ANEMLLContextBudget.shouldRotateBeforeUserTurn(
+      contextLength: modelDescriptor.contextLength,
+      activeTurns: conversationTurns,
+      isFreshConversation: isFreshConversation,
+      isToolContinuation: isToolContinuation
+    ) {
+      shutdownInternal()
+    }
 
     if shouldRestart(
       requestedSignature: requestedSignature,
@@ -405,6 +418,7 @@ public actor ANEMLLPersistentRuntimeService {
       output = try await readUntilPrompt(
         handle: outputPipe.fileHandleForReading,
         timeoutSeconds: timeout,
+        requireCompletedTurn: true,
         onAssistantDelta: onAssistantDelta
       )
     } catch {
@@ -453,9 +467,6 @@ public actor ANEMLLPersistentRuntimeService {
     guard process?.isRunning == true else { return false }
     guard signature == requestedSignature else { return true }
 
-    // AppState starts a new conversation with one user turn. If the helper
-    // already owns prior turns, restart it so its hidden conversation does not
-    // leak into the new AgenTM5N session.
     if requestedUserTurnCount <= 1, conversationTurns > 0 {
       return true
     }
@@ -463,6 +474,25 @@ public actor ANEMLLPersistentRuntimeService {
       return true
     }
     return false
+  }
+
+  private func acquireTurnPermit() async {
+    if !turnInFlight {
+      turnInFlight = true
+      return
+    }
+    await withCheckedContinuation { continuation in
+      turnWaiters.append(continuation)
+    }
+  }
+
+  private func releaseTurnPermit() {
+    guard !turnWaiters.isEmpty else {
+      turnInFlight = false
+      return
+    }
+    let next = turnWaiters.removeFirst()
+    next.resume()
   }
 
   private func start(
@@ -504,6 +534,7 @@ public actor ANEMLLPersistentRuntimeService {
       startupOutput = try await readUntilPrompt(
         handle: outputPipe.fileHandleForReading,
         timeoutSeconds: timeoutSeconds,
+        requireCompletedTurn: false,
         onAssistantDelta: nil
       )
     } catch {
@@ -540,6 +571,7 @@ public actor ANEMLLPersistentRuntimeService {
   private func readUntilPrompt(
     handle: FileHandle,
     timeoutSeconds: Int,
+    requireCompletedTurn: Bool,
     onAssistantDelta: (@Sendable (String) -> Void)?
   ) async throws -> String {
     let box = processBox
@@ -559,7 +591,18 @@ public actor ANEMLLPersistentRuntimeService {
               )
             }
             data.append(chunk)
-            let output = String(decoding: data, as: UTF8.self)
+            if data.count > maximumBytes {
+              throw ANEMLLPersistentRuntimeError.protocolFailure(
+                "Ausgabe überschreitet 8 MiB ohne Prompt-Marker"
+              )
+            }
+
+            // Do not decode an incomplete UTF-8 scalar. The previous lossy
+            // decode could emit U+FFFD, permanently breaking the prefix-based
+            // streaming delta cursor after a split umlaut/emoji.
+            guard let output = String(data: data, encoding: .utf8) else {
+              continue
+            }
 
             if let onAssistantDelta {
               let visible = ANEMLLInteractiveProtocol.streamableAssistantText(output)
@@ -572,13 +615,11 @@ public actor ANEMLLPersistentRuntimeService {
               }
             }
 
-            if ANEMLLInteractiveProtocol.containsPromptMarker(output) {
+            if ANEMLLInteractiveProtocol.containsTerminalPrompt(
+              output,
+              requireCompletedTurn: requireCompletedTurn
+            ) {
               return output
-            }
-            if data.count > maximumBytes {
-              throw ANEMLLPersistentRuntimeError.protocolFailure(
-                "Ausgabe überschreitet 8 MiB ohne Prompt-Marker"
-              )
             }
           }
         }
