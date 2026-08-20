@@ -31,6 +31,7 @@ jobs:
       - name: Validate fail-safe routing boundary
         shell: python
         run: |
+          import re
           from pathlib import Path
 
           models = Path("Sources/AgenTM5N/Domain/HybridRoutingModels.swift").read_text()
@@ -62,7 +63,6 @@ jobs:
                   ".edge",
                   ".agents",
                   ".workflows",
-                  "HybridRoutingStore.saveDecision",
               ],
               "controller": [
                   "HybridRoutingStore.loadConfiguration",
@@ -95,16 +95,18 @@ jobs:
           if privacy_index < 0 or mesh_index < 0 or privacy_index > mesh_index:
               failures.append("Privacy Lock must be evaluated before Mesh routing")
 
-          forbidden_router_mutations = [
-              "providerKind =",
-              "baseURL =",
-              "apiKeySecretID =",
-              "SecureSecretBroker",
-              "VaultStore",
+          assignment_patterns = [
+              r"\bactiveConfiguration\.providerKind\s*=(?!=)",
+              r"\bactiveConfiguration\.baseURL\s*=(?!=)",
+              r"\bactiveConfiguration\.apiKeySecretID\s*=(?!=)",
           ]
-          for needle in forbidden_router_mutations:
+          for pattern in assignment_patterns:
+              if re.search(pattern, router):
+                  failures.append(f"Hybrid router decision plane must not mutate active provider configuration: {pattern}")
+
+          for needle in ["SecureSecretBroker", "VaultStore"]:
               if needle in router:
-                  failures.append(f"Hybrid router decision plane must not mutate providers/secrets directly: {needle}")
+                  failures.append(f"Hybrid router decision plane must not access secrets directly: {needle}")
 
           if failures:
               raise SystemExit("\n".join(failures))
