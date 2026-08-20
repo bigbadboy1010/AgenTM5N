@@ -7,7 +7,9 @@ extension AppState {
   /// Agent Mesh peer, but never creates a second local tool/security router.
   public func sendMessageHybridAware() {
     let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, !isGenerating else { return }
+    guard !text.isEmpty, generationPhase.acceptsNewTurn, !isGenerating else {
+      return
+    }
 
     let operatingConfiguration = AgentOperatingLayerStore.load()
     let controller = HybridRoutingController.shared
@@ -54,17 +56,24 @@ extension AppState {
         errorMessage = HybridRoutingError.peerUnavailable.localizedDescription
         return
       }
+
+      let turnID = UUID()
+      guard beginManagedGeneration(turnID: turnID) else { return }
+
       inputText = ""
-      isGenerating = true
       latestMetrics = nil
-      Task { @MainActor [weak self] in
-        await self?.performHybridMeshSend(
+
+      let task = Task { @MainActor [weak self] in
+        guard let self else { return }
+        await self.performHybridMeshSend(
           text: text,
           decision: decision,
           peerID: peerID,
-          timeoutSeconds: operatingConfiguration.requestTimeoutSeconds
+          timeoutSeconds: operatingConfiguration.requestTimeoutSeconds,
+          turnID: turnID
         )
       }
+      installManagedGenerationTask(task, turnID: turnID)
 
     case .blocked:
       errorMessage = decision.reason
@@ -82,8 +91,11 @@ extension AppState {
     text: String,
     decision: HybridRouteDecision,
     peerID: UUID,
-    timeoutSeconds: Int
+    timeoutSeconds: Int,
+    turnID: UUID
   ) async {
+    defer { finishManagedGeneration(turnID: turnID) }
+
     let userMessage = ChatMessage(role: .user, content: text)
     let assistantID = UUID()
     messages.append(userMessage)
@@ -102,36 +114,34 @@ extension AppState {
       requestedCapabilities: decision.requiredCapabilities,
       timeoutSeconds: timeoutSeconds
     )
+    var activePeer: AgentMeshPeerRecord?
 
     do {
+      try Task.checkCancellation()
+      guard generationPhase.turnID == turnID else {
+        throw CancellationError()
+      }
+
       guard let peer = try await AgentMeshPeerStore.shared.trustedPeer(id: peerID),
         peer.status == .trusted
       else {
         throw HybridRoutingError.peerUnavailable
       }
+      activePeer = peer
 
+      try Task.checkCancellation()
       _ = try await client.submit(request, to: peer)
-
-      let cancellationWatcher = Task.detached { [weak self] in
-        while !Task.isCancelled {
-          try? await Task.sleep(for: .milliseconds(125))
-          let stillGenerating = await MainActor.run { self?.isGenerating ?? false }
-          if !stillGenerating {
-            _ = try? await client.cancel(taskID: request.id, peer: peer)
-            return
-          }
-        }
-      }
-      defer { cancellationWatcher.cancel() }
+      try Task.checkCancellation()
 
       for try await event in client.follow(taskID: request.id, peer: peer) {
-        if !isGenerating {
-          _ = try? await client.cancel(taskID: request.id, peer: peer)
+        try Task.checkCancellation()
+        guard generationPhase.turnID == turnID else {
           throw CancellationError()
         }
         applyHybridMeshEvent(event, assistantID: assistantID)
       }
 
+      try Task.checkCancellation()
       let snapshot = try await client.snapshot(taskID: request.id, peer: peer)
       switch snapshot.status {
       case .completed:
@@ -163,18 +173,24 @@ extension AppState {
       }
 
       try await persistHybridConversation()
-    } catch is CancellationError {
-      if let index = messages.firstIndex(where: { $0.id == assistantID }),
-        messages[index].content.isEmpty
-      {
-        messages[index].content = L10n.text(
-          de: "Abgebrochen.",
-          en: "Cancelled.",
-          fr: "Annulé."
-        )
-      }
-      try? await persistHybridConversation()
     } catch {
+      if Task.isCancelled || error is CancellationError {
+        if let activePeer {
+          _ = try? await client.cancel(taskID: request.id, peer: activePeer)
+        }
+        if let index = messages.firstIndex(where: { $0.id == assistantID }),
+          messages[index].content.isEmpty
+        {
+          messages[index].content = L10n.text(
+            de: "Abgebrochen.",
+            en: "Cancelled.",
+            fr: "Annulé."
+          )
+        }
+        try? await persistHybridConversation()
+        return
+      }
+
       if let index = messages.firstIndex(where: { $0.id == assistantID }),
         messages[index].content.isEmpty
       {
@@ -183,8 +199,6 @@ extension AppState {
       errorMessage = error.localizedDescription
       try? await persistHybridConversation()
     }
-
-    isGenerating = false
   }
 
   private func applyHybridMeshEvent(
