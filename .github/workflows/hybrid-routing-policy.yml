@@ -19,25 +19,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Parse Build 41 Swift sources
+      - name: Parse Build 42 Phase 2 Swift sources
         run: |
           swiftc -frontend -parse \
+            Sources/AgenTM5N/Domain/AgentOperatingLayerSettings.swift \
             Sources/AgenTM5N/Domain/HybridRoutingModels.swift \
+            Sources/AgenTM5N/Domain/ModelProfiles.swift \
             Sources/AgenTM5N/Services/HybridInferenceRouter.swift \
             Sources/AgenTM5N/Services/HybridRoutingController.swift \
+            Sources/AgenTM5N/Services/ModelProfileStore.swift \
+            Sources/AgenTM5N/Services/ModelManagerController.swift \
             Sources/AgenTM5N/App/AppStateHybridRouting.swift \
             Sources/AgenTM5N/App/AgenTM5NApp.swift \
             Sources/AgenTM5N/Views/HybridRouterView.swift \
             Sources/AgenTM5N/Views/ChatView.swift \
             Tests/AgenTM5NTests/HybridRoutingTests.swift
 
-      - name: Validate fail-safe routing boundary
+      - name: Validate fail-safe profile-aware routing boundary
         shell: python
         run: |
           import re
           from pathlib import Path
 
+          operating = Path("Sources/AgenTM5N/Domain/AgentOperatingLayerSettings.swift").read_text()
           models = Path("Sources/AgenTM5N/Domain/HybridRoutingModels.swift").read_text()
+          profiles = Path("Sources/AgenTM5N/Domain/ModelProfiles.swift").read_text()
           router = Path("Sources/AgenTM5N/Services/HybridInferenceRouter.swift").read_text()
           controller = Path("Sources/AgenTM5N/Services/HybridRoutingController.swift").read_text()
           execution = Path("Sources/AgenTM5N/App/AppStateHybridRouting.swift").read_text()
@@ -46,20 +52,39 @@ jobs:
           tests = Path("Tests/AgenTM5NTests/HybridRoutingTests.swift").read_text()
 
           required = {
+              "operating": [
+                  "AgentOperatingLayerExecutionContext",
+                  "@TaskLocal public static var configurationOverride",
+                  "AgentOperatingLayerExecutionContext.configurationOverride",
+              ],
               "models": [
                   "case manual",
                   "case adaptive",
                   "case activeProvider",
+                  "case modelProfile",
                   "case appleOnDevice",
                   "case meshPeer",
                   "case blocked",
+                  "profileID: UUID?",
+                  "profileRuntime: ModelProfileRuntime?",
                   "mode: HybridRoutingMode = .manual",
                   "allowMesh: Bool = false",
                   "privacyLockEnabled: Bool = true",
               ],
+              "profiles": [
+                  "ModelProfileCatalog",
+                  "routingCandidates",
+                  "apiKeySecretID",
+                  "if runtime.isLocal { apiKeySecretID = nil }",
+              ],
               "router": [
                   "routingConfiguration.mode == .adaptive",
                   "routingConfiguration.privacyLockEnabled, personal",
+                  "modelProfiles: [ModelProfile] = []",
+                  "ModelProfileCatalog.routingCandidates",
+                  "profile.runtime == .ollamaCloud, profile.apiKeySecretID == nil",
+                  "hasImageInput, !profile.capabilities.contains(.imageInput)",
+                  "needsToolCalling, !profile.capabilities.contains(.toolCalling)",
                   "routingConfiguration.allowMesh",
                   "requireExplicitMeshIntent",
                   "remoteCapabilitiesSupported",
@@ -71,6 +96,9 @@ jobs:
                   ".workflows",
               ],
               "controller": [
+                  "ModelProfileStore",
+                  "profiles = document.profiles",
+                  "modelProfiles: profiles",
                   "HybridRoutingStore.loadConfiguration",
                   "HybridRoutingStore.saveConfiguration",
                   "HybridRoutingStore.saveDecision",
@@ -79,6 +107,9 @@ jobs:
                   "sendMessageHybridAware",
                   "case .activeProvider:",
                   "sendMessage()",
+                  "case .modelProfile:",
+                  "sendViaTemporaryModelProfile",
+                  "AgentOperatingLayerExecutionContext.$configurationOverride.withValue",
                   "case .appleOnDevice:",
                   "sendViaTemporaryAppleRoute",
                   "case .meshPeer:",
@@ -95,24 +126,32 @@ jobs:
               ],
               "app": [
                   "await HybridRoutingController.shared.bootstrap()",
+                  "await ModelManagerController.shared.bootstrap()",
                   'Window("Hybrid Router", id: "hybrid-router")',
+                  'Window("Model Manager", id: "model-manager")',
               ],
               "chat": [
                   "appState.sendMessageHybridAware()",
               ],
               "tests": [
                   "testManualModeAlwaysKeepsActiveProvider",
-                  "testPrivacyLockRoutesPersonalCloudPromptToAppleWhenAvailable",
-                  "testPrivacyLockFailsClosedWhenCloudIsActiveAndNoLocalAlternativeExists",
+                  "testAdaptiveSelectsHighestPriorityCompatibleLocalProfile",
+                  "testEquivalentActiveProfileDoesNotCreateTemporaryRoute",
+                  "testExplicitCloudIntentSelectsUsableCloudProfile",
+                  "testCloudProfileWithoutVaultReferenceIsNeverAutomaticCandidate",
+                  "testImageInputRequiresProfileImageCapability",
+                  "testTaskLocalOperatingOverrideChangesRuntimeWithoutPersistingThroughProfileSchema",
+                  "testPrivacyLockPrefersCompatibleLocalProfileOverHigherPriorityCloudProfile",
                   "testExplicitMeshIntentSelectsTrustedCapablePeer",
-                  "testMeshDisabledNeverDelegatesEvenWithExplicitIntent",
                   "testUnsupportedRemoteCapabilityFailsBackToActiveProvider",
                   "testSavedDecisionMetadataDoesNotContainPromptContents",
               ],
           }
 
           texts = {
+              "operating": operating,
               "models": models,
+              "profiles": profiles,
               "router": router,
               "controller": controller,
               "execution": execution,
@@ -124,13 +163,13 @@ jobs:
           for key, needles in required.items():
               for needle in needles:
                   if needle not in texts[key]:
-                      failures.append(f"{key}: Build 41 invariant missing {needle!r}")
+                      failures.append(f"{key}: Build 42 Phase 2 invariant missing {needle!r}")
 
           if "public let prompt" in models or "var prompt:" in models:
               failures.append("HybridRouteDecision must not persist prompt contents")
 
           privacy_index = router.find("routingConfiguration.privacyLockEnabled, personal")
-          mesh_index = router.find("routingConfiguration.allowMesh")
+          mesh_index = router.find("routingConfiguration.allowMesh", privacy_index + 1)
           if privacy_index < 0 or mesh_index < 0 or privacy_index > mesh_index:
               failures.append("Privacy Lock must be evaluated before Mesh routing")
 
@@ -154,11 +193,14 @@ jobs:
               "http_request",
               "edge_control",
               "secret_list",
+              "AgentOperatingLayerStore.save",
+              "ModelManagerController.shared.activate",
+              "modelProfileStore.setActive",
           ]
           for needle in forbidden_execution:
               if needle in execution:
                   failures.append(
-                      f"Hybrid chat execution may not create a parallel tool/security path: {needle}"
+                      f"Hybrid chat execution may not create/persist a parallel model/tool/security path: {needle}"
                   )
 
           if "appState.sendMessage()" in chat:
@@ -169,7 +211,8 @@ jobs:
           if failures:
               raise SystemExit("\n".join(failures))
 
-      - name: Build 41 phase 2 boundary note
+      - name: Build 42 Phase 2 boundary note
         run: |
-          echo "Static Build 41 Hybrid Router decision + chat execution policy passed."
-          echo "Manual remains backward-compatible. Adaptive Apple/Mesh execution still requires target-Mac Swift/Xcode/runtime validation."
+          echo "Static Build 42 profile-aware Hybrid Router policy passed."
+          echo "Per-turn model profile switching remains ephemeral; persistent settings, Vault and central tool authorization are not bypassed."
+          echo "Target M5 runtime validation remains mandatory before promoting this phase."
