@@ -6,6 +6,7 @@ public enum ANEMLLPersistentRuntimeError: LocalizedError {
   case protocolFailure(String)
   case processStopped(String)
   case inputWriteFailed(String)
+  case cleanupUnconfirmed
 
   public var errorDescription: String? {
     switch self {
@@ -32,6 +33,12 @@ public enum ANEMLLPersistentRuntimeError: LocalizedError {
         de: "Die Anfrage konnte nicht an ANEMLL gesendet werden: \(detail)",
         en: "The request could not be sent to ANEMLL: \(detail)",
         fr: "La requête n’a pas pu être envoyée à ANEMLL : \(detail)"
+      )
+    case .cleanupUnconfirmed:
+      return L10n.text(
+        de: "Der ANEMLL-Hilfsprozess hat seinen Exit auch nach SIGKILL nicht bestätigt. AgenTM5N blockiert weitere schwere lokale Inferenz, bis die Runtime sicher bereinigt wurde.",
+        en: "The ANEMLL helper did not confirm exit even after SIGKILL. AgenTM5N is blocking further heavy local inference until the runtime is safely cleaned up.",
+        fr: "Le processus auxiliaire ANEMLL n’a pas confirmé son arrêt même après SIGKILL. AgenTM5N bloque toute nouvelle inférence locale lourde jusqu’à ce que le runtime soit nettoyé en toute sécurité."
       )
     }
   }
@@ -286,6 +293,7 @@ public actor ANEMLLPersistentRuntimeService {
   private var startupOutput = ""
   private var conversationTurns = 0
   private var modelLoadReported = false
+  private var cleanupFailed = false
 
   // Swift actors are reentrant across awaits. The helper owns exactly one
   // stdin/stdout conversation, so we explicitly serialize complete turns.
@@ -349,16 +357,18 @@ public actor ANEMLLPersistentRuntimeService {
     )
   }
 
-  public func resetConversation() async {
+  @discardableResult
+  public func resetConversation() async -> Bool {
     await acquireTurnPermit()
     defer { releaseTurnPermit() }
-    await shutdownInternal()
+    return await shutdownInternal()
   }
 
-  public func shutdown() async {
+  @discardableResult
+  public func shutdown() async -> Bool {
     await acquireTurnPermit()
     defer { releaseTurnPermit() }
-    await shutdownInternal()
+    return await shutdownInternal()
   }
 
   /// Best-effort immediate stop request that intentionally bypasses the turn
@@ -370,6 +380,10 @@ public actor ANEMLLPersistentRuntimeService {
 
   public func isRunning() -> Bool {
     process?.isRunning == true
+  }
+
+  public func requiresRecovery() -> Bool {
+    cleanupFailed
   }
 
   public func activeTurns() -> Int {
@@ -392,6 +406,9 @@ public actor ANEMLLPersistentRuntimeService {
     await acquireTurnPermit()
     defer { releaseTurnPermit() }
     try Task.checkCancellation()
+    guard !cleanupFailed else {
+      throw ANEMLLPersistentRuntimeError.cleanupUnconfirmed
+    }
 
     let normalizedPrompt = try ANEMLLInteractiveProtocol.normalizePrompt(prompt)
     let helperPath = ANEMLLRuntimeStore.expanded(runtimeConfiguration.helperPath)
@@ -424,14 +441,20 @@ public actor ANEMLLPersistentRuntimeService {
       isFreshConversation: isFreshConversation,
       isToolContinuation: isToolContinuation
     ) {
-      await shutdownInternal()
+      let stopped = await shutdownInternal()
+      guard stopped else {
+        throw ANEMLLPersistentRuntimeError.cleanupUnconfirmed
+      }
     }
 
     if shouldRestart(
       requestedSignature: requestedSignature,
       requestedUserTurnCount: userTurnCount
     ) {
-      await shutdownInternal()
+      let stopped = await shutdownInternal()
+      guard stopped else {
+        throw ANEMLLPersistentRuntimeError.cleanupUnconfirmed
+      }
     }
 
     if process?.isRunning != true {
@@ -453,7 +476,7 @@ public actor ANEMLLPersistentRuntimeService {
     do {
       try inputPipe.fileHandleForWriting.write(contentsOf: payload)
     } catch {
-      await shutdownInternal()
+      _ = await shutdownInternal()
       throw ANEMLLPersistentRuntimeError.inputWriteFailed(error.localizedDescription)
     }
 
@@ -467,14 +490,14 @@ public actor ANEMLLPersistentRuntimeService {
         onAssistantDelta: onAssistantDelta
       )
     } catch {
-      await shutdownInternal()
+      _ = await shutdownInternal()
       throw error
     }
     try Task.checkCancellation()
 
     guard process.isRunning else {
       let termination = "Exit \(process.terminationStatus)"
-      await shutdownInternal()
+      _ = await shutdownInternal()
       throw ANEMLLPersistentRuntimeError.processStopped(termination)
     }
 
@@ -545,6 +568,10 @@ public actor ANEMLLPersistentRuntimeService {
     descriptor: ANEMLLModelBundleDescriptor,
     timeoutSeconds: Int
   ) async throws {
+    guard !cleanupFailed else {
+      throw ANEMLLPersistentRuntimeError.cleanupUnconfirmed
+    }
+
     let process = Process()
     let inputPipe = Pipe()
     let outputPipe = Pipe()
@@ -583,13 +610,13 @@ public actor ANEMLLPersistentRuntimeService {
         onAssistantDelta: nil
       )
     } catch {
-      await shutdownInternal()
+      _ = await shutdownInternal()
       throw error
     }
 
     guard process.isRunning else {
       let output = ANEMLLInteractiveProtocol.stripANSI(startupOutput)
-      await shutdownInternal()
+      _ = await shutdownInternal()
       throw ANEMLLPersistentRuntimeError.processStopped(output)
     }
   }
@@ -696,13 +723,22 @@ public actor ANEMLLPersistentRuntimeService {
     }
   }
 
-  private func shutdownInternal() async {
+  @discardableResult
+  private func shutdownInternal() async -> Bool {
     let box = processBox
     try? inputPipe?.fileHandleForWriting.close()
 
     let stopped = await Task.detached(priority: .userInitiated) {
       box.terminateAndWait()
     }.value
+
+    guard stopped else {
+      cleanupFailed = true
+      AppLogger.app.error(
+        "ANEMLL helper did not confirm process exit after SIGKILL escalation; runtime remains fail-closed."
+      )
+      return false
+    }
 
     try? outputPipe?.fileHandleForReading.close()
     box.clear()
@@ -714,11 +750,7 @@ public actor ANEMLLPersistentRuntimeService {
     startupOutput = ""
     conversationTurns = 0
     modelLoadReported = false
-
-    if !stopped {
-      AppLogger.app.error(
-        "ANEMLL helper did not confirm process exit after SIGKILL escalation."
-      )
-    }
+    cleanupFailed = false
+    return true
   }
 }
