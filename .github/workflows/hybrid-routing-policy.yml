@@ -1,0 +1,115 @@
+name: Hybrid routing policy
+
+on:
+  push:
+    branches:
+      - agent/v1.3.0-neural-control-plane
+  pull_request:
+    branches:
+      - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
+
+permissions:
+  contents: read
+
+jobs:
+  hybrid-routing-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse Build 41 Swift sources
+        run: |
+          swiftc -frontend -parse \
+            Sources/AgenTM5N/Domain/HybridRoutingModels.swift \
+            Sources/AgenTM5N/Services/HybridInferenceRouter.swift \
+            Sources/AgenTM5N/Services/HybridRoutingController.swift \
+            Sources/AgenTM5N/Views/HybridRouterView.swift \
+            Tests/AgenTM5NTests/HybridRoutingTests.swift
+
+      - name: Validate fail-safe routing boundary
+        shell: python
+        run: |
+          from pathlib import Path
+
+          models = Path("Sources/AgenTM5N/Domain/HybridRoutingModels.swift").read_text()
+          router = Path("Sources/AgenTM5N/Services/HybridInferenceRouter.swift").read_text()
+          controller = Path("Sources/AgenTM5N/Services/HybridRoutingController.swift").read_text()
+          tests = Path("Tests/AgenTM5NTests/HybridRoutingTests.swift").read_text()
+
+          required = {
+              "models": [
+                  "case manual",
+                  "case adaptive",
+                  "case activeProvider",
+                  "case appleOnDevice",
+                  "case meshPeer",
+                  "case blocked",
+                  "mode: HybridRoutingMode = .manual",
+                  "allowMesh: Bool = false",
+                  "privacyLockEnabled: Bool = true",
+              ],
+              "router": [
+                  "routingConfiguration.mode == .adaptive",
+                  "routingConfiguration.privacyLockEnabled, personal",
+                  "routingConfiguration.allowMesh",
+                  "requireExplicitMeshIntent",
+                  "remoteCapabilitiesSupported",
+                  ".secrets",
+                  ".http",
+                  ".ssh",
+                  ".edge",
+                  ".agents",
+                  ".workflows",
+                  "HybridRoutingStore.saveDecision",
+              ],
+              "controller": [
+                  "HybridRoutingStore.loadConfiguration",
+                  "HybridRoutingStore.saveConfiguration",
+                  "HybridRoutingStore.saveDecision",
+              ],
+              "tests": [
+                  "testManualModeAlwaysKeepsActiveProvider",
+                  "testPrivacyLockRoutesPersonalCloudPromptToAppleWhenAvailable",
+                  "testPrivacyLockFailsClosedWhenCloudIsActiveAndNoLocalAlternativeExists",
+                  "testExplicitMeshIntentSelectsTrustedCapablePeer",
+                  "testMeshDisabledNeverDelegatesEvenWithExplicitIntent",
+                  "testUnsupportedRemoteCapabilityFailsBackToActiveProvider",
+                  "testSavedDecisionMetadataDoesNotContainPromptContents",
+              ],
+          }
+
+          texts = {"models": models, "router": router, "controller": controller, "tests": tests}
+          failures = []
+          for key, needles in required.items():
+              for needle in needles:
+                  if needle not in texts[key]:
+                      failures.append(f"{key}: Build 41 invariant missing {needle!r}")
+
+          if "public let prompt" in models or "var prompt:" in models:
+              failures.append("HybridRouteDecision must not persist prompt contents")
+
+          privacy_index = router.find("routingConfiguration.privacyLockEnabled, personal")
+          mesh_index = router.find("routingConfiguration.allowMesh")
+          if privacy_index < 0 or mesh_index < 0 or privacy_index > mesh_index:
+              failures.append("Privacy Lock must be evaluated before Mesh routing")
+
+          forbidden_router_mutations = [
+              "providerKind =",
+              "baseURL =",
+              "apiKeySecretID =",
+              "SecureSecretBroker",
+              "VaultStore",
+          ]
+          for needle in forbidden_router_mutations:
+              if needle in router:
+                  failures.append(f"Hybrid router decision plane must not mutate providers/secrets directly: {needle}")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Build 41 boundary note
+        run: |
+          echo "Static Build 41 Hybrid Router decision-plane policy passed."
+          echo "Manual remains default; normal-chat execution wiring requires the target-Mac Swift/Xcode gate before activation."
