@@ -55,6 +55,16 @@ public actor AgentMeshTaskCoordinator {
     from peer: AgentMeshPeerRecord
   ) throws -> AgentMeshTaskSnapshot {
     guard peer.status == .trusted else { throw AgentMeshSecurityError.peerNotTrusted }
+
+    // Network retries are expected. A repeated task UUID from the same peer is
+    // an idempotent read of the existing state and must never execute twice.
+    if let existing = snapshots[request.id] {
+      guard existing.peerID == peer.id else {
+        throw AgentMeshTaskCoordinatorError.peerMismatch
+      }
+      return existing
+    }
+
     let cleanPrompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !cleanPrompt.isEmpty, cleanPrompt.count <= AgentMeshProtocol.maximumPromptCharacters else {
       throw AgentMeshTaskCoordinatorError.invalidPrompt
