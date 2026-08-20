@@ -133,6 +133,32 @@ final class ANEMLLToolProtocolTests: XCTestCase {
     XCTAssertEqual(request.userTurnCount, 1)
   }
 
+  func testToolSelectionRespectsCapabilityScopeAndFourToolCap() {
+    let tools = [
+      definition(name: "read_file", properties: ["path"]),
+      definition(name: "list_directory", properties: ["path"]),
+      definition(name: "glob_files", properties: ["pattern"]),
+      definition(name: "search_text", properties: ["query"]),
+      definition(name: "write_file", properties: ["path", "content"]),
+      definition(name: "calendar_list_events", properties: []),
+    ]
+    let configuration = AgentOperatingLayerConfiguration(
+      enabledCapabilities: [.workspace]
+    )
+    let selected = ANEMLLToolProtocol.selectTools(
+      tools,
+      messages: [ProviderMessage(role: .user, content: "Lies die README file")],
+      operatingConfiguration: configuration
+    )
+
+    XCTAssertLessThanOrEqual(selected.count, 4)
+    XCTAssertTrue(selected.contains { $0.function.name == "read_file" })
+    XCTAssertFalse(selected.contains { $0.function.name == "calendar_list_events" })
+    XCTAssertTrue(selected.allSatisfy {
+      AgentToolRegistry.entry(named: $0.function.name)?.capability == .workspace
+    })
+  }
+
   func testToolEnvelopeFilterSuppressesChunkedEnvelope() {
     let filter = ANEMLLToolEnvelopeFilter()
     let first = filter.consume("Vorher <agentm5n_tool_")
