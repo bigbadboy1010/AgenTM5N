@@ -29,11 +29,11 @@ struct HybridRouterView: View {
         Image(systemName: "arrow.triangle.branch")
           .font(.title2)
           .foregroundStyle(.tint)
-        Text("AgenTM5N Hybrid Neural + Mesh Router · Build 41")
+        Text("AgenTM5N Hybrid Neural + Mesh Router · Build 42 Phase 2")
           .font(.title2.bold())
       }
       Text(
-        "Der Router entscheidet fail-safe zwischen dem aktuell aktiven Provider/Runtime-Pfad, Apple On-Device und explizit freigegebenen Agent-Mesh-Peers. Manual bleibt der Default. Persönliche macOS-Daten werden bei aktivem Privacy Lock nicht automatisch an Remote-Ziele geroutet."
+        "Adaptive Routing kann jetzt pro Turn zwischen validierten Model-Manager-Profilen, Apple On-Device und explizit freigegebenen Agent-Mesh-Peers wählen. Profilwechsel sind temporär: gespeicherte Provider-/Runtime-Einstellungen werden nicht überschrieben. Privacy Lock wird vor jeder Remote-Route ausgewertet."
       )
       .font(.callout)
       .foregroundStyle(.secondary)
@@ -79,7 +79,7 @@ struct HybridRouterView: View {
 
         if controller.configuration.mode == .manual {
           Text(
-            "Manual verändert den normalen Chat nicht. Adaptive Routing wird erst nach dem Build-41 Runtime-Gate in den normalen Chat-Pfad eingebunden."
+            "Manual verändert den normalen Chat nicht. In Adaptive werden nur aktivierte, kompatible Model-Manager-Profile berücksichtigt; Cloud-Profile benötigen eine bestehende Vault-Secret-Referenz."
           )
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -98,6 +98,10 @@ struct HybridRouterView: View {
             Text(activeProviderDescription)
           }
           GridRow {
+            Text("Model-Profile").foregroundStyle(.secondary)
+            Text("\(controller.routingProfiles.count) aktiviert")
+          }
+          GridRow {
             Text("Apple Foundation Models").foregroundStyle(.secondary)
             Text(controller.appleAvailability)
           }
@@ -107,8 +111,43 @@ struct HybridRouterView: View {
           }
         }
 
+        if !controller.routingProfiles.isEmpty {
+          Divider()
+          Text("Routing-Reihenfolge")
+            .font(.headline)
+          ForEach(controller.routingProfiles) { profile in
+            HStack(alignment: .top, spacing: 10) {
+              VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                  Text(profile.name).font(.headline)
+                  Text(profile.runtime.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                Text(
+                  "Priority \(profile.priority) · ctx \(profile.contextWindow) · "
+                    + profile.capabilities.map(\.rawValue).sorted().joined(separator: ", ")
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              }
+              Spacer()
+              if profile.id == controller.activeProfileID {
+                Text("ACTIVE")
+                  .font(.caption.bold())
+                  .padding(.horizontal, 7)
+                  .padding(.vertical, 3)
+                  .background(.thinMaterial, in: Capsule())
+              }
+            }
+            .padding(.vertical, 3)
+          }
+        }
+
         if !controller.trustedPeers.isEmpty {
           Divider()
+          Text("Mesh Peers")
+            .font(.headline)
           ForEach(controller.trustedPeers) { peer in
             VStack(alignment: .leading, spacing: 3) {
               HStack {
@@ -158,7 +197,7 @@ struct HybridRouterView: View {
         .disabled(controller.previewPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
         Text(
-          "Die Vorschau speichert nur Routing-Metadaten und die Entscheidung, niemals den Prompt-Inhalt."
+          "Die Vorschau speichert nur Routing-Metadaten und die Entscheidung, niemals den Prompt-Inhalt oder Secret-Werte."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -198,6 +237,12 @@ struct HybridRouterView: View {
             GridRow {
               Text("Remote").foregroundStyle(.secondary)
               Text(decision.isRemote ? "ja" : "nein")
+            }
+            if let runtime = decision.profileRuntime {
+              GridRow {
+                Text("Profil-Runtime").foregroundStyle(.secondary)
+                Text(runtime.displayName)
+              }
             }
           }
 
