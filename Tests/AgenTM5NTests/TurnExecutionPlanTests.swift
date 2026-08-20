@@ -90,4 +90,106 @@ final class TurnExecutionPlanTests: XCTestCase {
       AutomaticInferenceBudget(timeoutSeconds: 60, maximumToolRounds: 1)
     )
   }
+
+  func testAutomaticProfilePlanIsImmutableAndAppliesAdmissionBudget() throws {
+    var configuration = AppConfiguration.default
+    configuration.providerKind = .ollamaCloud
+    configuration.baseURL = "https://ollama.example.invalid"
+    configuration.model = "cloud-before-route"
+    configuration.maxToolIterations = 99
+
+    var operatingConfiguration = AgentOperatingLayerConfiguration.default
+    operatingConfiguration.localInferenceRuntime = .ollama
+    operatingConfiguration.numContext = 32_768
+    operatingConfiguration.requestTimeoutSeconds = 600
+
+    let profile = ModelProfile(
+      name: "Safe ANEMLL",
+      runtime: .anemll,
+      modelIdentifier: "/models/qwen3-anemll",
+      contextWindow: 512,
+      estimatedMemoryMB: 4_096
+    )
+    let snapshot = AutomaticResourceSnapshot(
+      thermalState: .nominal,
+      physicalMemoryMB: 16_384,
+      availableMemoryMB: 10_000,
+      swapUsedMB: 0
+    )
+
+    let originalConfiguration = configuration
+    let originalOperatingConfiguration = operatingConfiguration
+    let plan = try TurnExecutionPlan.automaticModelProfile(
+      configuration: configuration,
+      operatingConfiguration: operatingConfiguration,
+      profile: profile,
+      resourceSnapshot: snapshot
+    )
+
+    configuration.model = "changed-after-plan"
+    operatingConfiguration.localInferenceRuntime = .mlxServer
+
+    XCTAssertEqual(originalConfiguration.model, "cloud-before-route")
+    XCTAssertEqual(originalOperatingConfiguration.localInferenceRuntime, .ollama)
+    XCTAssertEqual(plan.origin, .automaticModelProfile)
+    XCTAssertEqual(plan.configuration.providerKind, .ollamaLocal)
+    XCTAssertEqual(plan.configuration.model, "/models/qwen3-anemll")
+    XCTAssertEqual(plan.configuration.baseURL, LocalInferenceRuntime.anemll.defaultBaseURL)
+    XCTAssertNil(plan.configuration.apiKeySecretID)
+    XCTAssertEqual(plan.configuration.maxToolIterations, 1)
+    XCTAssertEqual(plan.operatingConfiguration.localInferenceRuntime, .anemll)
+    XCTAssertEqual(plan.operatingConfiguration.numContext, 512)
+    XCTAssertEqual(plan.operatingConfiguration.requestTimeoutSeconds, 45)
+    XCTAssertEqual(plan.heavyRuntime, .anemll)
+    XCTAssertEqual(
+      plan.automaticBudget,
+      AutomaticInferenceBudget(timeoutSeconds: 45, maximumToolRounds: 1)
+    )
+  }
+
+  func testAutomaticLocalProfilePlanFailsClosedWithoutResourceSnapshot() {
+    let profile = ModelProfile(
+      name: "Unsafe unknown state",
+      runtime: .mlx,
+      modelIdentifier: "mlx-model",
+      estimatedMemoryMB: 4_096
+    )
+
+    XCTAssertThrowsError(
+      try TurnExecutionPlan.automaticModelProfile(
+        configuration: .default,
+        operatingConfiguration: .default,
+        profile: profile,
+        resourceSnapshot: nil
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? AutomaticInferenceAdmissionError,
+        .monitoringUnavailable("resource snapshot")
+      )
+    }
+  }
+
+  func testAutomaticCloudProfileDoesNotRequireLocalAdmissionSnapshot() throws {
+    let profile = ModelProfile(
+      name: "Cloud fallback",
+      runtime: .ollamaCloud,
+      modelIdentifier: "cloud-model",
+      baseURL: "https://ollama.example.invalid",
+      contextWindow: 16_384
+    )
+
+    let plan = try TurnExecutionPlan.automaticModelProfile(
+      configuration: .default,
+      operatingConfiguration: .default,
+      profile: profile,
+      resourceSnapshot: nil
+    )
+
+    XCTAssertEqual(plan.configuration.providerKind, .ollamaCloud)
+    XCTAssertEqual(plan.configuration.model, "cloud-model")
+    XCTAssertEqual(plan.configuration.baseURL, "https://ollama.example.invalid")
+    XCTAssertNil(plan.heavyRuntime)
+    XCTAssertNotNil(plan.automaticBudget)
+  }
 }
