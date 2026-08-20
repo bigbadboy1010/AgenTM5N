@@ -247,17 +247,22 @@ public enum ANEMLLToolProtocol {
     let name = tool.function.name.lowercased()
     let description = tool.function.description.lowercased()
     let affinity: [([String], [String])] = [
-      (["kalender", "calendar", "termin", "event"], ["calendar"]),
-      (["mail", "email", "e-mail"], ["mail"]),
-      (["kontakt", "contact"], ["contact"]),
-      (["reminder", "erinnerung"], ["reminder"]),
-      (["ssh", "server", "remote", "host"], ["ssh"]),
-      (["docker", "container", "compose"], ["docker"]),
-      (["git", "commit", "branch", "diff"], ["git"]),
-      (["datei", "file", "ordner", "folder"], ["file", "read", "list", "glob", "search"]),
-      (["terminal", "shell", "command", "befehl"], ["terminal", "command", "shell"]),
-      (["clipboard", "zwischenablage"], ["clipboard"]),
-      (["shortcut", "kurzbefehl"], ["shortcut"]),
+      (["kalender", "calendar", "termin", "event"], ["calendar_"]),
+      (["mail", "email", "e-mail"], ["mail_"]),
+      (["kontakt", "contact"], ["contacts_"]),
+      (["reminder", "erinnerung"], ["reminders_"]),
+      (["ssh", "server", "remote", "host"], ["ssh_"]),
+      (["docker", "container", "compose"], ["docker_"]),
+      (["git", "commit", "branch", "diff", "repository", "repo"], ["git_"]),
+      (["schreib", "erstell", "ändere", "aendere", "write", "create", "modify", "patch"], ["write_file", "apply_patch"]),
+      (["datei", "file", "ordner", "folder", "verzeichnis", "directory"], ["read_file", "list_directory", "glob_files", "search_text", "write_file", "apply_patch"]),
+      (["systeminfo", "system info", "chip", "arbeitsspeicher", "ram"], ["system_info"]),
+      (["prozess", "process", "cpu"], ["process_list"]),
+      (["disk", "platte", "speicherplatz"], ["disk_info"]),
+      (["network", "netzwerk"], ["network_info"]),
+      (["terminal", "shell", "command", "befehl"], ["run_command", "terminal_open"]),
+      (["clipboard", "zwischenablage"], ["clipboard_"]),
+      (["shortcut", "kurzbefehl"], ["shortcuts_"]),
     ]
 
     for (keywords, fragments) in affinity
