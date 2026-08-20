@@ -16,13 +16,22 @@ struct AgenTM5NApp: App {
     .defaultSize(width: 1_280, height: 820)
     .commands {
       ANEMLLRuntimeCommands()
+      AgentMeshCommands()
     }
 
     Window("Qwen3 ANE Runtime Lab", id: "anemll-qwen3-runtime") {
       ANEMLLQwenLabView()
+        .environmentObject(appState)
         .frame(minWidth: 780, minHeight: 620)
     }
     .defaultSize(width: 980, height: 820)
+
+    Window("Agent Mesh", id: "agent-mesh") {
+      AgentMeshView()
+        .environmentObject(appState)
+        .frame(minWidth: 840, minHeight: 640)
+    }
+    .defaultSize(width: 1_040, height: 840)
 
     Settings {
       SettingsView()
@@ -42,6 +51,19 @@ private struct ANEMLLRuntimeCommands: Commands {
         openWindow(id: "anemll-qwen3-runtime")
       }
       .keyboardShortcut("q", modifiers: [.command, .option])
+    }
+  }
+}
+
+private struct AgentMeshCommands: Commands {
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some Commands {
+    CommandMenu("Network") {
+      Button("Agent Mesh Control Center") {
+        openWindow(id: "agent-mesh")
+      }
+      .keyboardShortcut("m", modifiers: [.command, .option])
     }
   }
 }
