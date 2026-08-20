@@ -159,6 +159,32 @@ final class ANEMLLToolProtocolTests: XCTestCase {
     })
   }
 
+  func testCreateFileIntentPrioritizesWriteFile() {
+    let tools = [
+      definition(name: "read_file", properties: ["path"]),
+      definition(name: "list_directory", properties: ["path"]),
+      definition(name: "glob_files", properties: ["pattern"]),
+      definition(name: "search_text", properties: ["query"]),
+      definition(name: "write_file", properties: ["path", "content"]),
+      definition(name: "apply_patch", properties: ["patch"]),
+    ]
+    let selected = ANEMLLToolProtocol.selectTools(
+      tools,
+      messages: [
+        ProviderMessage(
+          role: .user,
+          content: "Erstelle die Datei build39-tool-test.txt mit dem Inhalt OK"
+        )
+      ],
+      operatingConfiguration: AgentOperatingLayerConfiguration(
+        enabledCapabilities: [.workspace]
+      )
+    )
+
+    XCTAssertEqual(selected.first?.function.name, "write_file")
+    XCTAssertTrue(selected.contains { $0.function.name == "write_file" })
+  }
+
   func testToolEnvelopeFilterSuppressesChunkedEnvelope() {
     let filter = ANEMLLToolEnvelopeFilter()
     let first = filter.consume("Vorher <agentm5n_tool_")
