@@ -260,6 +260,11 @@ public enum AgentOperatingLayerStore {
   }
 
   public static func load() -> AgentOperatingLayerConfiguration {
+    if var override = AgentOperatingLayerExecutionContext.configurationOverride {
+      override.normalize()
+      return override
+    }
+
     do {
       guard FileManager.default.fileExists(atPath: fileURL.path) else {
         return .default
