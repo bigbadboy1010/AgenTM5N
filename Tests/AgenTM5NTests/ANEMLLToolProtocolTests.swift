@@ -32,6 +32,19 @@ final class ANEMLLToolProtocolTests: XCTestCase {
     }
   }
 
+  func testRejectsArgumentsOutsideAdvertisedSchema() {
+    let tool = definition(name: "read_file", properties: ["path"])
+    let response = """
+    <agentm5n_tool_call>{"name":"read_file","arguments":{"path":"README.md","command":"whoami"}}</agentm5n_tool_call>
+    """
+
+    XCTAssertThrowsError(
+      try ANEMLLToolProtocol.parseToolCalls(from: response, allowedTools: [tool])
+    ) { error in
+      XCTAssertEqual(error as? ANEMLLToolProtocolError, .malformedEnvelope)
+    }
+  }
+
   func testRejectsMultipleToolCallsInOneModelRound() {
     let tool = definition(name: "read_file", properties: ["path"])
     let response = """
@@ -91,6 +104,21 @@ final class ANEMLLToolProtocolTests: XCTestCase {
     XCTAssertTrue(request.prompt.contains("AgenTM5N README result"))
   }
 
+  func testToolResultIsBoundedBeforeReturningToSmallContextModel() throws {
+    let hugeOutput = String(repeating: "x", count: 10_000)
+    let request = try ANEMLLToolProtocol.makeTransportRequest(
+      messages: [
+        ProviderMessage(role: .user, content: "Lies Datei"),
+        ProviderMessage(role: .assistant, content: ""),
+        ProviderMessage(role: .tool, content: hugeOutput, toolName: "read_file"),
+      ],
+      tools: [definition(name: "read_file", properties: ["path"])]
+    )
+
+    XCTAssertLessThan(request.prompt.count, 2_000)
+    XCTAssertFalse(request.prompt.contains(String(repeating: "x", count: 2_000)))
+  }
+
   func testFirstUserTurnIsMarkedAsFreshConversation() throws {
     let request = try ANEMLLToolProtocol.makeTransportRequest(
       messages: [
@@ -129,7 +157,7 @@ final class ANEMLLToolProtocolTests: XCTestCase {
     XCTAssertTrue(prefix.contains("git_status()"))
     XCTAssertTrue(prefix.contains(ANEMLLToolProtocol.callPrefix))
     XCTAssertTrue(prefix.contains(ANEMLLToolProtocol.callSuffix))
-    XCTAssertTrue(prefix.contains("at most one tool per round"))
+    XCTAssertTrue(prefix.contains("One tool per round"))
   }
 
   private func definition(
