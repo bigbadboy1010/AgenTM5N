@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum ANEMLLPersistentRuntimeError: LocalizedError {
@@ -227,12 +228,49 @@ private final class ANEMLLPersistentProcessBox: @unchecked Sendable {
   }
 
   func terminate() {
-    lock.lock()
-    let current = process
-    lock.unlock()
+    let current = snapshot()
     if current?.isRunning == true {
       current?.terminate()
     }
+  }
+
+  /// Blocks only on a detached worker thread. SIGTERM gets a short grace period;
+  /// a stalled helper is then escalated to SIGKILL so cancellation cannot leave
+  /// model memory resident indefinitely.
+  func terminateAndWait(
+    graceSeconds: TimeInterval = 2,
+    killWaitSeconds: TimeInterval = 1
+  ) -> Bool {
+    guard let current = snapshot() else { return true }
+
+    if current.isRunning {
+      current.terminate()
+    }
+    if waitUntilStopped(current, timeoutSeconds: graceSeconds) {
+      return true
+    }
+
+    if current.isRunning {
+      _ = Darwin.kill(current.processIdentifier, SIGKILL)
+    }
+    return waitUntilStopped(current, timeoutSeconds: killWaitSeconds)
+  }
+
+  private func snapshot() -> Process? {
+    lock.lock()
+    defer { lock.unlock() }
+    return process
+  }
+
+  private func waitUntilStopped(
+    _ process: Process,
+    timeoutSeconds: TimeInterval
+  ) -> Bool {
+    let deadline = Date().addingTimeInterval(max(0, timeoutSeconds))
+    while process.isRunning, Date() < deadline {
+      Thread.sleep(forTimeInterval: 0.05)
+    }
+    return !process.isRunning
   }
 }
 
@@ -314,13 +352,20 @@ public actor ANEMLLPersistentRuntimeService {
   public func resetConversation() async {
     await acquireTurnPermit()
     defer { releaseTurnPermit() }
-    shutdownInternal()
+    await shutdownInternal()
   }
 
   public func shutdown() async {
     await acquireTurnPermit()
     defer { releaseTurnPermit() }
-    shutdownInternal()
+    await shutdownInternal()
+  }
+
+  /// Best-effort immediate stop request that intentionally bypasses the turn
+  /// permit. The actor can service this while `completeInternal` is suspended in
+  /// its pipe reader; final cleanup still happens through `shutdownInternal`.
+  public func requestTermination() {
+    processBox.terminate()
   }
 
   public func isRunning() -> Bool {
@@ -379,14 +424,14 @@ public actor ANEMLLPersistentRuntimeService {
       isFreshConversation: isFreshConversation,
       isToolContinuation: isToolContinuation
     ) {
-      shutdownInternal()
+      await shutdownInternal()
     }
 
     if shouldRestart(
       requestedSignature: requestedSignature,
       requestedUserTurnCount: userTurnCount
     ) {
-      shutdownInternal()
+      await shutdownInternal()
     }
 
     if process?.isRunning != true {
@@ -408,7 +453,7 @@ public actor ANEMLLPersistentRuntimeService {
     do {
       try inputPipe.fileHandleForWriting.write(contentsOf: payload)
     } catch {
-      shutdownInternal()
+      await shutdownInternal()
       throw ANEMLLPersistentRuntimeError.inputWriteFailed(error.localizedDescription)
     }
 
@@ -422,14 +467,14 @@ public actor ANEMLLPersistentRuntimeService {
         onAssistantDelta: onAssistantDelta
       )
     } catch {
-      shutdownInternal()
+      await shutdownInternal()
       throw error
     }
     try Task.checkCancellation()
 
     guard process.isRunning else {
       let termination = "Exit \(process.terminationStatus)"
-      shutdownInternal()
+      await shutdownInternal()
       throw ANEMLLPersistentRuntimeError.processStopped(termination)
     }
 
@@ -538,13 +583,13 @@ public actor ANEMLLPersistentRuntimeService {
         onAssistantDelta: nil
       )
     } catch {
-      shutdownInternal()
+      await shutdownInternal()
       throw error
     }
 
     guard process.isRunning else {
       let output = ANEMLLInteractiveProtocol.stripANSI(startupOutput)
-      shutdownInternal()
+      await shutdownInternal()
       throw ANEMLLPersistentRuntimeError.processStopped(output)
     }
   }
@@ -636,20 +681,31 @@ public actor ANEMLLPersistentRuntimeService {
           return first
         } catch {
           box.terminate()
+          Task.detached(priority: .userInitiated) {
+            _ = box.terminateAndWait()
+          }
           group.cancelAll()
           throw error
         }
       }
     } onCancel: {
       box.terminate()
+      Task.detached(priority: .userInitiated) {
+        _ = box.terminateAndWait()
+      }
     }
   }
 
-  private func shutdownInternal() {
-    processBox.terminate()
+  private func shutdownInternal() async {
+    let box = processBox
     try? inputPipe?.fileHandleForWriting.close()
+
+    let stopped = await Task.detached(priority: .userInitiated) {
+      box.terminateAndWait()
+    }.value
+
     try? outputPipe?.fileHandleForReading.close()
-    processBox.clear()
+    box.clear()
     process = nil
     inputPipe = nil
     outputPipe = nil
@@ -658,5 +714,11 @@ public actor ANEMLLPersistentRuntimeService {
     startupOutput = ""
     conversationTurns = 0
     modelLoadReported = false
+
+    if !stopped {
+      AppLogger.app.error(
+        "ANEMLL helper did not confirm process exit after SIGKILL escalation."
+      )
+    }
   }
 }
