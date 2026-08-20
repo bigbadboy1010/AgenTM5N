@@ -56,8 +56,6 @@ public actor AgentMeshTaskCoordinator {
   ) throws -> AgentMeshTaskSnapshot {
     guard peer.status == .trusted else { throw AgentMeshSecurityError.peerNotTrusted }
 
-    // Network retries are expected. A repeated task UUID from the same peer is
-    // an idempotent read of the existing state and must never execute twice.
     if let existing = snapshots[request.id] {
       guard existing.peerID == peer.id else {
         throw AgentMeshTaskCoordinatorError.peerMismatch
@@ -92,7 +90,8 @@ public actor AgentMeshTaskCoordinator {
     activeTaskID = request.id
 
     let task = Task { [weak self] in
-      await self?.run(request, peer: peer, effectiveCapabilities: effectiveCapabilities)
+      guard let self else { return }
+      await self.run(request, peer: peer, effectiveCapabilities: effectiveCapabilities)
     }
     tasks[request.id] = task
     return snapshot
