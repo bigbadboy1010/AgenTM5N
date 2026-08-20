@@ -135,7 +135,8 @@ public final class AgentMeshIdentityStore: @unchecked Sendable {
     let bundle = Bundle.main
     let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
-    let resolvedName = name?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+    let explicitName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolvedName = (explicitName?.isEmpty == false ? explicitName : nil)
       ?? Host.current().localizedName
       ?? "AgenTM5N-\(nodeID.uuidString.prefix(8))"
 
@@ -189,9 +190,7 @@ public final class AgentMeshIdentityStore: @unchecked Sendable {
     let plaintext = try encoder.encode(value)
     let key = try sharedKey(with: peer)
     let sealedBox = try ChaChaPoly.seal(plaintext, using: key)
-    guard let combined = sealedBox.combined else {
-      throw AgentMeshSecurityError.decryptionFailed
-    }
+    let combined = sealedBox.combined
     return AgentMeshSealedMessage(
       senderNodeID: try nodeID(),
       recipientNodeID: peer.id,
@@ -388,14 +387,5 @@ private extension String {
       index = end
     }
     return result
-  }
-}
-
-private extension Optional where Wrapped == String {
-  var nonEmpty: String? {
-    guard let value = self?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
-      return nil
-    }
-    return value
   }
 }
