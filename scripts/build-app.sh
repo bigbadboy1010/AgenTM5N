@@ -52,6 +52,53 @@ case "$SWIFT_JOBS" in
 esac
 if [ "$SWIFT_JOBS" -lt 1 ]; then SWIFT_JOBS=1; fi
 if [ "$SWIFT_JOBS" -gt 16 ]; then SWIFT_JOBS=16; fi
+
+FREE_PERCENT="$(
+  memory_pressure -Q 2>/dev/null \
+    | awk '/System-wide memory free percentage/ { value=$5; gsub(/%/, "", value); print int(value + 0); exit }' \
+    || true
+)"
+SWAP_USED_MB="$(
+  sysctl -n vm.swapusage 2>/dev/null \
+    | awk '{ for (i = 1; i <= NF; i++) { if ($i == "used") { value=$(i + 2); sub(/M$/, "", value); print int(value + 0); exit } } }' \
+    || true
+)"
+
+RESOURCE_CRITICAL=0
+RESOURCE_WARNING=0
+
+if [ -n "$FREE_PERCENT" ]; then
+  printf 'Freier Systemspeicher: %s%%\n' "$FREE_PERCENT"
+  if [ "$FREE_PERCENT" -lt 15 ]; then
+    RESOURCE_CRITICAL=1
+  elif [ "$FREE_PERCENT" -lt 30 ]; then
+    RESOURCE_WARNING=1
+  fi
+fi
+
+if [ -n "$SWAP_USED_MB" ]; then
+  printf 'Swap belegt: %s MB\n' "$SWAP_USED_MB"
+  if [ "$SWAP_USED_MB" -gt 4096 ]; then
+    RESOURCE_CRITICAL=1
+  elif [ "$SWAP_USED_MB" -gt 2048 ]; then
+    RESOURCE_WARNING=1
+  fi
+fi
+
+if [ "$RESOURCE_CRITICAL" -eq 1 ]; then
+  if [ "${AGENTM5N_FORCE_BUILD:-0}" = "1" ]; then
+    echo "WARNUNG: Kritischer Memory/Swap-Druck; Release-Build wurde ausdrücklich erzwungen." >&2
+  else
+    echo "ABBRUCH: Kritischer Memory/Swap-Druck. Fremdlast reduzieren oder Build bewusst erzwingen." >&2
+    exit 70
+  fi
+elif [ "$RESOURCE_WARNING" -eq 1 ] && [ "$SWIFT_JOBS" -gt 2 ]; then
+  echo "WARNUNG: Erhöhter Memory/Swap-Druck; SwiftPM wird automatisch auf 2 Jobs reduziert." >&2
+  SWIFT_JOBS=2
+fi
+
+printf '\n=== Thermal state before release build ===\n'
+pmset -g therm 2>/dev/null || true
 printf 'SwiftPM Parallelität: %s Jobs\n' "$SWIFT_JOBS"
 
 swift package resolve
