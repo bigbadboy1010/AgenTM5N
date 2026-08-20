@@ -162,6 +162,16 @@ public struct AgentMeshTaskRequest: Codable, Identifiable, Equatable, Sendable {
   public let maximumResultCharacters: Int
   public let createdAt: Date
 
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case correlationID
+    case prompt
+    case requestedCapabilities
+    case timeoutSeconds
+    case maximumResultCharacters
+    case createdAt
+  }
+
   public init(
     id: UUID = UUID(),
     correlationID: UUID = UUID(),
@@ -173,11 +183,33 @@ public struct AgentMeshTaskRequest: Codable, Identifiable, Equatable, Sendable {
   ) {
     self.id = id
     self.correlationID = correlationID
-    self.prompt = prompt
+    self.prompt = String(prompt.prefix(AgentMeshProtocol.maximumPromptCharacters))
     self.requestedCapabilities = requestedCapabilities
     self.timeoutSeconds = max(30, min(timeoutSeconds, 3_600))
-    self.maximumResultCharacters = max(1_024, min(maximumResultCharacters, AgentMeshProtocol.maximumResultCharacters))
+    self.maximumResultCharacters = max(
+      1_024,
+      min(maximumResultCharacters, AgentMeshProtocol.maximumResultCharacters)
+    )
     self.createdAt = createdAt
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try container.decode(UUID.self, forKey: .id),
+      correlationID: try container.decode(UUID.self, forKey: .correlationID),
+      prompt: try container.decode(String.self, forKey: .prompt),
+      requestedCapabilities: try container.decodeIfPresent(
+        Set<AgentToolCapability>.self,
+        forKey: .requestedCapabilities
+      ) ?? [],
+      timeoutSeconds: try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? 600,
+      maximumResultCharacters: try container.decodeIfPresent(
+        Int.self,
+        forKey: .maximumResultCharacters
+      ) ?? AgentMeshProtocol.maximumResultCharacters,
+      createdAt: try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    )
   }
 }
 
