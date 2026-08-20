@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 @MainActor
 public final class AgentMeshController: ObservableObject {
@@ -7,84 +8,86 @@ public final class AgentMeshController: ObservableObject {
   @Published public private(set) var node: AgentMeshNodeDescriptor?
   @Published public private(set) var peers: [AgentMeshPeerRecord] = []
   @Published public private(set) var listenerRunning = false
-  @Published public private(set) var statusMessage = "Agent Mesh gestoppt"
   @Published public private(set) var remoteTaskEvents: [AgentMeshTaskEvent] = []
-  @Published public private(set) var remoteTaskSnapshot: AgentMeshTaskSnapshot?
-  @Published public var port: Int
-  @Published public var advertisedEndpoint: String
-  @Published public var peerEndpoint = ""
-  @Published public var taskPrompt = "Antworte in einem Satz: Welcher Node bearbeitet diesen delegierten Task?"
+  @Published public private(set) var remoteTaskResult = ""
+  @Published public private(set) var statusMessage = "Agent Mesh bereit"
+
+  @Published public var listenPort: Int {
+    didSet {
+      listenPort = max(1, min(listenPort, 65_535))
+      UserDefaults.standard.set(listenPort, forKey: Self.portKey)
+    }
+  }
+  @Published public var advertisedEndpoint: String {
+    didSet {
+      UserDefaults.standard.set(advertisedEndpoint, forKey: Self.endpointKey)
+    }
+  }
+  @Published public var peerEndpoint = "http://"
+  @Published public var taskPrompt = "Antworte kurz, dass der delegierte Agent-Mesh-Task angekommen ist."
+  @Published public var autoStart: Bool {
+    didSet {
+      UserDefaults.standard.set(autoStart, forKey: Self.autoStartKey)
+    }
+  }
 
   private let identity: AgentMeshIdentityStore
   private let peerStore: AgentMeshPeerStore
   private let server: AgentMeshHTTPServer
   private let client: AgentMeshClient
-  private let defaults: UserDefaults
   private var followTask: Task<Void, Never>?
 
-  private enum Key {
-    static let port = "agentMesh.port"
-    static let advertisedEndpoint = "agentMesh.advertisedEndpoint"
-    static let autoStart = "agentMesh.autoStart"
-  }
+  private static let portKey = "AgenTM5N.AgentMesh.port"
+  private static let endpointKey = "AgenTM5N.AgentMesh.advertisedEndpoint"
+  private static let autoStartKey = "AgenTM5N.AgentMesh.autoStart"
 
   public init(
     identity: AgentMeshIdentityStore = .shared,
     peerStore: AgentMeshPeerStore = .shared,
     server: AgentMeshHTTPServer = .shared,
-    client: AgentMeshClient = AgentMeshClient(),
-    defaults: UserDefaults = .standard
+    client: AgentMeshClient = AgentMeshClient()
   ) {
     self.identity = identity
     self.peerStore = peerStore
     self.server = server
     self.client = client
-    self.defaults = defaults
-    let savedPort = defaults.integer(forKey: Key.port)
-    port = savedPort > 0 ? savedPort : Int(AgentMeshProtocol.defaultPort)
-    advertisedEndpoint = defaults.string(forKey: Key.advertisedEndpoint)
-      ?? "http://127.0.0.1:\(AgentMeshProtocol.defaultPort)"
+    let defaults = UserDefaults.standard
+    let storedPort = defaults.integer(forKey: Self.portKey)
+    listenPort = storedPort == 0 ? AgentMeshProtocol.defaultPort : storedPort
+    advertisedEndpoint = defaults.string(forKey: Self.endpointKey) ?? "http://127.0.0.1:\(AgentMeshProtocol.defaultPort)"
+    autoStart = defaults.bool(forKey: Self.autoStartKey)
+
+    Task { @MainActor [weak self] in
+      await self?.bootstrap()
+    }
   }
 
-  public func bootstrap(configuration: AppConfiguration) async {
-    await AgentMeshExecutionService.shared.configure(configuration)
-    do {
-      node = try identity.descriptor()
-      peers = try await peerStore.all()
-      if defaults.bool(forKey: Key.autoStart) {
-        try await start(configuration: configuration)
+  deinit {
+    followTask?.cancel()
+  }
+
+  public func bootstrap() async {
+    await refresh()
+    if autoStart {
+      do {
+        try await startListener()
+      } catch {
+        statusMessage = error.localizedDescription
       }
-    } catch {
-      statusMessage = error.localizedDescription
     }
   }
 
-  public func updateConfiguration(_ configuration: AppConfiguration) async {
-    await AgentMeshExecutionService.shared.configure(configuration)
-  }
-
-  public func start(configuration: AppConfiguration) async throws {
-    await AgentMeshExecutionService.shared.configure(configuration)
-    let boundedPort = max(1, min(port, 65_535))
-    port = boundedPort
-    defaults.set(boundedPort, forKey: Key.port)
-    defaults.set(advertisedEndpoint, forKey: Key.advertisedEndpoint)
-    guard let portValue = UInt16(exactly: boundedPort) else {
-      throw AgentMeshHTTPServerError.invalidPort
-    }
-    try await server.start(port: portValue)
-    listenerRunning = true
-    defaults.set(true, forKey: Key.autoStart)
+  public func startListener() async throws {
+    try server.start(port: listenPort)
+    listenerRunning = server.isRunning
     node = try identity.descriptor()
-    peers = try await peerStore.all()
-    statusMessage = "Agent Mesh aktiv auf Port \(boundedPort)"
+    statusMessage = "Agent Mesh lauscht auf Port \(listenPort)."
   }
 
-  public func stop() {
+  public func stopListener() {
     server.stop()
     listenerRunning = false
-    defaults.set(false, forKey: Key.autoStart)
-    statusMessage = "Agent Mesh gestoppt"
+    statusMessage = "Agent Mesh Listener gestoppt."
   }
 
   public func refresh() async {
@@ -112,34 +115,40 @@ public final class AgentMeshController: ObservableObject {
   }
 
   public func trustReadOnly(_ peerID: UUID) async throws {
+    let expectedFingerprint = try displayedPendingFingerprint(peerID)
     let capabilities: Set<AgentToolCapability> = [
       .workspace,
-      .macPersonal,
-      .reminders,
       .system,
       .memory,
       .knowledge,
       .attachments,
     ]
-    _ = try await peerStore.trust(id: peerID, allowedCapabilities: capabilities)
+    _ = try await peerStore.trust(
+      id: peerID,
+      expectedFingerprint: expectedFingerprint,
+      allowedCapabilities: capabilities
+    )
     peers = try await peerStore.all()
-    statusMessage = "Peer vertraut: Read-or-approved-mutation Scope aktiv."
+    statusMessage = "Peer vertraut: Workspace/Knowledge Read Scope aktiv. Persoenliche macOS-Daten sind nicht enthalten."
   }
 
   public func trustDevOps(_ peerID: UUID) async throws {
+    let expectedFingerprint = try displayedPendingFingerprint(peerID)
     let capabilities: Set<AgentToolCapability> = [
       .workspace,
       .terminal,
       .git,
       .system,
-      .macPersonal,
-      .reminders,
       .memory,
       .knowledge,
     ]
-    _ = try await peerStore.trust(id: peerID, allowedCapabilities: capabilities)
+    _ = try await peerStore.trust(
+      id: peerID,
+      expectedFingerprint: expectedFingerprint,
+      allowedCapabilities: capabilities
+    )
     peers = try await peerStore.all()
-    statusMessage = "Peer vertraut: DevOps Scope aktiv; Write/Execute bleibt lokal bestaetigungspflichtig."
+    statusMessage = "Peer vertraut: DevOps Scope aktiv; Write/Execute bleibt lokal bestaetigungspflichtig. Persoenliche macOS-Daten sind ausgeschlossen."
   }
 
   public func revoke(_ peerID: UUID) async throws {
@@ -154,37 +163,38 @@ public final class AgentMeshController: ObservableObject {
     }
     followTask?.cancel()
     remoteTaskEvents = []
+    remoteTaskResult = ""
     let request = AgentMeshTaskRequest(
       prompt: taskPrompt,
       requestedCapabilities: peer.allowedCapabilities
     )
     let snapshot = try await client.submit(request, to: peer)
-    remoteTaskSnapshot = snapshot
-    statusMessage = "Task \(snapshot.id.uuidString.prefix(8)) an \(peer.name) delegiert."
+    statusMessage = "Remote Task \(snapshot.id.uuidString.prefix(8)) gestartet."
 
-    followTask = Task { [weak self] in
+    followTask = Task { @MainActor [weak self] in
       guard let self else { return }
       do {
-        for try await event in client.follow(taskID: snapshot.id, peer: peer) {
+        for try await event in client.follow(taskID: request.id, peer: peer) {
           if Task.isCancelled { return }
           remoteTaskEvents.append(event)
         }
-        if !Task.isCancelled {
-          remoteTaskSnapshot = try await client.snapshot(taskID: snapshot.id, peer: peer)
-        }
+        let terminal = try await client.snapshot(taskID: request.id, peer: peer)
+        remoteTaskResult = terminal.result ?? terminal.error ?? ""
+        statusMessage = "Remote Task: \(terminal.status.rawValue)"
+      } catch is CancellationError {
+        return
       } catch {
-        if !Task.isCancelled {
-          statusMessage = error.localizedDescription
-        }
+        statusMessage = error.localizedDescription
       }
     }
   }
 
-  public func cancelRemoteTask(peerID: UUID) async throws {
-    guard let peer = peers.first(where: { $0.id == peerID }),
-      let snapshot = remoteTaskSnapshot
-    else { return }
-    followTask?.cancel()
-    remoteTaskSnapshot = try await client.cancel(taskID: snapshot.id, peer: peer)
+  private func displayedPendingFingerprint(_ peerID: UUID) throws -> String {
+    guard let displayed = peers.first(where: { $0.id == peerID }),
+      displayed.status == .pending
+    else {
+      throw AgentMeshSecurityError.peerNotTrusted
+    }
+    return displayed.fingerprint
   }
 }
