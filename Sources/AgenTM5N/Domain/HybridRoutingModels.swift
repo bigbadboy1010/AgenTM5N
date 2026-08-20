@@ -16,6 +16,7 @@ public enum HybridRoutingMode: String, Codable, CaseIterable, Identifiable, Send
 
 public enum HybridRouteKind: String, Codable, CaseIterable, Sendable {
   case activeProvider
+  case modelProfile
   case appleOnDevice
   case meshPeer
   case blocked
@@ -87,6 +88,8 @@ public struct HybridRouteDecision: Codable, Equatable, Sendable {
   public let id: UUID
   public let kind: HybridRouteKind
   public let peerID: UUID?
+  public let profileID: UUID?
+  public let profileRuntime: ModelProfileRuntime?
   public let targetName: String
   public let reason: String
   public let confidence: Double
@@ -98,6 +101,8 @@ public struct HybridRouteDecision: Codable, Equatable, Sendable {
     id: UUID = UUID(),
     kind: HybridRouteKind,
     peerID: UUID? = nil,
+    profileID: UUID? = nil,
+    profileRuntime: ModelProfileRuntime? = nil,
     targetName: String,
     reason: String,
     confidence: Double,
@@ -108,6 +113,8 @@ public struct HybridRouteDecision: Codable, Equatable, Sendable {
     self.id = id
     self.kind = kind
     self.peerID = peerID
+    self.profileID = profileID
+    self.profileRuntime = profileRuntime
     self.targetName = targetName
     self.reason = reason
     self.confidence = max(0, min(confidence, 1))
@@ -117,7 +124,7 @@ public struct HybridRouteDecision: Codable, Equatable, Sendable {
   }
 
   public var isRemote: Bool {
-    kind == .meshPeer
+    kind == .meshPeer || profileRuntime == .ollamaCloud
   }
 
   public var isBlocked: Bool {
@@ -136,6 +143,7 @@ public struct HybridRoutingSnapshot: Codable, Equatable, Sendable {
 public enum HybridRoutingError: LocalizedError, Equatable {
   case blocked(String)
   case peerUnavailable
+  case profileUnavailable
 
   public var errorDescription: String? {
     switch self {
@@ -145,6 +153,12 @@ public enum HybridRoutingError: LocalizedError, Equatable {
         de: "Der vom Hybrid Router gewählte Agent-Mesh-Peer ist nicht mehr verfügbar oder nicht mehr vertraut.",
         en: "The Agent Mesh peer selected by the Hybrid Router is no longer available or trusted.",
         fr: "Le pair Agent Mesh sélectionné par le routeur hybride n’est plus disponible ou approuvé."
+      )
+    case .profileUnavailable:
+      L10n.text(
+        de: "Das vom Hybrid Router gewählte Modellprofil ist nicht mehr verfügbar oder wurde deaktiviert.",
+        en: "The model profile selected by the Hybrid Router is no longer available or has been disabled.",
+        fr: "Le profil de modèle sélectionné par le routeur hybride n’est plus disponible ou a été désactivé."
       )
     }
   }
