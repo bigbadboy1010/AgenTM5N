@@ -42,6 +42,7 @@ public actor AgentMeshTaskCoordinator {
   private var events: [UUID: [AgentMeshTaskEvent]] = [:]
   private var tasks: [UUID: Task<Void, Never>] = [:]
   private var activeTaskID: UUID?
+  private static let maximumRetainedTasks = 200
 
   public init() {}
 
@@ -69,6 +70,8 @@ public actor AgentMeshTaskCoordinator {
     }
     guard executor != nil else { throw AgentMeshTaskCoordinatorError.executorUnavailable }
     guard activeTaskID == nil else { throw AgentMeshTaskCoordinatorError.busy }
+
+    pruneTerminalHistoryIfNeeded()
 
     let effectiveCapabilities: Set<AgentToolCapability>
     if request.requestedCapabilities.isEmpty {
@@ -123,17 +126,30 @@ public actor AgentMeshTaskCoordinator {
     )
   }
 
-  public func cancel(taskID: UUID, peerID: UUID) throws -> AgentMeshTaskSnapshot {
-    var snapshot = try snapshot(taskID: taskID, peerID: peerID)
-    guard !Self.isTerminal(snapshot.status) else { return snapshot }
-    tasks[taskID]?.cancel()
-    snapshot.status = .cancelled
-    snapshot.completedAt = Date()
-    snapshots[taskID] = snapshot
-    appendEvent(taskID: taskID, kind: .cancelled, message: "Task cancelled")
-    tasks.removeValue(forKey: taskID)
-    if activeTaskID == taskID { activeTaskID = nil }
-    return snapshot
+  public func cancel(taskID: UUID, peerID: UUID) async throws -> AgentMeshTaskSnapshot {
+    let current = try snapshot(taskID: taskID, peerID: peerID)
+    guard !Self.isTerminal(current.status) else { return current }
+
+    // Do not release activeTaskID here. The run() tail owns that transition,
+    // so a second remote task cannot overlap an executor that is still winding
+    // down after cancellation.
+    if let task = tasks[taskID] {
+      task.cancel()
+      await task.value
+    }
+    return try snapshot(taskID: taskID, peerID: peerID)
+  }
+
+  public func cancelAll(peerID: UUID) async {
+    let matching = snapshots.values
+      .filter { $0.peerID == peerID && !Self.isTerminal($0.status) }
+      .map(\.id)
+    for id in matching {
+      if let task = tasks[id] {
+        task.cancel()
+        await task.value
+      }
+    }
   }
 
   public func localSnapshots() -> [AgentMeshTaskSnapshot] {
@@ -188,11 +204,13 @@ public actor AgentMeshTaskCoordinator {
       if let completed { snapshots[request.id] = completed }
       appendEvent(taskID: request.id, kind: .completed, message: "Task completed")
     } catch is CancellationError {
-      var cancelled = snapshots[request.id]
-      cancelled?.status = .cancelled
-      cancelled?.completedAt = Date()
-      if let cancelled { snapshots[request.id] = cancelled }
-      appendEvent(taskID: request.id, kind: .cancelled, message: "Task cancelled")
+      if snapshots[request.id]?.status != .cancelled {
+        var cancelled = snapshots[request.id]
+        cancelled?.status = .cancelled
+        cancelled?.completedAt = Date()
+        if let cancelled { snapshots[request.id] = cancelled }
+        appendEvent(taskID: request.id, kind: .cancelled, message: "Task cancelled")
+      }
     } catch {
       await fail(request.id, error: error)
     }
@@ -251,6 +269,19 @@ public actor AgentMeshTaskCoordinator {
       taskEvents.removeFirst(taskEvents.count - 2_048)
     }
     events[taskID] = taskEvents
+  }
+
+  private func pruneTerminalHistoryIfNeeded() {
+    guard snapshots.count >= Self.maximumRetainedTasks else { return }
+    let removable = snapshots.values
+      .filter { Self.isTerminal($0.status) && $0.id != activeTaskID }
+      .sorted { $0.completedAt ?? $0.createdAt < $1.completedAt ?? $1.createdAt }
+    let targetCount = max(1, snapshots.count - Self.maximumRetainedTasks + 1)
+    for snapshot in removable.prefix(targetCount) {
+      snapshots.removeValue(forKey: snapshot.id)
+      events.removeValue(forKey: snapshot.id)
+      tasks.removeValue(forKey: snapshot.id)
+    }
   }
 
   private static func isTerminal(_ status: AgentMeshTaskStatus) -> Bool {
