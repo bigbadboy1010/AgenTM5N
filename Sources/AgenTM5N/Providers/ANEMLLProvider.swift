@@ -1,8 +1,5 @@
 import Foundation
 
-// Build 38 evolves the Build 37 persistent runtime in place. This legacy
-// source-policy baseline marker remains until the Build 38 release metadata is
-// promoted after the target-Mac streaming gate: ANEMLL BUILD 37 RUNTIME
 private final class ANEMLLThinkingDeltaSplitter: @unchecked Sendable {
   private let lock = NSLock()
   private var buffer = ""
@@ -80,13 +77,13 @@ private final class ANEMLLThinkingDeltaSplitter: @unchecked Sendable {
 
 public final class ANEMLLProvider: @unchecked Sendable {
   private struct RequestParameters: Sendable {
-    let prompt: String
+    let transport: ANEMLLToolTransportRequest
     let systemPrompt: String
     let runtime: ANEMLLRuntimeConfiguration
     let maxTokens: Int
     let temperature: Double
     let timeoutSeconds: Int
-    let userTurnCount: Int
+    let effectiveTools: [ProviderToolDefinition]
   }
 
   private let persistentRuntime: ANEMLLPersistentRuntimeService
@@ -108,15 +105,20 @@ public final class ANEMLLProvider: @unchecked Sendable {
     configuration: AppConfiguration,
     messages: [ProviderMessage]
   ) async throws -> ProviderStreamEvent {
-    let request = try makeRequest(configuration: configuration, messages: messages)
+    let request = try makeRequest(
+      configuration: configuration,
+      messages: messages,
+      tools: []
+    )
+    let runtimeTurn = await prepareRuntimeTurn(request.transport)
     let result = try await persistentRuntime.complete(
-      prompt: request.prompt,
+      prompt: request.transport.prompt,
       systemPrompt: request.systemPrompt,
       thinkingEnabled: configuration.thinkingEnabled,
       maxTokens: request.maxTokens,
       temperature: request.temperature,
       requestTimeoutSeconds: request.timeoutSeconds,
-      userTurnCount: request.userTurnCount,
+      userTurnCount: runtimeTurn,
       runtimeConfiguration: request.runtime
     )
     ANEMLLRuntimeTelemetry.shared.record(result)
@@ -133,38 +135,46 @@ public final class ANEMLLProvider: @unchecked Sendable {
   public func streamChat(
     configuration: AppConfiguration,
     messages: [ProviderMessage],
-    tools _: [ProviderToolDefinition] = []
+    tools: [ProviderToolDefinition] = []
   ) -> AsyncThrowingStream<ProviderStreamEvent, Error> {
     AsyncThrowingStream { continuation in
       let streamID = ANEMLLStreamingTelemetry.shared.begin()
       let task = Task {
         do {
-          let request = try makeRequest(configuration: configuration, messages: messages)
-          let splitter = ANEMLLThinkingDeltaSplitter()
+          let request = try makeRequest(
+            configuration: configuration,
+            messages: messages,
+            tools: tools
+          )
+          let runtimeTurn = await prepareRuntimeTurn(request.transport)
+          let thinkingSplitter = ANEMLLThinkingDeltaSplitter()
+          let toolFilter = ANEMLLToolEnvelopeFilter()
+
           let result = try await persistentRuntime.completeStreaming(
-            prompt: request.prompt,
+            prompt: request.transport.prompt,
             systemPrompt: request.systemPrompt,
             thinkingEnabled: configuration.thinkingEnabled,
             maxTokens: request.maxTokens,
             temperature: request.temperature,
             requestTimeoutSeconds: request.timeoutSeconds,
-            userTurnCount: request.userTurnCount,
+            userTurnCount: runtimeTurn,
             runtimeConfiguration: request.runtime,
             onAssistantDelta: { delta in
-              let separated = splitter.consume(delta)
-              let visibleCount = separated.content.count + separated.thinking.count
+              let separated = thinkingSplitter.consume(delta)
+              let visibleContent = toolFilter.consume(separated.content)
+              let visibleCount = visibleContent.count + separated.thinking.count
               if visibleCount > 0 {
                 ANEMLLStreamingTelemetry.shared.recordDelta(
                   streamID: streamID,
                   characterCount: visibleCount
                 )
               }
-              guard !separated.content.isEmpty || !separated.thinking.isEmpty else {
+              guard !visibleContent.isEmpty || !separated.thinking.isEmpty else {
                 return
               }
               continuation.yield(
                 ProviderStreamEvent(
-                  contentDelta: separated.content,
+                  contentDelta: visibleContent,
                   thinkingDelta: separated.thinking
                 )
               )
@@ -172,8 +182,14 @@ public final class ANEMLLProvider: @unchecked Sendable {
           )
           try Task.checkCancellation()
 
-          let tail = splitter.finish()
-          let tailCount = tail.content.count + tail.thinking.count
+          let toolCalls = try ANEMLLToolProtocol.parseToolCalls(
+            from: result.response,
+            allowedTools: request.effectiveTools
+          )
+
+          let thinkingTail = thinkingSplitter.finish()
+          let contentTail = toolFilter.consume(thinkingTail.content) + toolFilter.finish()
+          let tailCount = contentTail.count + thinkingTail.thinking.count
           if tailCount > 0 {
             ANEMLLStreamingTelemetry.shared.recordDelta(
               streamID: streamID,
@@ -181,9 +197,15 @@ public final class ANEMLLProvider: @unchecked Sendable {
             )
             continuation.yield(
               ProviderStreamEvent(
-                contentDelta: tail.content,
-                thinkingDelta: tail.thinking
+                contentDelta: contentTail,
+                thinkingDelta: thinkingTail.thinking
               )
+            )
+          }
+
+          if !toolCalls.isEmpty {
+            continuation.yield(
+              ProviderStreamEvent(toolCalls: toolCalls)
             )
           }
 
@@ -236,13 +258,21 @@ public final class ANEMLLProvider: @unchecked Sendable {
 
   private func makeRequest(
     configuration: AppConfiguration,
-    messages: [ProviderMessage]
+    messages: [ProviderMessage],
+    tools: [ProviderToolDefinition]
   ) throws -> RequestParameters {
-    let prompt = try latestUserPrompt(in: messages)
-    let systemPrompt = build38SystemPrompt(in: messages)
-
     var operating = AgentOperatingLayerStore.load()
     operating.normalize()
+    let effectiveTools = ANEMLLToolProtocol.selectTools(
+      tools,
+      messages: messages,
+      operatingConfiguration: operating
+    )
+    let transport = try ANEMLLToolProtocol.makeTransportRequest(
+      messages: messages,
+      tools: effectiveTools
+    )
+    let systemPrompt = build39SystemPrompt(in: messages)
     let runtime = ANEMLLRuntimeStore.load()
     let requestedMaxTokens = operating.numPredict > 0
       ? operating.numPredict
@@ -250,38 +280,29 @@ public final class ANEMLLProvider: @unchecked Sendable {
     let requestedTemperature = operating.temperature.isFinite
       ? operating.temperature
       : runtime.defaultTemperature
-    let userTurnCount = messages.reduce(into: 0) { count, message in
-      if message.role == .user { count += 1 }
-    }
 
     return RequestParameters(
-      prompt: prompt,
+      transport: transport,
       systemPrompt: systemPrompt,
       runtime: runtime,
       maxTokens: requestedMaxTokens,
       temperature: requestedTemperature,
       timeoutSeconds: operating.requestTimeoutSeconds,
-      userTurnCount: userTurnCount
+      effectiveTools: effectiveTools
     )
   }
 
-  private func latestUserPrompt(in messages: [ProviderMessage]) throws -> String {
-    for message in messages.reversed() {
-      switch message.role {
-      case .user:
-        let prompt = PromptAttachmentService.providerPrompt(from: message.content)
-          .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !prompt.isEmpty {
-          return prompt
-        }
-      case .system, .assistant, .tool:
-        continue
-      }
+  private func prepareRuntimeTurn(
+    _ transport: ANEMLLToolTransportRequest
+  ) async -> Int {
+    if transport.isFreshConversation {
+      await persistentRuntime.resetConversation()
     }
-    throw ANEMLLRuntimeError.missingPrompt
+    let activeTurns = await persistentRuntime.activeTurns()
+    return max(transport.userTurnCount, activeTurns + 1)
   }
 
-  private func build38SystemPrompt(in messages: [ProviderMessage]) -> String {
+  private func build39SystemPrompt(in messages: [ProviderMessage]) -> String {
     var base = ""
     for message in messages {
       switch message.role {
@@ -295,28 +316,25 @@ public final class ANEMLLProvider: @unchecked Sendable {
 
     let runtimeGuard = L10n.text(
       de: """
-        ANEMLL BUILD 38 RUNTIME:
-        - Du läufst lokal über Qwen3 / ANEMLL auf der Apple Neural Engine.
-        - Deine Textausgabe wird vom persistenten nativen Runtime-Prozess inkrementell an die AgenTM5N-Oberfläche gestreamt.
-        - AgenTM5N-Werkzeugaufrufe sind in diesem Runtime-Meilenstein noch nicht an Qwen3 angebunden; das folgt in Build 39.
-        - Behaupte niemals, eine Datei, einen Kalender, Mail, Terminal, SSH, Docker oder ein anderes Werkzeug ausgeführt oder gelesen zu haben, wenn dir kein Werkzeugergebnis vorliegt.
-        - Wenn eine Anfrage zwingend eine externe Aktion benötigt, erkläre knapp, dass diese Aktion in diesem Qwen3-Runtime-Meilenstein noch nicht ausgeführt wurde.
+        ANEMLL BUILD 39 RUNTIME:
+        - Du läufst lokal über Qwen3/ANEMLL. AgenTM5N kann dir pro Runde eine kleine Liste realer Werkzeuge geben.
+        - Wenn ein Werkzeug nötig ist, verwende ausschließlich das angegebene <agentm5n_tool_call>-JSON-Format und höchstens einen Aufruf pro Runde.
+        - Erfinde keine Werkzeuge oder Ergebnisse. Nach einem Werkzeugaufruf erhältst du das reale Ergebnis in derselben persistenten Sitzung.
+        - Die Ausführung, Freigabe, Secrets und Auditierung kontrolliert AgenTM5N außerhalb des Modells.
         """,
       en: """
-        ANEMLL BUILD 38 RUNTIME:
-        - You are running locally through Qwen3 / ANEMLL on Apple Neural Engine.
-        - Your text output is streamed incrementally from the persistent native runtime process into the AgenTM5N interface.
-        - AgenTM5N tool calls are not yet connected to Qwen3 in this runtime milestone; that follows in Build 39.
-        - Never claim that files, Calendar, Mail, Terminal, SSH, Docker, or another tool was executed or read unless an actual tool result is present.
-        - If a request requires an external action, state briefly that the action was not executed in this Qwen3 runtime milestone.
+        ANEMLL BUILD 39 RUNTIME:
+        - You run locally through Qwen3/ANEMLL. AgenTM5N may provide a small list of real tools for each round.
+        - When a tool is required, use only the supplied <agentm5n_tool_call> JSON format and request at most one tool per round.
+        - Never invent tools or results. After a tool call you receive the real result in the same persistent session.
+        - Execution, approvals, secrets and auditing are controlled by AgenTM5N outside the model.
         """,
       fr: """
-        RUNTIME ANEMLL BUILD 38 :
-        - Tu fonctionnes localement via Qwen3 / ANEMLL sur l’Apple Neural Engine.
-        - Ton texte est diffusé progressivement du processus natif persistant vers l’interface AgenTM5N.
-        - Les appels d’outils AgenTM5N ne sont pas encore reliés à Qwen3 dans cette étape ; ils suivent dans le Build 39.
-        - Ne prétends jamais avoir exécuté ou lu des fichiers, Calendrier, Mail, Terminal, SSH, Docker ou un autre outil sans résultat réel d’outil.
-        - Si une requête exige une action externe, indique brièvement qu’elle n’a pas été exécutée dans cette étape du runtime Qwen3.
+        RUNTIME ANEMLL BUILD 39 :
+        - Tu fonctionnes localement via Qwen3/ANEMLL. AgenTM5N peut fournir une petite liste d’outils réels à chaque tour.
+        - Si un outil est nécessaire, utilise uniquement le format JSON <agentm5n_tool_call> fourni et au maximum un appel par tour.
+        - N’invente jamais d’outil ni de résultat. Après un appel, le résultat réel revient dans la même session persistante.
+        - L’exécution, les autorisations, les secrets et l’audit restent contrôlés par AgenTM5N hors du modèle.
         """
     )
 
@@ -328,19 +346,17 @@ public final class ANEMLLProvider: @unchecked Sendable {
       let start = response.range(of: "<think>"),
       let end = response.range(of: "</think>", range: start.upperBound..<response.endIndex)
     else {
-      return (response, "")
+      return (ANEMLLToolProtocol.removeToolEnvelopes(from: response), "")
     }
 
     let thinking = String(response[start.upperBound..<end.lowerBound])
       .trimmingCharacters(in: .whitespacesAndNewlines)
     let before = String(response[..<start.lowerBound])
     let after = String(response[end.upperBound...])
-    let content = (before + after).trimmingCharacters(in: .whitespacesAndNewlines)
+    let content = ANEMLLToolProtocol.removeToolEnvelopes(from: before + after)
 
-    // Never hide the whole model response merely because the generation ended
-    // inside a thinking block or produced no final text.
     guard !content.isEmpty else {
-      return (response, "")
+      return (ANEMLLToolProtocol.removeToolEnvelopes(from: response), "")
     }
     return (content, thinking)
   }
