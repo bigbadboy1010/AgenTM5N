@@ -6,10 +6,13 @@ on:
       - main
       - agent/v1.1.0-platform-expansion
       - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
   pull_request:
     branches:
       - main
       - agent/v1.1.0-platform-expansion
+      - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
 
 permissions:
   contents: read
@@ -27,53 +30,50 @@ jobs:
           bash -n scripts/verify.sh
           bash -n scripts/check-release.sh
           bash -n scripts/release-macos.sh
+          bash -n scripts/release-portable-macos.sh
           bash -n scripts/verify-release-dmg.sh
           bash -n scripts/publish-github-release.sh
+          bash -n scripts/bootstrap-anemll-runtime.sh
+          bash -n scripts/test-anemll-qwen3.sh
 
-      - name: Validate Build 29 metadata consistency
+      - name: Validate release metadata consistency
         shell: python
         run: |
           from pathlib import Path
 
           expected = {
               "scripts/build-app.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.4.1}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"',
+                  "Build 41: target-Mac validated Hybrid Neural + Mesh Router normal-chat execution",
               ],
               "scripts/release-macos.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.4.1}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"',
+              ],
+              "scripts/release-portable-macos.sh": [
+                  'VERSION="${AGENTM5N_VERSION:-1.4.1}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"',
+                  "check-portable-anemll.sh",
               ],
               "scripts/check-release.sh": [
-                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'EXPECTED_VERSION="${AGENTM5N_VERSION:-1.4.1}"',
+                  'EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-41}"',
               ],
               "scripts/verify-release-dmg.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.4.1}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"',
               ],
               "scripts/publish-github-release.sh": [
-                  'VERSION="${AGENTM5N_VERSION:-1.2.0}"',
-                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-29}"',
+                  'VERSION="${AGENTM5N_VERSION:-1.4.1}"',
+                  'BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"',
                   'TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"',
               ],
-              "README.md": [
-                  "1.2.0 Build 29 candidate",
-                  "AgenTM5N-1.2.0-build29.dmg",
-                  "agent/v1.2.0-agent-operating-layer",
-              ],
-              "VALIDATION.md": [
-                  "1.2.0 Build 29 candidate",
-                  "AgenTM5N-1.2.0-build29.dmg",
-                  "agent/v1.2.0-agent-operating-layer",
-              ],
-              "CHANGELOG-1.2.0.md": [
-                  "AgenTM5N 1.2.0",
-                  "Build 29 candidate",
-              ],
-              "release-archive/README.md": [
-                  "GitHub Release assets",
-                  "AgenTM5N-<version>-build<build>.dmg.sha256",
+              "scripts/bootstrap-anemll-runtime.sh": [
+                  "fb42f60b2e7a7b4709052c7146d37480bf21941e",
+                  "swift build",
+                  "--product anemllcli",
+                  "codesign --force --sign - --options runtime",
               ],
           }
 
@@ -87,7 +87,7 @@ jobs:
           if failures:
               raise SystemExit("\n".join(failures))
 
-      - name: Validate security invariants are represented in source
+      - name: Validate security and neural runtime invariants
         shell: python
         run: |
           from pathlib import Path
@@ -120,8 +120,133 @@ jobs:
                   "model-\\(contentHash)",
               ],
               "Sources/AgenTM5N/Services/CoreMLPredictionRunner.swift": [
-                  "loadedModels",
-                  "configuration.computeUnits = .all",
+                  "CoreMLAdaptiveExecutionPolicy.resolve",
+                  "route.allowsAutomaticFailover",
+                  "sessionModes",
+                  "configuration.computeUnits = mode.computeUnits",
+                  "CoreMLAdaptiveExecutionTelemetry.shared.record",
+                  "MLState",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLAdaptiveExecutionPolicy.swift": [
+                  "CoreMLExecutionStrategy",
+                  "expectedPredictions: Int?",
+                  "decision.confidence != .low",
+                  "automaticFailover",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLAdaptiveExecutionTelemetry.swift": [
+                  "CoreMLExecutionTelemetrySnapshot",
+                  "NSLock",
+                  "adaptiveRoutingApplied",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLNeuralRuntimeOrchestrator.swift": [
+                  "CoreMLNeuralWorkloadKind",
+                  "workspaceEmbeddingQuery",
+                  "workspaceEmbeddingBatch",
+                  "CoreMLAdaptiveExecutionPolicy.resolve",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLNeuralRuntimeTelemetry.swift": [
+                  "CoreMLNeuralRuntimeEvent",
+                  "maximumEvents",
+                  "fallbackUsed",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLEmbeddingRunner.swift": [
+                  "CoreMLNeuralRuntimeOrchestrator.resolve",
+                  "route.allowsAutomaticFailover",
+                  "configuration.computeUnits = mode.computeUnits",
+                  "CoreMLNeuralRuntimeTelemetry.shared.record",
+              ],
+              "Sources/AgenTM5N/Services/ANEMLLRuntime.swift": [
+                  "ANEMLLModelBundleInspector",
+                  'contains("embeddings")',
+                  "ffn",
+                  "lm_head",
+                  "AGENTM5N_ANEMLLCLI",
+                  "AGENTM5N_ANEMLL_META",
+                  "--save",
+                  "withTaskCancellationHandler",
+                  "parseMetrics",
+              ],
+              "Sources/AgenTM5N/Services/ANEMLLPersistentRuntimeService.swift": [
+                  "ANEMLLPersistentRuntimeService",
+                  "ANEMLLInteractiveProtocol",
+                  "readUntilPrompt",
+                  "conversationTurns",
+                  "shouldRestart",
+                  "withTaskCancellationHandler",
+                  "requestTimeoutSeconds",
+              ],
+              "Sources/AgenTM5N/Providers/ANEMLLProvider.swift": [
+                  "persistentRuntime.completeStreaming",
+                  "ANEMLLRuntimeTelemetry.shared.record",
+                  "ANEMLLToolProtocol.selectTools",
+                  "ANEMLLToolProtocol.makeTransportRequest",
+                  "ANEMLLToolProtocol.parseToolCalls",
+                  "ANEMLL BUILD 39 RUNTIME",
+                  "streamChat",
+                  "requestTimeoutSeconds",
+              ],
+              "Sources/AgenTM5N/Providers/ANEMLLToolProtocol.swift": [
+                  "maximumToolsPerTurn = 4",
+                  "maximumEnvelopeBytes",
+                  "unknownTool",
+                  "multipleToolCalls",
+                  "removingThinkingBlocks",
+              ],
+              "Sources/AgenTM5N/Providers/OllamaProvider.swift": [
+                  "shouldUseANEMLL",
+                  "ANEMLLProvider().streamChat",
+                  "ANEMLLProvider().listModels",
+                  "shouldUseMLX",
+              ],
+              "Sources/AgenTM5N/Domain/AgentOperatingLayerSettings.swift": [
+                  "case anemll",
+                  '"anemll://neural-engine"',
+                  "LocalInferenceRuntime",
+              ],
+              "Sources/AgenTM5N/Views/SettingsView.swift": [
+                  "ANEMLL / Neural Engine",
+                  "Persistent Swift / ANEMLL",
+              ],
+              "Sources/AgenTM5N/App/AgenTM5NApp.swift": [
+                  "anemll-qwen3-runtime",
+                  "agent-mesh",
+                  "hybrid-router",
+                  "model-manager",
+                  "ANEMLLRuntimeCommands",
+                  "AgentMeshCommands",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLAgentTools.swift": [
+                  "AgenTM5N Neural Runtime",
+                  "Adaptive mode",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLModelLab.swift": [
+                  "benchmarkModes",
+                  "neuralEnginePreferred",
+                  "aneSuitabilityScore",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLRuntimeBenchmark.swift": [
+                  "MLModel.prediction",
+                  "warmP50Milliseconds",
+                  "warmP95Milliseconds",
+                  "configuration.computeUnits = mode.computeUnits",
+              ],
+              "Sources/AgenTM5N/Services/CoreMLAdaptiveRouter.swift": [
+                  "aneBreakEvenPredictionsVersusAutomatic",
+                  "estimatedTotalMilliseconds",
+                  "outputsStructurallyEquivalent",
+                  "coreMLRoutingProfilesFile",
+                  "neuralEnginePreferred",
+              ],
+              "Sources/AgenTM5N/Views/CoreMLRuntimeBenchmarkView.swift": [
+                  "ANE Runtime Benchmark · Build 33",
+                  "Runtime Benchmark starten",
+                  "not actual NPU utilization",
+              ],
+              "Sources/AgenTM5N/Views/CoreMLAdaptiveRouterView.swift": [
+                  "Adaptive Neural Execution · Build 34",
+                  "Ausführungsstrategie",
+                  "Adaptive Execution ist aktiv",
+                  "ANE Break-even vs. Automatisch",
               ],
               "Sources/AgenTM5N/Providers/MLXProvider.swift": [
                   "/v1/chat/completions",
@@ -137,6 +262,49 @@ jobs:
                   "testUnlimitedToolBudgetHasNoFiniteOperatingLimit",
                   "testStagnationGuardBlocksOnlyAfterConfiguredThreshold",
               ],
+              "Tests/AgenTM5NTests/CoreMLRuntimeBenchmarkTests.swift": [
+                  "testFastestWarmP50IsSelected",
+                  "testFailedModeDoesNotPreventSuccessfulComparison",
+                  "testDifferentOutputStructuresAreFlagged",
+              ],
+              "Tests/AgenTM5NTests/CoreMLAdaptiveRouterTests.swift": [
+                  "testM5DistilBERTInteractiveWorkloadPrefersAutomatic",
+                  "testM5DistilBERTSustainedWorkloadPrefersANE",
+                  "testDifferentOutputStructuresKeepAutomaticAsSafeChoice",
+              ],
+              "Tests/AgenTM5NTests/CoreMLAdaptiveExecutionPolicyTests.swift": [
+                  "testManualStrategyPreservesSelectedComputeMode",
+                  "testAdaptiveStrategyWithoutProfileFallsBackToAutomatic",
+                  "testLowConfidenceAdaptiveDecisionFallsBackToAutomatic",
+                  "testHighConfidenceAdaptiveDecisionSelectsRecommendedMode",
+                  "testAdaptiveAutomaticRecommendationDoesNotNeedFailover",
+              ],
+              "Tests/AgenTM5NTests/CoreMLNeuralRuntimeOrchestratorTests.swift": [
+                  "testWorkspaceSearchEmbeddingIsOneShot",
+                  "testWorkspaceIndexEmbeddingUsesActualBatchSize",
+                  "testManualWorkloadSizedRoutePreservesSelectedMode",
+                  "testAdaptiveWorkloadSizedRouteUsesDecisionPredictionCount",
+              ],
+              "Tests/AgenTM5NTests/ANEMLLRuntimeTests.swift": [
+                  "testQwenBundleInspectorFindsSplitComponentsAndPrefersLUTHead",
+                  "testSwiftCLIMetricsParserReadsDecodePrefillTTFTAndTokens",
+                  "testQwenBundleInspectorRejectsMissingTokenizer",
+                  "testInteractiveProtocolParsesAssistantResponseAndMetricsBoundary",
+                  "testInteractiveProtocolNormalizesMultilinePromptToSingleTransportLine",
+                  "testInteractiveProtocolProtectsSlashCommands",
+                  "testPersistentSessionSignatureDetectsRuntimeConfigurationChanges",
+              ],
+              "Tests/AgenTM5NTests/ANEMLLToolProtocolTests.swift": [
+                  "testParsesSingleAdvertisedToolCall",
+                  "testRejectsUnadvertisedToolCall",
+                  "testRejectsArgumentsOutsideAdvertisedSchema",
+                  "testToolCallInsideThinkingBlockIsNeverExecuted",
+              ],
+              "scripts/test-anemll-qwen3.sh": [
+                  "NATIVE QWEN3 GATE: OK",
+                  "--save",
+                  "TTFT",
+              ],
           }
 
           failures = []
@@ -144,12 +312,12 @@ jobs:
               text = Path(filename).read_text()
               for needle in needles:
                   if needle not in text:
-                      failures.append(f"{filename}: security/source invariant missing {needle!r}")
+                      failures.append(f"{filename}: security/neural invariant missing {needle!r}")
 
           if failures:
               raise SystemExit("\n".join(failures))
 
       - name: Note target-Mac gate
         run: |
-          echo "Static source policy passed."
-          echo "Full Swift/Xcode/FoundationModels/CoreML/MLX verification remains mandatory on the target Apple Silicon Mac via scripts/verify.sh and VALIDATION.md."
+          echo "Static source policy passed on the validated Build 41 release baseline."
+          echo "Build 42 Model Manager has its own additional profile-storage policy and still requires the target macOS/M5 gate before profile-aware automatic routing."

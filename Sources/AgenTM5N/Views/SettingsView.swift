@@ -26,6 +26,11 @@ struct SettingsView: View {
     .navigationTitle(L10n.text(de: "Einstellungen", en: "Settings", fr: "Réglages"))
     .onAppear {
       operatingLayer.applyRuntimeCompatibility(to: appState)
+      if appState.configuration.providerKind == .ollamaLocal,
+        operatingLayer.configuration.localInferenceRuntime == .anemll
+      {
+        appState.configuration.baseURL = LocalInferenceRuntime.anemll.defaultBaseURL
+      }
     }
     .onChange(of: operatingLayer.configuration.toolRoundMode) { _, _ in
       operatingLayer.applyRuntimeCompatibility(to: appState)
@@ -33,10 +38,19 @@ struct SettingsView: View {
     .onChange(of: operatingLayer.configuration.maxToolRounds) { _, _ in
       operatingLayer.applyRuntimeCompatibility(to: appState)
     }
-    .onChange(of: operatingLayer.configuration.localInferenceRuntime) { _, runtime in
+    .onChange(of: operatingLayer.configuration.localInferenceRuntime) { previous, runtime in
+      if previous == .anemll, runtime != .anemll {
+        Task { await ANEMLLPersistentRuntimeService.shared.shutdown() }
+      }
       guard appState.configuration.providerKind == .ollamaLocal else { return }
       appState.configuration.baseURL = runtime.defaultBaseURL
       appState.availableModels = []
+      if runtime == .anemll,
+        let meta = ANEMLLRuntimeStore.load().metaPath.nonEmpty,
+        let descriptor = try? ANEMLLModelBundleInspector.inspect(metaPath: meta)
+      {
+        appState.configuration.model = descriptor.modelName
+      }
     }
   }
 
@@ -61,6 +75,7 @@ struct SettingsView: View {
         ) {
           Text("Ollama").tag(LocalInferenceRuntime.ollama)
           Text("MLX / mlx_lm.server").tag(LocalInferenceRuntime.mlxServer)
+          Text("ANEMLL / Neural Engine").tag(LocalInferenceRuntime.anemll)
         }
 
         if operatingLayer.configuration.localInferenceRuntime == .mlxServer {
@@ -73,17 +88,44 @@ struct SettingsView: View {
           )
           .font(.caption)
           .foregroundStyle(.secondary)
+        } else if operatingLayer.configuration.localInferenceRuntime == .anemll {
+          Text(
+            L10n.text(
+              de: "ANEMLL verwendet Qwen3 als persistenten nativen Swift/Core-ML-Prozess. Das Modell bleibt zwischen Chat-Nachrichten geladen. Build 37 bietet normalen lokalen Chat; Tool Calling folgt in Build 39.",
+              en: "ANEMLL uses Qwen3 through a persistent native Swift/Core ML process. The model stays loaded between chat messages. Build 37 provides normal local chat; tool calling follows in Build 39.",
+              fr: "ANEMLL utilise Qwen3 via un processus Swift/Core ML natif persistant. Le modèle reste chargé entre les messages. Le Build 37 fournit le chat local ; les appels d’outils suivront au Build 39."
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
         }
       }
 
       if appState.configuration.providerKind != .appleOnDevice {
-        TextField("Basis-URL", text: $appState.configuration.baseURL)
+        if appState.configuration.providerKind != .ollamaLocal
+          || operatingLayer.configuration.localInferenceRuntime != .anemll
+        {
+          TextField("Basis-URL", text: $appState.configuration.baseURL)
+        } else {
+          LabeledContent(
+            L10n.text(de: "Transport", en: "Transport", fr: "Transport"),
+            value: "Persistent Swift / ANEMLL"
+          )
+        }
+
         TextField(
           L10n.text(de: "Modell", en: "Model", fr: "Modèle"),
           text: $appState.configuration.model
         )
 
-        if appState.configuration.providerKind != .ollamaLocal
+        if appState.configuration.providerKind == .ollamaLocal,
+          operatingLayer.configuration.localInferenceRuntime == .anemll
+        {
+          Toggle(
+            L10n.text(de: "Qwen3 Thinking", en: "Qwen3 Thinking", fr: "Réflexion Qwen3"),
+            isOn: anemllThinkingBinding
+          )
+        } else if appState.configuration.providerKind != .ollamaLocal
           || operatingLayer.configuration.localInferenceRuntime == .ollama
         {
           Picker(
@@ -244,6 +286,18 @@ struct SettingsView: View {
         )
         .font(.caption)
         .foregroundStyle(.secondary)
+      } else if appState.configuration.providerKind == .ollamaLocal,
+        operatingLayer.configuration.localInferenceRuntime == .anemll
+      {
+        Text(
+          L10n.text(
+            de: "Qwen3/ANEMLL besitzt ein modellfestes Context-Limit aus meta.yaml. Build 37 überträgt Max Output, Temperature, Thinking und Request-Timeout; weitere Sampling-Felder werden noch nicht an die native ANEMLL-Runtime weitergereicht.",
+            en: "Qwen3/ANEMLL uses the model-fixed context limit from meta.yaml. Build 37 forwards max output, temperature, thinking, and request timeout; the remaining sampling fields are not yet forwarded to the native ANEMLL runtime.",
+            fr: "Qwen3/ANEMLL utilise la limite de contexte fixée dans meta.yaml. Le Build 37 transmet la sortie max., la température, le mode réflexion et le timeout ; les autres paramètres ne sont pas encore transmis au runtime natif ANEMLL."
+          )
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
     }
     .disabled(appState.configuration.providerKind == .appleOnDevice)
@@ -259,6 +313,20 @@ struct SettingsView: View {
         ),
         isOn: $appState.configuration.agentEnabled
       )
+
+      if appState.configuration.providerKind == .ollamaLocal,
+        operatingLayer.configuration.localInferenceRuntime == .anemll
+      {
+        Text(
+          L10n.text(
+            de: "Qwen3/ANEMLL läuft in Build 37 als persistenter Chat-Provider. Die zentrale Tool-Sicherheitsarchitektur bleibt aktiv, aber Qwen3 erhält noch keine Tool-Definitionen. Tool Calling ist Roadmap Build 39.",
+            en: "Qwen3/ANEMLL runs as a persistent chat provider in Build 37. The central tool-security architecture remains active, but Qwen3 does not receive tool definitions yet. Tool calling is planned for Build 39.",
+            fr: "Qwen3/ANEMLL fonctionne comme fournisseur de chat persistant au Build 37. L’architecture centrale de sécurité des outils reste active, mais Qwen3 ne reçoit pas encore les définitions d’outils. Les appels d’outils sont prévus au Build 39."
+          )
+        )
+        .font(.caption)
+        .foregroundStyle(.orange)
+      }
 
       Picker(
         L10n.text(de: "Berechtigungsmodus", en: "Permission Mode", fr: "Mode d’autorisation"),
@@ -494,6 +562,16 @@ struct SettingsView: View {
     )
   }
 
+  private var anemllThinkingBinding: Binding<Bool> {
+    Binding(
+      get: { operatingLayer.configuration.thinkingMode != .off },
+      set: { enabled in
+        operatingLayer.configuration.thinkingMode = enabled ? .standard : .off
+        operatingLayer.applyRuntimeCompatibility(to: appState)
+      }
+    )
+  }
+
   private func runtimeNumberField(
     _ title: String,
     value: Binding<Int>,
@@ -610,5 +688,11 @@ struct SettingsView: View {
         fr: "Les outils locaux et distants peuvent s’exécuter automatiquement et les outils de fichiers pris en charge peuvent accéder hors de l’espace de travail. Les sandboxes explicites des agents, l’audit et la protection des secrets restent actifs."
       )
     }
+  }
+}
+
+private extension String {
+  var nonEmpty: String? {
+    isEmpty ? nil : self
   }
 }

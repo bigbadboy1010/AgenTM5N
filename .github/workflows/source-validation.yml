@@ -17,11 +17,15 @@ jobs:
           bash -n scripts/bootstrap-xcode.sh
           bash -n scripts/build-app.sh
           bash -n scripts/check-release.sh
+          bash -n scripts/check-portable-anemll.sh
           bash -n scripts/publish-github-release.sh
           bash -n scripts/release-macos.sh
+          bash -n scripts/release-portable-macos.sh
           bash -n scripts/run-dev.sh
           bash -n scripts/verify-release-dmg.sh
           bash -n scripts/verify.sh
+          bash -n scripts/bootstrap-anemll-runtime.sh
+          bash -n scripts/test-anemll-qwen3.sh
           bash -n scripts/lib/xcode-env.sh
       - name: Parse Swift sources
         run: |

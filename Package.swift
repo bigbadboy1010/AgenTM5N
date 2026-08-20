@@ -40,6 +40,7 @@ let package = Package(
         .linkedFramework("CryptoKit"),
         .linkedFramework("EventKit"),
         .linkedFramework("FoundationModels"),
+        .linkedFramework("Network"),
         .linkedFramework("OSLog"),
         .linkedFramework("Security"),
         .linkedFramework("Vision"),

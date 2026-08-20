@@ -1,0 +1,41 @@
+name: Native macOS CI
+
+on:
+  push:
+    branches:
+      - agent/v1.3.0-neural-control-plane
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-build-test:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Resolve package
+        run: swift package resolve
+
+      - name: Build with complete concurrency checking
+        run: |
+          swift build \
+            -Xswiftc -strict-concurrency=complete
+
+      - name: Run test suite with complete concurrency checking
+        run: |
+          swift test \
+            -Xswiftc -strict-concurrency=complete

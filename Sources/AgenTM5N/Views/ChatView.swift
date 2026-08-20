@@ -391,7 +391,7 @@ struct ChatView: View {
         attachments: attachmentStore.attachments
       )
       attachmentStore.removeAll()
-      appState.sendMessage()
+      appState.sendMessageHybridAware()
     } catch {
       appState.errorMessage = error.localizedDescription
     }

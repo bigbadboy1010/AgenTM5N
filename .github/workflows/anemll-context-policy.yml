@@ -1,0 +1,109 @@
+name: ANEMLL context policy
+
+on:
+  push:
+    branches:
+      - agent/v1.3.0-neural-control-plane
+  pull_request:
+    branches:
+      - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
+
+permissions:
+  contents: read
+
+jobs:
+  anemll-context-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse hardened ANEMLL Swift sources
+        run: |
+          swiftc -frontend -parse \
+            Sources/AgenTM5N/Providers/ANEMLLContextBudget.swift \
+            Sources/AgenTM5N/Providers/ANEMLLProvider.swift \
+            Sources/AgenTM5N/Services/ANEMLLPersistentRuntimeService.swift \
+            Tests/AgenTM5NTests/ANEMLLContextBudgetTests.swift \
+            Tests/AgenTM5NTests/ANEMLLPersistentProtocolHardeningTests.swift
+
+      - name: Validate small-context and pipe invariants
+        shell: python
+        run: |
+          from pathlib import Path
+
+          budget = Path("Sources/AgenTM5N/Providers/ANEMLLContextBudget.swift").read_text()
+          provider = Path("Sources/AgenTM5N/Providers/ANEMLLProvider.swift").read_text()
+          runtime = Path("Sources/AgenTM5N/Services/ANEMLLPersistentRuntimeService.swift").read_text()
+          budget_tests = Path("Tests/AgenTM5NTests/ANEMLLContextBudgetTests.swift").read_text()
+          protocol_tests = Path("Tests/AgenTM5NTests/ANEMLLPersistentProtocolHardeningTests.swift").read_text()
+
+          required = {
+              "budget": [
+                  "smallContextThreshold = 1_024",
+                  "struct Plan",
+                  "templateReserveTokens",
+                  "minimumOutputTokens",
+                  "Do not repeat identity or system instructions",
+                  "estimatedTokens",
+                  "boundedUTF8PreservingEnds",
+                  "shouldRotateBeforeUserTurn",
+                  "addingRecentConversationContext",
+                  "CURRENT_TASK:",
+              ],
+              "provider": [
+                  "ANEMLLContextBudget.addingRecentConversationContext",
+                  "ANEMLLContextBudget.plan",
+                  "isFreshConversation: request.transport.isFreshConversation",
+                  "isToolContinuation: request.transport.isToolContinuation",
+                  "persistentRuntime.completeStreaming",
+              ],
+              "runtime": [
+                  "turnInFlight",
+                  "turnWaiters",
+                  "acquireTurnPermit",
+                  "containsTerminalPrompt",
+                  "requireCompletedTurn: true",
+                  "guard let output = String(data: data, encoding: .utf8)",
+                  "ANEMLLContextBudget.shouldRotateBeforeUserTurn",
+              ],
+              "budget_tests": [
+                  "testSmallContextSystemPromptReplacesPersonaWithCompleteGuardrail",
+                  "testCtx512PlanKeepsCurrentRequestTailAndFitsConservativeEnvelope",
+                  "testSmallContextRotatesBetweenUserTurnsButNotToolContinuation",
+                  "testFreshConversationDoesNotRotateColdRuntime",
+              ],
+              "protocol_tests": [
+                  "testModelGeneratedYouMarkerDoesNotEndTurnBeforeMetrics",
+                  "testCompletedTurnRequiresTerminalPromptAfterMetrics",
+                  "testParserKeepsModelGeneratedYouTextUntilMetricsBoundary",
+                  "testIncompleteUTF8IsNotLossilyDecoded",
+              ],
+          }
+
+          texts = {
+              "budget": budget,
+              "provider": provider,
+              "runtime": runtime,
+              "budget_tests": budget_tests,
+              "protocol_tests": protocol_tests,
+          }
+          failures = []
+          for key, needles in required.items():
+              for needle in needles:
+                  if needle not in texts[key]:
+                      failures.append(f"{key}: hardened ANEMLL invariant missing {needle!r}")
+
+          if "let identity =" in budget:
+              failures.append("tiny-context system prompt must not preserve/truncate the product persona")
+          if "prepareRuntimeTurn" in provider:
+              failures.append("ANEMLL turn rotation must stay inside the serialized runtime, not a provider TOCTOU preflight")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Context policy note
+        run: |
+          echo "Static ANEMLL context/runtime hardening policy passed."
+          echo "Native macOS CI remains authoritative for Swift type checking, concurrency diagnostics and tests."

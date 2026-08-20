@@ -45,16 +45,86 @@ public enum CoreMLEmbeddingError: LocalizedError {
 }
 
 public enum CoreMLEmbeddingRunner {
+  private struct MeasuredEmbeddingResult: Sendable {
+    let vectors: [[Float]]
+    let durationMilliseconds: Double
+  }
+
   public static func embed(
     texts: [String],
     compiledURL: URL,
+    workload: CoreMLNeuralWorkload? = nil,
     progress: (@Sendable (Int, Int) async -> Void)? = nil
   ) async throws -> [[Float]] {
     guard !texts.isEmpty else { return [] }
 
-    return try await Task.detached(priority: .userInitiated) {
+    // WorkspaceIndexService is currently the production caller of this direct-
+    // text embedding runner. A single text is a semantic query; multiple texts
+    // form the index batch. Explicit callers can override the workload when the
+    // runner is reused by future neural workloads.
+    let effectiveWorkload = workload
+      ?? (texts.count == 1
+        ? .workspaceEmbeddingQuery
+        : .workspaceEmbeddingBatch(count: texts.count))
+    let route = await CoreMLNeuralRuntimeOrchestrator.resolve(
+      compiledURL: compiledURL,
+      workload: effectiveWorkload
+    )
+
+    do {
+      let measured = try await embed(
+        texts: texts,
+        compiledURL: compiledURL,
+        mode: route.mode,
+        progress: progress
+      )
+      recordTelemetry(
+        compiledURL: compiledURL,
+        workload: effectiveWorkload,
+        route: route,
+        actualMode: route.mode,
+        durationMilliseconds: measured.durationMilliseconds,
+        fallbackUsed: false
+      )
+      return measured.vectors
+    } catch {
+      let primaryError = error
+      guard route.allowsAutomaticFailover else {
+        throw primaryError
+      }
+
+      let fallbackRoute = CoreMLAdaptiveExecutionPolicy.automaticFailover(
+        from: route,
+        error: primaryError
+      )
+      let measured = try await embed(
+        texts: texts,
+        compiledURL: compiledURL,
+        mode: .automatic,
+        progress: progress
+      )
+      recordTelemetry(
+        compiledURL: compiledURL,
+        workload: effectiveWorkload,
+        route: fallbackRoute,
+        actualMode: .automatic,
+        durationMilliseconds: measured.durationMilliseconds,
+        fallbackUsed: true
+      )
+      return measured.vectors
+    }
+  }
+
+  private static func embed(
+    texts: [String],
+    compiledURL: URL,
+    mode: CoreMLComputeMode,
+    progress: (@Sendable (Int, Int) async -> Void)?
+  ) async throws -> MeasuredEmbeddingResult {
+    try await Task.detached(priority: .userInitiated) {
+      let startedAt = ContinuousClock().now
       let configuration = MLModelConfiguration()
-      configuration.computeUnits = .all
+      configuration.computeUnits = mode.computeUnits
       let model = try await MLModel.load(
         contentsOf: compiledURL,
         configuration: configuration
@@ -119,8 +189,35 @@ public enum CoreMLEmbeddingRunner {
         await progress?(offset + 1, texts.count)
       }
 
-      return result
+      let duration = startedAt.duration(to: ContinuousClock().now)
+      return MeasuredEmbeddingResult(
+        vectors: result,
+        durationMilliseconds: milliseconds(from: duration)
+      )
     }.value
+  }
+
+  private static func recordTelemetry(
+    compiledURL: URL,
+    workload: CoreMLNeuralWorkload,
+    route: CoreMLExecutionRoute,
+    actualMode: CoreMLComputeMode,
+    durationMilliseconds: Double,
+    fallbackUsed: Bool
+  ) {
+    CoreMLNeuralRuntimeTelemetry.shared.record(
+      CoreMLNeuralRuntimeEvent(
+        workload: workload.kind,
+        compiledPath: compiledURL.standardizedFileURL.path,
+        mode: actualMode,
+        source: route.source,
+        itemCount: workload.itemCount,
+        expectedPredictions: route.expectedPredictions,
+        durationMilliseconds: durationMilliseconds,
+        fallbackUsed: fallbackUsed,
+        reason: route.reason
+      )
+    )
   }
 
   private static func normalized(_ vector: [Float]) throws -> [Float] {
@@ -135,6 +232,13 @@ public enum CoreMLEmbeddingRunner {
       throw CoreMLEmbeddingError.emptyEmbedding
     }
     return vector.map { $0 / norm }
+  }
+
+  private static func milliseconds(from duration: Duration) -> Double {
+    let components = duration.components
+    let seconds = Double(components.seconds)
+    let attoseconds = Double(components.attoseconds)
+    return seconds * 1_000 + attoseconds / 1_000_000_000_000_000
   }
 }
 

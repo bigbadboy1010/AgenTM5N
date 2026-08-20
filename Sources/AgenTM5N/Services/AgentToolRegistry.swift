@@ -54,6 +54,7 @@ public enum AgentToolRegistry {
     let operatingConfiguration = AgentOperatingLayerStore.load()
     if operatingConfiguration.bundledToolsEnabled {
       BundledToolPackInstaller.ensureInstalled()
+      MacControlPlaneToolPackInstaller.ensureInstalled()
     }
 
     return unique(
@@ -169,6 +170,15 @@ public enum AgentToolRegistry {
     .init(name: "shortcuts_list", capability: .system, risk: .read, cacheable: true),
     .init(name: "shortcuts_run", capability: .system, risk: .execute),
     .init(name: "finder_reveal", capability: .system, risk: .execute),
+    .init(name: "custom_mac_apps_list", capability: .system, risk: .read, cacheable: true),
+    .init(name: "custom_mac_app_open", capability: .system, risk: .execute),
+    .init(name: "custom_mac_app_focus", capability: .system, risk: .execute),
+    .init(name: "custom_mac_windows_list", capability: .system, risk: .read),
+    .init(name: "custom_mac_spotlight_search", capability: .system, risk: .read),
+    .init(name: "custom_mac_file_metadata", capability: .system, risk: .read),
+    .init(name: "custom_mac_open_path", capability: .system, risk: .execute),
+    .init(name: "custom_mac_screenshot", capability: .system, risk: .write),
+    .init(name: "custom_mac_shortcut_run_text", capability: .system, risk: .execute),
 
     .init(name: "reminders_list", capability: .reminders, risk: .read),
     .init(name: "reminders_create", capability: .reminders, risk: .write),
@@ -257,6 +267,7 @@ public enum AgentToolRegistry {
     }
     if SelfBuiltToolAgentTools.isDynamicToolName(name),
       !BundledToolPackInstaller.isBundledToolName(name)
+        && !MacControlPlaneToolPackInstaller.isControlPlaneToolName(name)
     {
       return true
     }

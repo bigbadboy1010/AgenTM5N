@@ -1,0 +1,183 @@
+name: Agent Mesh policy
+
+on:
+  push:
+    branches:
+      - agent/v1.3.0-neural-control-plane
+  pull_request:
+    branches:
+      - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
+
+permissions:
+  contents: read
+
+jobs:
+  agent-mesh-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse Build 40 Swift sources
+        run: |
+          swiftc -frontend -parse \
+            Sources/AgenTM5N/Domain/AgentMeshModels.swift \
+            Sources/AgenTM5N/Services/AgentMeshSecurity.swift \
+            Sources/AgenTM5N/Services/AgentMeshPeerStore.swift \
+            Sources/AgenTM5N/Services/AgentMeshTaskCoordinator.swift \
+            Sources/AgenTM5N/Services/AgentMeshHTTPServer.swift \
+            Sources/AgenTM5N/Services/AgentMeshClient.swift \
+            Sources/AgenTM5N/Services/AgentMeshExecutionService.swift \
+            Sources/AgenTM5N/Services/AgentMeshController.swift \
+            Sources/AgenTM5N/Views/AgentMeshView.swift \
+            Tests/AgenTM5NTests/AgentMeshTests.swift
+
+      - name: Validate cryptographic trust boundary
+        shell: python
+        run: |
+          from pathlib import Path
+
+          checks = {
+              "Sources/AgenTM5N/Services/AgentMeshSecurity.swift": [
+                  "Curve25519.Signing.PrivateKey",
+                  "Curve25519.KeyAgreement.PrivateKey",
+                  "ChaChaPoly.seal",
+                  "ChaChaPoly.open",
+                  "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly",
+                  "canonicalRequest",
+                  "recipientNodeID",
+                  "AgentMeshReplayProtector",
+                  "replayDetected",
+                  "maximumClockSkewSeconds",
+              ],
+              "Sources/AgenTM5N/Services/AgentMeshPeerStore.swift": [
+                  "registerPending",
+                  "existing.signingPublicKey == descriptor.signingPublicKey",
+                  "existing.agreementPublicKey == descriptor.agreementPublicKey",
+                  "expectedFingerprint",
+                  "peer.status == .pending",
+                  "status = .trusted",
+                  "status = .revoked",
+                  "allowedCapabilities",
+              ],
+              "Sources/AgenTM5N/Services/AgentMeshHTTPServer.swift": [
+                  '"/v1/health"',
+                  '"/v1/node"',
+                  '"/v1/capabilities"',
+                  '"/v1/peers/enroll"',
+                  '"/v1/peers"',
+                  '"/v1/tasks"',
+                  '"events"',
+                  '"cancel"',
+                  '"x-agentm5n-protocol"',
+                  '"x-agentm5n-node"',
+                  '"x-agentm5n-timestamp"',
+                  '"x-agentm5n-nonce"',
+                  '"x-agentm5n-signature"',
+                  "openRequestBody",
+                  "sealedResponse",
+                  "rateLimiter.allow",
+              ],
+              "Sources/AgenTM5N/Services/AgentMeshTaskCoordinator.swift": [
+                  "peer.allowedCapabilities.intersection(request.requestedCapabilities)",
+                  "if let existing = snapshots[request.id]",
+                  "AgentMeshTaskCoordinatorError.peerMismatch",
+                  "waitingForApproval",
+                  "maximumResultCharacters",
+                  "cancelAll(peerID:",
+              ],
+              "Sources/AgenTM5N/Services/AgentMeshExecutionService.swift": [
+                  "AgentCapabilityExecutionContext.$allowedCapabilities",
+                  "AgentDelegationContext.maximumDepth",
+                  "guard turnCalls.count <= 1",
+                  "AgentMeshRemoteApproval.authorize",
+                  "requiresLocalApproval",
+                  "personalData",
+                  "permissionMode: .confirm",
+                  "maximumRemoteToolRounds = 12",
+                  "agent-mesh-audit.jsonl",
+                  "trustedPeer(id: peer.id)",
+              ],
+              "Sources/AgenTM5N/Services/AgentMeshClient.swift": [
+                  "identity.descriptor(kind: .agentM5N)",
+                  "expectedRemoteKind",
+                  "identity.seal",
+                  "identity.open",
+                  "verifyResponse",
+                  "replayProtector.validate",
+              ],
+              "Sources/AgenTM5N/Domain/AgentMeshModels.swift": [
+                  'name = "agentm5n-mesh/1"',
+                  "case agentNexus",
+                  "case pending",
+                  "case trusted",
+                  "case revoked",
+                  "AgentMeshSealedMessage",
+                  "init(from decoder: Decoder)",
+              ],
+              "Tests/AgenTM5NTests/AgentMeshTests.swift": [
+                  "testPendingPeerRequiresExplicitFingerprintBoundTrustAndCanBeRevoked",
+                  "testPendingPeerKeySubstitutionFailsClosedBeforeTrust",
+                  "testTrustRejectsFingerprintDifferentFromDisplayedPendingRecord",
+                  "testTrustedPeerKeyRotationFailsClosed",
+                  "testDecodedTaskRequestReappliesNetworkBounds",
+                  "testReplayProtectorRejectsSameNonceTwice",
+                  "testTaskCoordinatorIntersectsCapabilitiesAndIsIdempotent",
+                  "testTaskCoordinatorRejectsRevokedPeer",
+              ],
+          }
+
+          failures = []
+          for filename, needles in checks.items():
+              text = Path(filename).read_text()
+              for needle in needles:
+                  if needle not in text:
+                      failures.append(f"{filename}: hardened Agent Mesh invariant missing {needle!r}")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Enforce remote execution fail-closed policy
+        shell: python
+        run: |
+          from pathlib import Path
+
+          execution = Path("Sources/AgenTM5N/Services/AgentMeshExecutionService.swift").read_text()
+          server = Path("Sources/AgenTM5N/Services/AgentMeshHTTPServer.swift").read_text()
+          client = Path("Sources/AgenTM5N/Services/AgentMeshClient.swift").read_text()
+          controller = Path("Sources/AgenTM5N/Services/AgentMeshController.swift").read_text()
+
+          forbidden_execution = [
+              "permissionMode: configuration.permissionMode",
+              "SecureSecretBroker",
+              "vaultStore",
+              "secret_list",
+              "http_request",
+              "ssh_run",
+              "edge_control",
+              "agent_delegate",
+          ]
+          bad = [needle for needle in forbidden_execution if needle in execution]
+          if bad:
+              raise SystemExit(
+                  "Remote Mesh execution may not inherit local Full Access or expose high-risk/secret surfaces: "
+                  + ", ".join(bad)
+              )
+
+          if 'request.path == "/v1/tasks"' in server and "let peer = try await authenticate(request)" not in server:
+              raise SystemExit("Task endpoint must be behind authenticated peer routing")
+
+          if "identity.descriptor(kind: expectedRemoteKind)" in client:
+              raise SystemExit("Enrollment must never relabel the local AgenTM5N identity")
+
+          for capability in [".macPersonal", ".reminders"]:
+              read_scope = controller.split("public func trustReadOnly", 1)[1].split("public func trustDevOps", 1)[0]
+              devops_scope = controller.split("public func trustDevOps", 1)[1].split("public func revoke", 1)[0]
+              if capability in read_scope or capability in devops_scope:
+                  raise SystemExit("Default Mesh trust presets must not silently grant personal-data capabilities: " + capability)
+
+      - name: Note target-Mac gate
+        run: |
+          echo "Static hardened Agent Mesh security boundary passed."
+          echo "Native macOS build plus a real two-node enrollment/trust/task/approval test remains mandatory."
