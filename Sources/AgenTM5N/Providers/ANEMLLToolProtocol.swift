@@ -82,6 +82,12 @@ public enum ANEMLLToolProtocol {
       return true
     }
 
+    // ctx512 must not pay for a four-tool catalog on ordinary chat turns.
+    // A score of 4 is the generic fallback meaning no prompt/tool affinity was
+    // found. Only context-relevant tools are advertised to the tiny model.
+    candidates = candidates.filter { priority($0, prompt: prompt) < 4 }
+    guard !candidates.isEmpty else { return [] }
+
     candidates.sort { lhs, rhs in
       let left = priority(lhs, prompt: prompt)
       let right = priority(rhs, prompt: prompt)
