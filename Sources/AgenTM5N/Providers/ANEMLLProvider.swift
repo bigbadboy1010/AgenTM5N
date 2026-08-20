@@ -82,6 +82,7 @@ public final class ANEMLLProvider: @unchecked Sendable {
     let transport: ANEMLLToolTransportRequest
     let systemPrompt: String
     let runtime: ANEMLLRuntimeConfiguration
+    let contextLength: Int?
     let maxTokens: Int
     let temperature: Double
     let timeoutSeconds: Int
@@ -112,7 +113,10 @@ public final class ANEMLLProvider: @unchecked Sendable {
       messages: messages,
       tools: []
     )
-    let runtimeTurn = await prepareRuntimeTurn(request.transport)
+    let runtimeTurn = await prepareRuntimeTurn(
+      request.transport,
+      contextLength: request.contextLength
+    )
     let result = try await persistentRuntime.complete(
       prompt: request.transport.prompt,
       systemPrompt: request.systemPrompt,
@@ -148,7 +152,10 @@ public final class ANEMLLProvider: @unchecked Sendable {
             messages: messages,
             tools: tools
           )
-          let runtimeTurn = await prepareRuntimeTurn(request.transport)
+          let runtimeTurn = await prepareRuntimeTurn(
+            request.transport,
+            contextLength: request.contextLength
+          )
           let thinkingSplitter = ANEMLLThinkingDeltaSplitter()
           let toolFilter = ANEMLLToolEnvelopeFilter()
 
@@ -270,15 +277,36 @@ public final class ANEMLLProvider: @unchecked Sendable {
       messages: messages,
       operatingConfiguration: operating
     )
-    let transport = try ANEMLLToolProtocol.makeTransportRequest(
+    let rawTransport = try ANEMLLToolProtocol.makeTransportRequest(
       messages: messages,
       tools: effectiveTools
     )
-    let systemPrompt = build39SystemPrompt(in: messages)
     let runtime = ANEMLLRuntimeStore.load()
+    let descriptor = try ANEMLLModelBundleInspector.inspect(metaPath: runtime.metaPath)
+    let contextLength = descriptor.contextLength
+    let transportPrompt = ANEMLLContextBudget.addingRecentConversationContext(
+      to: rawTransport.prompt,
+      messages: messages,
+      isToolContinuation: rawTransport.isToolContinuation,
+      contextLength: contextLength
+    )
+    let transport = ANEMLLToolTransportRequest(
+      prompt: transportPrompt,
+      userTurnCount: rawTransport.userTurnCount,
+      isFreshConversation: rawTransport.isFreshConversation,
+      isToolContinuation: rawTransport.isToolContinuation
+    )
+    let systemPrompt = ANEMLLContextBudget.compactSystemPrompt(
+      build39SystemPrompt(in: messages),
+      contextLength: contextLength
+    )
     let requestedMaxTokens = operating.numPredict > 0
       ? operating.numPredict
       : runtime.defaultMaxTokens
+    let effectiveMaxTokens = ANEMLLContextBudget.maxOutputTokens(
+      requested: requestedMaxTokens,
+      contextLength: contextLength
+    )
     let requestedTemperature = operating.temperature.isFinite
       ? operating.temperature
       : runtime.defaultTemperature
@@ -287,7 +315,8 @@ public final class ANEMLLProvider: @unchecked Sendable {
       transport: transport,
       systemPrompt: systemPrompt,
       runtime: runtime,
-      maxTokens: requestedMaxTokens,
+      contextLength: contextLength,
+      maxTokens: effectiveMaxTokens,
       temperature: requestedTemperature,
       timeoutSeconds: operating.requestTimeoutSeconds,
       effectiveTools: effectiveTools
@@ -295,13 +324,21 @@ public final class ANEMLLProvider: @unchecked Sendable {
   }
 
   private func prepareRuntimeTurn(
-    _ transport: ANEMLLToolTransportRequest
+    _ transport: ANEMLLToolTransportRequest,
+    contextLength: Int?
   ) async -> Int {
-    if transport.isFreshConversation {
-      await persistentRuntime.resetConversation()
-    }
     let activeTurns = await persistentRuntime.activeTurns()
-    return max(transport.userTurnCount, activeTurns + 1)
+    if ANEMLLContextBudget.shouldRotateBeforeUserTurn(
+      contextLength: contextLength,
+      activeTurns: activeTurns,
+      isFreshConversation: transport.isFreshConversation,
+      isToolContinuation: transport.isToolContinuation
+    ) {
+      await persistentRuntime.resetConversation()
+      return max(1, transport.userTurnCount)
+    }
+    let currentTurns = await persistentRuntime.activeTurns()
+    return max(transport.userTurnCount, currentTurns + 1)
   }
 
   private func build39SystemPrompt(in messages: [ProviderMessage]) -> String {
