@@ -7,6 +7,8 @@ public enum AgentMeshExecutionError: LocalizedError {
   case unsupportedTool(String)
   case toolOutsidePeerScope(String)
   case toolLimitReached
+  case multipleToolCalls
+  case delegationDepthExceeded
   case emptyResult
 
   public var errorDescription: String? {
@@ -21,6 +23,10 @@ public enum AgentMeshExecutionError: LocalizedError {
       return "Tool \(name) liegt ausserhalb des Peer-Capability-Scopes."
     case .toolLimitReached:
       return "Remote Agent Mesh Tool-Limit erreicht."
+    case .multipleToolCalls:
+      return "Remote Agent Mesh erlaubt hoechstens einen Tool-Aufruf pro Modellrunde."
+    case .delegationDepthExceeded:
+      return "Maximale Agent-Mesh-Delegationstiefe erreicht."
     case .emptyResult:
       return "Der delegierte Agent-Mesh-Task lieferte kein Ergebnis."
     }
@@ -99,8 +105,8 @@ public actor AgentMeshAuditStore {
         try data.write(to: fileURL, options: [.atomic])
       }
     } catch {
-      // Audit failure must not expose task content or secret material through a
-      // secondary exception path. Build 40 records only identifiers/decisions.
+      // Deliberately content-free and best-effort. Do not produce a secondary
+      // exception containing task prompts, tool arguments, outputs or secrets.
     }
   }
 }
@@ -186,6 +192,9 @@ public actor AgentMeshExecutionService {
     guard configuration.providerKind == .ollamaLocal else {
       throw AgentMeshExecutionError.unsupportedProvider
     }
+    guard AgentDelegationContext.depth < AgentDelegationContext.maximumDepth else {
+      throw AgentMeshExecutionError.delegationDepthExceeded
+    }
 
     configuration.agentEnabled = true
     configuration.maxToolIterations = min(
@@ -202,7 +211,7 @@ public actor AgentMeshExecutionService {
     )
 
     return try await AgentDelegationContext.$depth.withValue(
-      min(AgentDelegationContext.depth + 1, AgentDelegationContext.maximumDepth)
+      AgentDelegationContext.depth + 1
     ) {
       try await AgentCapabilityExecutionContext.$allowedCapabilities.withValue(effectiveCapabilities) {
         try await runProviderLoop(
@@ -262,6 +271,10 @@ public actor AgentMeshExecutionService {
         merge(event.toolCalls, into: &turnCalls)
       }
 
+      guard turnCalls.count <= 1 else {
+        throw AgentMeshExecutionError.multipleToolCalls
+      }
+
       messages.append(
         ProviderMessage(
           role: .assistant,
@@ -272,7 +285,7 @@ public actor AgentMeshExecutionService {
       )
       if !turnContent.isEmpty { finalText = turnContent }
 
-      guard !turnCalls.isEmpty else { break }
+      guard let call = turnCalls.first else { break }
       guard rounds < configuration.maxToolIterations,
         rounds < Self.maximumRemoteToolRounds
       else {
@@ -280,17 +293,15 @@ public actor AgentMeshExecutionService {
       }
       rounds += 1
 
-      for call in turnCalls {
-        let toolResult = await executeTool(
-          call,
-          request: request,
-          peer: peer,
-          effectiveCapabilities: effectiveCapabilities,
-          configuration: configuration,
-          sink: sink
-        )
-        messages.append(toolResult)
-      }
+      let toolResult = await executeTool(
+        call,
+        request: request,
+        peer: peer,
+        effectiveCapabilities: effectiveCapabilities,
+        configuration: configuration,
+        sink: sink
+      )
+      messages.append(toolResult)
     }
 
     let clean = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -390,10 +401,12 @@ public actor AgentMeshExecutionService {
     } else if MacNativeMutationAgentTools.handles(call) {
       result = await MacNativeMutationAgentTools.execute(call: call)
     } else {
+      // Never inherit local Full Access for remote callers. The peer capability
+      // scope plus AgentRuntime's normal workspace sandbox is always enforced.
       result = await runtime.execute(
         call: call,
         workspacePath: configuration.workspacePath,
-        permissionMode: configuration.permissionMode
+        permissionMode: .confirm
       )
     }
 
