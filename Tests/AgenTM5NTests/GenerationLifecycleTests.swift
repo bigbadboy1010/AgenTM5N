@@ -13,21 +13,7 @@ final class GenerationLifecycleTests: XCTestCase {
     )
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let state = AppState(
-      configurationStore: JSONDocumentStore<AppConfiguration>(
-        url: root.appendingPathComponent("configuration.json"),
-        defaultValue: .default
-      ),
-      conversationStore: JSONDocumentStore<[ChatMessage]>(
-        url: root.appendingPathComponent("conversation.json"),
-        defaultValue: []
-      ),
-      sshHostStore: JSONDocumentStore<[SSHHost]>(
-        url: root.appendingPathComponent("ssh-hosts.json"),
-        defaultValue: []
-      ),
-      vaultStore: VaultStore(url: root.appendingPathComponent("vault.json"))
-    )
+    let state = makeState(root: root)
 
     // Use a deliberately unreachable local endpoint. The important assertions
     // occur synchronously before the generation task is allowed to run.
@@ -67,6 +53,53 @@ final class GenerationLifecycleTests: XCTestCase {
     XCTAssertFalse(state.isGenerating)
   }
 
+  @MainActor
+  func testManagedRemoteTurnUsesSameCancellationAndCleanupGate() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AgenTM5N-managed-generation-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: root,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let state = makeState(root: root)
+    let turnID = UUID()
+
+    XCTAssertTrue(state.beginManagedGeneration(turnID: turnID))
+    XCTAssertEqual(state.generationPhase, .running(turnID: turnID))
+    XCTAssertTrue(state.isGenerating)
+
+    let task = Task<Void, Never> {
+      await Task.yield()
+    }
+    state.installManagedGenerationTask(task, turnID: turnID)
+
+    state.stopGeneration()
+
+    XCTAssertEqual(state.generationPhase, .cancelling(turnID: turnID))
+    XCTAssertTrue(state.isGenerating)
+    XCTAssertFalse(
+      state.beginManagedGeneration(turnID: UUID()),
+      "A second remote/local turn must stay blocked until the owning cleanup finishes"
+    )
+
+    let staleTurnID = UUID()
+    state.finishManagedGeneration(turnID: staleTurnID)
+    XCTAssertEqual(
+      state.generationPhase,
+      .cancelling(turnID: turnID),
+      "A stale completion must never unlock the active generation"
+    )
+
+    state.finishManagedGeneration(turnID: turnID)
+    XCTAssertEqual(state.generationPhase, .idle)
+    XCTAssertFalse(state.isGenerating)
+
+    task.cancel()
+    await task.value
+  }
+
   func testGenerationPhaseCarriesTurnIdentityAcrossCancellationAndCleanup() {
     let id = UUID()
     XCTAssertEqual(GenerationPhase.running(turnID: id).turnID, id)
@@ -75,5 +108,24 @@ final class GenerationLifecycleTests: XCTestCase {
     XCTAssertNil(GenerationPhase.idle.turnID)
     XCTAssertTrue(GenerationPhase.idle.acceptsNewTurn)
     XCTAssertFalse(GenerationPhase.running(turnID: id).acceptsNewTurn)
+  }
+
+  @MainActor
+  private func makeState(root: URL) -> AppState {
+    AppState(
+      configurationStore: JSONDocumentStore<AppConfiguration>(
+        url: root.appendingPathComponent("configuration.json"),
+        defaultValue: .default
+      ),
+      conversationStore: JSONDocumentStore<[ChatMessage]>(
+        url: root.appendingPathComponent("conversation.json"),
+        defaultValue: []
+      ),
+      sshHostStore: JSONDocumentStore<[SSHHost]>(
+        url: root.appendingPathComponent("ssh-hosts.json"),
+        defaultValue: []
+      ),
+      vaultStore: VaultStore(url: root.appendingPathComponent("vault.json"))
+    )
   }
 }
