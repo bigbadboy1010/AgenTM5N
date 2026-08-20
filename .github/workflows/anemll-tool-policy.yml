@@ -33,14 +33,16 @@ jobs:
 
           checks = {
               "Sources/AgenTM5N/Providers/ANEMLLToolProtocol.swift": [
-                  "maximumToolsPerTurn = 6",
+                  "maximumToolsPerTurn = 4",
+                  "maximumToolResultCharacters = 900",
+                  "maximumEnvelopeBytes",
                   "enabledCapabilities",
                   "BundledToolPackInstaller.isBundledToolName",
                   "<agentm5n_tool_call>",
                   "unknownTool",
                   "multipleToolCalls",
+                  "isSubset(of: allowedArguments)",
                   "removingThinkingBlocks",
-                  "maximumToolResultCharacters",
                   "ANEMLLToolEnvelopeFilter",
               ],
               "Sources/AgenTM5N/Providers/ANEMLLProvider.swift": [
@@ -61,9 +63,11 @@ jobs:
               "Tests/AgenTM5NTests/ANEMLLToolProtocolTests.swift": [
                   "testParsesSingleAdvertisedToolCall",
                   "testRejectsUnadvertisedToolCall",
+                  "testRejectsArgumentsOutsideAdvertisedSchema",
                   "testRejectsMultipleToolCallsInOneModelRound",
                   "testToolCallInsideThinkingBlockIsNeverExecuted",
                   "testTransportUsesTrailingToolResultInsteadOfRepeatingUserPrompt",
+                  "testToolResultIsBoundedBeforeReturningToSmallContextModel",
                   "testToolEnvelopeFilterSuppressesChunkedEnvelope",
               ],
           }
