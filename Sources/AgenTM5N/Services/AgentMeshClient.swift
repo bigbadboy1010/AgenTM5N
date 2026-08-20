@@ -53,8 +53,6 @@ public final class AgentMeshClient: @unchecked Sendable {
     callbackEndpoint: String,
     expectedRemoteKind: AgentMeshPeerKind = .agentM5N
   ) async throws -> AgentMeshPeerRecord {
-    // This process is always an AgenTM5N node. The expected remote kind only
-    // validates the peer/adapter and must never mutate our own identity type.
     let local = try identity.descriptor(kind: .agentM5N)
     let payload = AgentMeshEnrollmentRequest(
       node: local,
@@ -79,9 +77,8 @@ public final class AgentMeshClient: @unchecked Sendable {
     }
 
     if let existing = try await peerStore.peer(id: enrollment.node.nodeID),
-      existing.status == .trusted,
-      (existing.signingPublicKey != enrollment.node.signingPublicKey
-        || existing.agreementPublicKey != enrollment.node.agreementPublicKey)
+      existing.signingPublicKey != enrollment.node.signingPublicKey
+        || existing.agreementPublicKey != enrollment.node.agreementPublicKey
     {
       throw AgentMeshClientError.remoteIdentityChanged
     }
@@ -242,6 +239,7 @@ public final class AgentMeshClient: @unchecked Sendable {
     let signature = try identity.sign(
       method: method,
       path: path,
+      recipientNodeID: peer.id,
       timestampMilliseconds: timestamp,
       nonce: nonce,
       body: rawBody
@@ -303,6 +301,7 @@ public final class AgentMeshClient: @unchecked Sendable {
       authentication: authentication,
       method: "RESPONSE-\(status)",
       path: path,
+      recipientNodeID: try identity.nodeID(),
       body: data,
       peer: peer
     )
