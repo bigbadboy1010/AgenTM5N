@@ -40,6 +40,7 @@ public final class ModelManagerController: ObservableObject {
       )
       let saved = try await store.upsert(profile)
       await reload()
+      await HybridRoutingController.shared.refreshEnvironment()
       statusMessage = "Aktuelle Provider-/Runtime-Konfiguration als Modellprofil importiert."
       return saved
     } catch {
@@ -52,6 +53,7 @@ public final class ModelManagerController: ObservableObject {
     do {
       _ = try await store.upsert(profile)
       await reload()
+      await HybridRoutingController.shared.refreshEnvironment()
       statusMessage = "Modellprofil gespeichert."
     } catch {
       statusMessage = error.localizedDescription
@@ -62,6 +64,7 @@ public final class ModelManagerController: ObservableObject {
     do {
       try await store.remove(id: profile.id)
       await reload()
+      await HybridRoutingController.shared.refreshEnvironment()
       statusMessage = "Modellprofil entfernt. Vault-Secrets wurden nicht verändert."
     } catch {
       statusMessage = error.localizedDescription
@@ -101,6 +104,7 @@ public final class ModelManagerController: ObservableObject {
       await appState.saveConfiguration()
       try await store.setActive(id: profile.id)
       await reload()
+      await HybridRoutingController.shared.refreshEnvironment()
       statusMessage = "Aktiv: \(profile.name)"
     } catch {
       appState.errorMessage = error.localizedDescription
