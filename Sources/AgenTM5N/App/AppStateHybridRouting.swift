@@ -72,43 +72,10 @@ extension AppState {
   }
 
   private func sendViaTemporaryAppleRoute() {
-    let originalProvider = configuration.providerKind
-    let originalBaseURL = configuration.baseURL
-    let originalModel = configuration.model
-    let originalSecretID = configuration.apiKeySecretID
-
-    configuration.providerKind = .appleOnDevice
-    configuration.baseURL = ProviderKind.appleOnDevice.defaultBaseURL
-    configuration.model = "Apple System Language Model"
-    configuration.apiKeySecretID = nil
-    sendMessage()
-
-    Task { @MainActor [weak self] in
-      guard let self else { return }
-
-      // sendMessage() schedules generation asynchronously. Do not restore the
-      // provider before performSend has actually entered its generation phase.
-      var observedGeneration = self.isGenerating
-      for _ in 0..<100 where !observedGeneration {
-        try? await Task.sleep(for: .milliseconds(10))
-        observedGeneration = self.isGenerating
-      }
-
-      while self.isGenerating {
-        try? await Task.sleep(for: .milliseconds(75))
-      }
-
-      // Restore only if the temporary route is still present. A deliberate UI
-      // provider change made by the user while generation was running wins.
-      guard self.configuration.providerKind == .appleOnDevice,
-        self.configuration.model == "Apple System Language Model"
-      else { return }
-
-      self.configuration.providerKind = originalProvider
-      self.configuration.baseURL = originalBaseURL
-      self.configuration.model = originalModel
-      self.configuration.apiKeySecretID = originalSecretID
-    }
+    // Capture the current user configuration by value and derive an Apple route
+    // inside TurnExecutionPlan. AppConfiguration remains untouched and therefore
+    // requires no polling restore task after generation.
+    sendMessage(using: configuration, origin: .hybridAppleOnDevice)
   }
 
   private func performHybridMeshSend(
