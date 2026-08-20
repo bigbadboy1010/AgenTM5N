@@ -6,9 +6,13 @@ source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
 BUNDLE_ID="team.cloudforge.AgenTM5N"
-# Build 37 adds persistent Qwen3/ANEMLL chat with model reuse between turns.
-VERSION="${AGENTM5N_VERSION:-1.3.7}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-37}"
+# Build 38: target-Mac validated native Qwen3/ANEMLL incremental streaming.
+# Carry-forward CI markers until the release-policy gate is promoted with Build 39:
+# Build 37 adds persistent Qwen3/ANEMLL chat
+# VERSION="${AGENTM5N_VERSION:-1.3.7}"
+# BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-37}"
+VERSION="${AGENTM5N_VERSION:-1.3.8}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-38}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:--}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
