@@ -310,6 +310,7 @@ public final class AgentMeshHTTPServer: @unchecked Sendable {
       guard await rateLimiter.allow(peerID: peer.id, isTaskSubmission: isSubmission) else {
         return AgentMeshHTTPResponse(status: 429, reason: "Too Many Requests", body: Self.genericError("rate_limited"))
       }
+      try await peerStore.markSeen(id: peer.id)
 
       if request.method == "GET", request.path == "/v1/node" {
         let descriptor = try identity.descriptor()
@@ -369,6 +370,8 @@ public final class AgentMeshHTTPServer: @unchecked Sendable {
       return AgentMeshHTTPResponse(status: 404, reason: "Not Found", body: Self.genericError("not_found"))
     } catch AgentMeshSecurityError.peerNotTrusted {
       return AgentMeshHTTPResponse(status: 403, reason: "Forbidden", body: Self.genericError("peer_not_trusted"))
+    } catch AgentMeshSecurityError.invalidSignature, AgentMeshSecurityError.wrongRecipient {
+      return AgentMeshHTTPResponse(status: 401, reason: "Unauthorized", body: Self.genericError("invalid_signature"))
     } catch AgentMeshSecurityError.replayDetected {
       return AgentMeshHTTPResponse(status: 409, reason: "Conflict", body: Self.genericError("replay_blocked"))
     } catch AgentMeshSecurityError.expiredRequest {
@@ -431,6 +434,7 @@ public final class AgentMeshHTTPServer: @unchecked Sendable {
       authentication: authentication,
       method: request.method,
       path: request.target,
+      recipientNodeID: try identity.nodeID(),
       body: request.body,
       peer: peer
     )
@@ -439,7 +443,6 @@ public final class AgentMeshHTTPServer: @unchecked Sendable {
       nonce: nonce,
       timestampMilliseconds: timestamp
     )
-    try await peerStore.markSeen(id: nodeID)
     return peer
   }
 
@@ -465,6 +468,7 @@ public final class AgentMeshHTTPServer: @unchecked Sendable {
     let signature = try identity.sign(
       method: "RESPONSE-\(status)",
       path: request.target,
+      recipientNodeID: peer.id,
       timestampMilliseconds: timestamp,
       nonce: nonce,
       body: body
