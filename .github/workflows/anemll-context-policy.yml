@@ -1,0 +1,85 @@
+name: ANEMLL context policy
+
+on:
+  push:
+    branches:
+      - agent/v1.3.0-neural-control-plane
+  pull_request:
+    branches:
+      - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
+
+permissions:
+  contents: read
+
+jobs:
+  anemll-context-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse context-budget Swift sources
+        run: |
+          swiftc -frontend -parse \
+            Sources/AgenTM5N/Providers/ANEMLLContextBudget.swift \
+            Sources/AgenTM5N/Providers/ANEMLLProvider.swift \
+            Tests/AgenTM5NTests/ANEMLLContextBudgetTests.swift
+
+      - name: Validate ctx512 freshness invariants
+        shell: python
+        run: |
+          from pathlib import Path
+
+          budget = Path("Sources/AgenTM5N/Providers/ANEMLLContextBudget.swift").read_text()
+          provider = Path("Sources/AgenTM5N/Providers/ANEMLLProvider.swift").read_text()
+          tests = Path("Tests/AgenTM5NTests/ANEMLLContextBudgetTests.swift").read_text()
+
+          required = {
+              "budget": [
+                  "smallContextThreshold = 1_024",
+                  "smallContextSystemCharacters = 240",
+                  "smallContextTransportCharacters = 900",
+                  "contextLength / 4",
+                  "CURRENT USER/TASK has priority",
+                  "current request preserved",
+                  "shouldRotateBeforeUserTurn",
+                  "isToolContinuation",
+                  "addingRecentConversationContext",
+                  "CURRENT USER REQUEST (highest priority)",
+              ],
+              "provider": [
+                  "ANEMLLContextBudget.addingRecentConversationContext",
+                  "ANEMLLContextBudget.compactSystemPrompt",
+                  "ANEMLLContextBudget.maxOutputTokens",
+                  "ANEMLLContextBudget.shouldRotateBeforeUserTurn",
+                  "await persistentRuntime.resetConversation()",
+                  "contextLength: request.contextLength",
+              ],
+              "tests": [
+                  "testCtx512ReservesMostWindowForCurrentInput",
+                  "testTransportCompactionPreservesHeadAndCurrentRequestTail",
+                  "testSmallContextRotatesBetweenUserTurnsButNotToolContinuation",
+                  "testRecentContextKeepsImmediatePreviousExchangeAndCurrentRequest",
+              ],
+          }
+
+          texts = {"budget": budget, "provider": provider, "tests": tests}
+          failures = []
+          for key, needles in required.items():
+              for needle in needles:
+                  if needle not in texts[key]:
+                      failures.append(f"{key}: ctx512 freshness invariant missing {needle!r}")
+
+          if "smallContextTransportCharacters = 900" not in budget:
+              failures.append("ctx512 transport prompt must remain bounded")
+          if "return min(requested, cap)" not in budget:
+              failures.append("ctx512 generated token budget must be enforced")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Context policy note
+        run: |
+          echo "ANEMLL ctx512 prompt-freshness policy passed."
+          echo "Current user input is prioritized; small-context user turns rotate while tool continuations remain persistent."
