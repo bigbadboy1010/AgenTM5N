@@ -251,13 +251,17 @@ public enum ANEMLLToolProtocol {
       prompt,
       ["erstell", "anleg", "schreib", "write", "create file", "new file"]
     )
-    if createFileIntent, name == "write_file" { return 0 }
-
     let patchIntent = containsAny(
       prompt,
       ["ändere", "aendere", "änder", "modify", "patch", "bearbeite", "edit"]
     )
-    if patchIntent, name == "apply_patch" { return 0 }
+
+    // Explicit mutations must outrank incidental read keywords such as
+    // "Inhalt/content" in prompts like "create file ... with content ...".
+    // This keeps the tiny Qwen3 tool catalog deterministic and prevents an
+    // alphabetic tie from selecting read_file instead of the requested write.
+    if patchIntent, name == "apply_patch" { return -20 }
+    if createFileIntent, name == "write_file" { return -10 }
 
     let readFileIntent = containsAny(
       prompt,
