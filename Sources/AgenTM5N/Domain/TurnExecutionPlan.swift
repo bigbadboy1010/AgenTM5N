@@ -17,19 +17,22 @@ public struct TurnExecutionPlan: Equatable, Sendable {
   public let configuration: AppConfiguration
   public let operatingConfiguration: AgentOperatingLayerConfiguration
   public let automaticBudget: AutomaticInferenceBudget?
+  public let residencyAction: AutomaticRuntimeResidencyAction
 
   public init(
     turnID: UUID,
     origin: TurnExecutionOrigin,
     configuration: AppConfiguration,
     operatingConfiguration: AgentOperatingLayerConfiguration,
-    automaticBudget: AutomaticInferenceBudget? = nil
+    automaticBudget: AutomaticInferenceBudget? = nil,
+    residencyAction: AutomaticRuntimeResidencyAction = .preserveUserConfiguration
   ) {
     self.turnID = turnID
     self.origin = origin
     self.configuration = configuration
     self.operatingConfiguration = operatingConfiguration
     self.automaticBudget = automaticBudget
+    self.residencyAction = residencyAction
   }
 
   public var heavyRuntime: HeavyInferenceRuntime? {
@@ -48,7 +51,11 @@ public struct TurnExecutionPlan: Equatable, Sendable {
       turnID: turnID,
       origin: .manualProvider,
       configuration: configuration,
-      operatingConfiguration: operatingConfiguration
+      operatingConfiguration: operatingConfiguration,
+      residencyAction: AutomaticRuntimeResidencyPolicy.action(
+        origin: .manualProvider,
+        runtime: nil
+      )
     )
   }
 
@@ -71,6 +78,10 @@ public struct TurnExecutionPlan: Equatable, Sendable {
       automaticBudget: AutomaticInferenceBudget.automatic(
         runtime: .appleFoundationModels,
         contextWindow: operatingConfiguration.numContext
+      ),
+      residencyAction: AutomaticRuntimeResidencyPolicy.action(
+        origin: .hybridAppleOnDevice,
+        runtime: .appleFoundationModels
       )
     )
   }
@@ -98,6 +109,10 @@ public struct TurnExecutionPlan: Equatable, Sendable {
       runtime: profile.runtime,
       contextWindow: activation.contextWindow
     )
+    let residencyAction = AutomaticRuntimeResidencyPolicy.action(
+      origin: .automaticModelProfile,
+      runtime: profile.runtime
+    )
 
     var routeConfiguration = configuration
     routeConfiguration.providerKind = activation.providerKind
@@ -118,13 +133,18 @@ public struct TurnExecutionPlan: Equatable, Sendable {
       routeOperatingConfiguration.requestTimeoutSeconds,
       budget.timeoutSeconds
     )
+    routeOperatingConfiguration = AutomaticRuntimeResidencyPolicy.applying(
+      residencyAction,
+      to: routeOperatingConfiguration
+    )
 
     return TurnExecutionPlan(
       turnID: turnID,
       origin: .automaticModelProfile,
       configuration: routeConfiguration,
       operatingConfiguration: routeOperatingConfiguration,
-      automaticBudget: budget
+      automaticBudget: budget,
+      residencyAction: residencyAction
     )
   }
 }
