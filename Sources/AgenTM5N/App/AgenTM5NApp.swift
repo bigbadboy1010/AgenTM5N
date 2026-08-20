@@ -26,6 +26,13 @@ struct AgenTM5NApp: App {
     }
     .defaultSize(width: 980, height: 820)
 
+    Window("Hybrid Router", id: "hybrid-router") {
+      HybridRouterView()
+        .environmentObject(appState)
+        .frame(minWidth: 840, minHeight: 640)
+    }
+    .defaultSize(width: 1_020, height: 820)
+
     Window("Agent Mesh", id: "agent-mesh") {
       AgentMeshView()
         .environmentObject(appState)
@@ -51,6 +58,13 @@ private struct ANEMLLRuntimeCommands: Commands {
         openWindow(id: "anemll-qwen3-runtime")
       }
       .keyboardShortcut("q", modifiers: [.command, .option])
+
+      Divider()
+
+      Button("Hybrid Router Control Center") {
+        openWindow(id: "hybrid-router")
+      }
+      .keyboardShortcut("r", modifiers: [.command, .option])
     }
   }
 }
