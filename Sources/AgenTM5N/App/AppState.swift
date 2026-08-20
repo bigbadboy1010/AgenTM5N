@@ -356,27 +356,47 @@ public final class AppState: ObservableObject {
     }
   }
 
-  public func stopGeneration() {
-    guard let turnID = generationPhase.turnID else {
-      // Build-41 Mesh generation still uses the legacy isGenerating signal and
-      // does not own a local heavy-runtime lease. Preserve its existing cancel
-      // watcher until Mesh is migrated to GenerationPhase in a dedicated patch.
-      guard isGenerating else { return }
-      resolvePendingApproval(allowed: false)
-      generationTask?.cancel()
-      generationTask = nil
-      isGenerating = false
+  func beginManagedGeneration(turnID: UUID) -> Bool {
+    guard generationPhase.acceptsNewTurn, !isGenerating else { return false }
+    generationPhase = .running(turnID: turnID)
+    isGenerating = true
+    return true
+  }
+
+  func installManagedGenerationTask(
+    _ task: Task<Void, Never>,
+    turnID: UUID
+  ) {
+    guard generationPhase.turnID == turnID else {
+      task.cancel()
       return
     }
+    generationTask = task
+  }
+
+  func finishManagedGeneration(turnID: UUID) {
+    guard generationPhase.turnID == turnID else { return }
+    generationPhase = .cleaningUp(turnID: turnID)
+    generationTask = nil
+    isGenerating = false
+    generationPhase = .idle
+  }
+
+  public func stopGeneration() {
+    guard let turnID = generationPhase.turnID else { return }
 
     resolvePendingApproval(allowed: false)
     generationPhase = .cancelling(turnID: turnID)
     generationTask?.cancel()
 
-    // Do not mark the UI idle yet. ANEMLL cancellation can require helper
-    // teardown; a second heavy turn stays blocked until performSend finishes its
-    // cleanup and releases the resource lease.
+    // Only poke the ANEMLL helper when this exact turn owns the active ANEMLL
+    // lease. Mesh and Apple/Ollama cancellation must not touch an unrelated
+    // persistent helper process.
     Task {
+      let snapshot = await InferenceResourceGovernor.shared.snapshot()
+      guard snapshot.activeLease?.ownerID == turnID,
+        snapshot.activeLease?.runtime == .anemll
+      else { return }
       await ANEMLLPersistentRuntimeService.shared.requestTermination()
     }
   }
