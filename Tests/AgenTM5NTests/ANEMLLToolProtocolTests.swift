@@ -159,6 +159,28 @@ final class ANEMLLToolProtocolTests: XCTestCase {
     })
   }
 
+  func testOrdinaryChatDoesNotAdvertiseUnrelatedTools() {
+    let tools = [
+      definition(name: "read_file", properties: ["path"]),
+      definition(name: "write_file", properties: ["path", "content"]),
+      definition(name: "calendar_list_events", properties: []),
+      definition(name: "system_info", properties: []),
+    ]
+
+    let selected = ANEMLLToolProtocol.selectTools(
+      tools,
+      messages: [
+        ProviderMessage(
+          role: .user,
+          content: "Erkläre in einem Satz den Unterschied zwischen RAM und SSD."
+        )
+      ],
+      operatingConfiguration: AgentOperatingLayerConfiguration()
+    )
+
+    XCTAssertTrue(selected.isEmpty)
+  }
+
   func testCreateFileIntentPrioritizesWriteFile() {
     let tools = [
       definition(name: "read_file", properties: ["path"]),
