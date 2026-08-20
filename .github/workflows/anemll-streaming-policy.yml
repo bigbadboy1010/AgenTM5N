@@ -1,0 +1,95 @@
+name: ANEMLL streaming policy
+
+on:
+  push:
+    branches:
+      - agent/v1.3.0-neural-control-plane
+  pull_request:
+    branches:
+      - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
+
+permissions:
+  contents: read
+
+jobs:
+  streaming-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse streaming Swift sources
+        run: |
+          swiftc -frontend -parse \
+            Sources/AgenTM5N/Services/ANEMLLPersistentRuntimeService.swift \
+            Sources/AgenTM5N/Providers/ANEMLLProvider.swift \
+            Tests/AgenTM5NTests/ANEMLLRuntimeTests.swift
+
+      - name: Validate Build 38 streaming invariants
+        shell: python
+        run: |
+          from pathlib import Path
+
+          checks = {
+              "Sources/AgenTM5N/Services/ANEMLLPersistentRuntimeService.swift": [
+                  "completeStreaming(",
+                  "streamableAssistantText",
+                  "onAssistantDelta",
+                  "potentialMetricsBoundary",
+                  "withTaskCancellationHandler",
+                  "conversationTurns",
+                  "shouldRestart",
+                  "Ausgabe überschreitet 8 MiB",
+              ],
+              "Sources/AgenTM5N/Providers/ANEMLLProvider.swift": [
+                  "ANEMLLThinkingDeltaSplitter",
+                  "persistentRuntime.completeStreaming",
+                  "continuation.yield",
+                  "isFinished: true",
+                  "ANEMLLRuntimeTelemetry.shared.record",
+                  "ANEMLL BUILD 38 RUNTIME",
+                  "Build 39",
+              ],
+              "Tests/AgenTM5NTests/ANEMLLRuntimeTests.swift": [
+                  "testInteractiveProtocolStreamsAssistantTextBeforeTurnFinishes",
+                  "testInteractiveProtocolWithholdsPartialMetricsLineFromStreaming",
+                  "testInteractiveProtocolStreamingMatchesFinalParsedResponse",
+              ],
+              "Sources/AgenTM5N/App/AppState.swift": [
+                  "for try await event in stream",
+                  "apply(event: event, to: assistantID)",
+                  "generationTask?.cancel()",
+              ],
+          }
+
+          failures = []
+          for filename, needles in checks.items():
+              text = Path(filename).read_text()
+              for needle in needles:
+                  if needle not in text:
+                      failures.append(f"{filename}: Build 38 invariant missing {needle!r}")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Enforce Build 39 tool boundary
+        shell: python
+        run: |
+          from pathlib import Path
+
+          text = Path("Sources/AgenTM5N/Providers/ANEMLLProvider.swift").read_text()
+          forbidden = [
+              "executeAuthorizedToolCall(",
+              "AgentToolExecutionBridge.shared.install",
+          ]
+          failures = [needle for needle in forbidden if needle in text]
+          if failures:
+              raise SystemExit(
+                  "Build 38 must remain tool-free until Build 39: " + ", ".join(failures)
+              )
+
+      - name: Note target-Mac gate
+        run: |
+          echo "Static ANEMLL streaming policy passed."
+          echo "Target Apple Silicon validation remains mandatory for real incremental token delivery, cancellation recovery and persistent-session behavior."
