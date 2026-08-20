@@ -89,6 +89,44 @@ final class ANEMLLRuntimeTests: XCTestCase {
     XCTAssertTrue(ANEMLLInteractiveProtocol.containsPromptMarker(output))
   }
 
+  func testInteractiveProtocolStreamsAssistantTextBeforeTurnFinishes() {
+    let output = """
+    \u{001B}[92mAssistant:\u{001B}[0m Die Antwort wird bereits während der Generierung sichtbar
+    """
+
+    XCTAssertEqual(
+      ANEMLLInteractiveProtocol.streamableAssistantText(output),
+      "Die Antwort wird bereits während der Generierung sichtbar"
+    )
+    XCTAssertFalse(ANEMLLInteractiveProtocol.containsPromptMarker(output))
+  }
+
+  func testInteractiveProtocolWithholdsPartialMetricsLineFromStreaming() {
+    let output = """
+    Assistant: Fertige Modellantwort.
+    84.7 t/
+    """
+
+    XCTAssertEqual(
+      ANEMLLInteractiveProtocol.streamableAssistantText(output),
+      "Fertige Modellantwort."
+    )
+  }
+
+  func testInteractiveProtocolStreamingMatchesFinalParsedResponse() throws {
+    let output = """
+    Assistant: Eine vollständige Antwort mit Umlauten: Größe und Öl.
+    84.7 t/s, TTFT: 14.8ms (1900.2 t/s), 12 tokens [Stop: eos] [History: 42 tokens]
+    You: 
+    """
+
+    let parsed = try ANEMLLInteractiveProtocol.parseTurn(output)
+    XCTAssertEqual(
+      ANEMLLInteractiveProtocol.streamableAssistantText(output),
+      parsed.response
+    )
+  }
+
   func testInteractiveProtocolNormalizesMultilinePromptToSingleTransportLine() throws {
     let prompt = try ANEMLLInteractiveProtocol.normalizePrompt("Zeile eins\nZeile zwei\r\nZeile drei")
     XCTAssertFalse(prompt.contains("\n"))
