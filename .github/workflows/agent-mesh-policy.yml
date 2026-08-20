@@ -52,7 +52,7 @@ jobs:
               ],
               "Sources/AgenTM5N/Services/AgentMeshPeerStore.swift": [
                   "registerPending",
-                  "case .trusted",
+                  "status == .trusted",
                   "status = .revoked",
                   "allowedCapabilities",
                   "key rotation",
