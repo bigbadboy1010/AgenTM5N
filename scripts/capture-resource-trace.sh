@@ -111,7 +111,7 @@ capture_snapshot() {
     printf 'interval_seconds=%s\n' "$TRACE_INTERVAL"
     printf 'trace_file=%s\n' "$TRACE_FILE"
     echo
-    "$ROOT_DIR/scripts/diagnose-resource-pressure.sh"
+    bash "$ROOT_DIR/scripts/diagnose-resource-pressure.sh"
   } > "$SNAPSHOT_FILE" 2>&1 || true
 }
 

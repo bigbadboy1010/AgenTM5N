@@ -213,7 +213,7 @@ case "$COMMAND" in
     mkdir -p "$TRACE_ROOT"
     STAMP="$(date '+%Y%m%d-%H%M%S')"
     SNAPSHOT="$TRACE_ROOT/${STAMP}-preflight.txt"
-    "$DIAGNOSE" > "$SNAPSHOT" 2>&1 || true
+    bash "$DIAGNOSE" > "$SNAPSHOT" 2>&1 || true
     echo "Preflight snapshot: $SNAPSHOT"
     preflight_admission
     ;;
@@ -258,7 +258,7 @@ case "$COMMAND" in
     ;;
 
   status)
-    "$DIAGNOSE"
+    bash "$DIAGNOSE"
     echo
     preflight_admission
     ;;
