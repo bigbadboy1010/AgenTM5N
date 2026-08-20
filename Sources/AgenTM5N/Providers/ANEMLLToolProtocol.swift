@@ -52,7 +52,7 @@ public enum ANEMLLToolProtocol {
   public static let callPrefix = "<agentm5n_tool_call>"
   public static let callSuffix = "</agentm5n_tool_call>"
   public static let maximumToolsPerTurn = 4
-  public static let maximumToolResultCharacters = 900
+  public static let maximumToolResultCharacters = 600
   public static let maximumEnvelopeBytes = 32 * 1_024
 
   private struct Envelope: Decodable {
@@ -82,9 +82,8 @@ public enum ANEMLLToolProtocol {
       return true
     }
 
-    // ctx512 must not pay for a four-tool catalog on ordinary chat turns.
-    // A score of 4 is the generic fallback meaning no prompt/tool affinity was
-    // found. Only context-relevant tools are advertised to the tiny model.
+    // A score of 4 is the generic fallback: no prompt/tool affinity. Ordinary
+    // chat turns therefore carry no tool catalog at all.
     candidates = candidates.filter { priority($0, prompt: prompt) < 4 }
     guard !candidates.isEmpty else { return [] }
 
@@ -115,11 +114,15 @@ public enum ANEMLLToolProtocol {
     if !trailingTools.isEmpty {
       let resultText = trailingTools.suffix(2).map { message in
         let name = message.toolName ?? "unknown"
-        return "TOOL RESULT [\(name)]:\n\(bounded(message.content, limit: maximumToolResultCharacters / 2))"
-      }.joined(separator: "\n\n")
+        return "TOOL RESULT [\(name)]: \(bounded(message.content, limit: maximumToolResultCharacters / 2))"
+      }.joined(separator: " | ")
+      let originalTask = PromptAttachmentService.providerPrompt(from: latestUserText(messages))
+        .trimmingCharacters(in: .whitespacesAndNewlines)
       let prompt = toolCatalogPrefix(tools)
         + resultText
-        + "\n\nContinue the original task. Call another advertised tool only if required; otherwise answer from this real result."
+        + " | ORIGINAL USER TASK: "
+        + bounded(originalTask, limit: 180)
+        + " | Continue that task from the real tool result. Call one advertised tool only if still required; otherwise answer."
       return ANEMLLToolTransportRequest(
         prompt: prompt,
         userTurnCount: max(1, userTurnCount),
@@ -206,20 +209,12 @@ public enum ANEMLLToolProtocol {
         : definition.function.name + "(" + arguments.joined(separator: ",") + ")"
       let description = bounded(
         definition.function.description.replacingOccurrences(of: "\n", with: " "),
-        limit: 72
+        limit: 48
       )
-      return "- \(signature): \(description)"
-    }.joined(separator: "\n")
+      return "\(signature): \(description)"
+    }.joined(separator: " | ")
 
-    return """
-    AGENTM5N TOOLS FOR THIS TURN:
-    \(catalog)
-    If a real action or lookup requires a tool, output ONLY one envelope:
-    \(callPrefix){"name":"tool_name","arguments":{}}\(callSuffix)
-    Never invent names/results. One tool per round. Otherwise answer normally.
-
-    USER/TASK INPUT:
-    """
+    return "TOOLS: \(catalog) | If needed output ONLY \(callPrefix){\"name\":\"tool_name\",\"arguments\":{}}\(callSuffix). One tool, real names only. | USER/TASK INPUT: "
   }
 
   public static func removeToolEnvelopes(from response: String) -> String {
@@ -262,10 +257,6 @@ public enum ANEMLLToolProtocol {
       ["ändere", "aendere", "änder", "modify", "patch", "bearbeite", "edit"]
     )
 
-    // Explicit mutations must outrank incidental read keywords such as
-    // "Inhalt/content" in prompts like "create file ... with content ...".
-    // This keeps the tiny Qwen3 tool catalog deterministic and prevents an
-    // alphabetic tie from selecting read_file instead of the requested write.
     if patchIntent, name == "apply_patch" { return -20 }
     if createFileIntent, name == "write_file" { return -10 }
 
