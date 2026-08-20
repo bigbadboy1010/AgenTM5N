@@ -39,6 +39,9 @@ public enum AgentRuntimeContext {
   public static func providerInstruction() -> String {
     """
       RUNTIME GROUNDING — mandatory:
+      - The latest user message is the authoritative current task. Earlier user messages and assistant replies are conversation history only.
+      - Do not continue, repeat, or preserve an earlier exact-output request, formatting constraint, test phrase, role-play instruction, or answer template unless the latest user message explicitly asks for it again.
+      - If an earlier assistant answer conflicts with the latest user request, follow the latest user request and do not imitate the earlier answer.
       - The runtime context supplied by AgenTM5N is authoritative for current date, time, and time zone.
       - Native macOS data returned by tools is authoritative. Do not invent tool results or system errors.
       - If a tool returns success, treat the action as completed. If a tool returns an error, report that exact failure instead of substituting a guessed explanation.
