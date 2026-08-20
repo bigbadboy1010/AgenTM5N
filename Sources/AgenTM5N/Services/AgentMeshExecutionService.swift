@@ -205,10 +205,11 @@ public actor AgentMeshExecutionService {
       max(1, configuration.maxToolIterations),
       Self.maximumRemoteToolRounds
     )
+    let executionConfiguration = configuration
 
     let operatingConfiguration = AgentOperatingLayerStore.load()
     guard let heavyRuntime = HeavyInferenceRuntime(
-      providerKind: configuration.providerKind,
+      providerKind: executionConfiguration.providerKind,
       localInferenceRuntime: operatingConfiguration.localInferenceRuntime
     ) else {
       throw AgentMeshExecutionError.unsupportedProvider
@@ -237,7 +238,7 @@ public actor AgentMeshExecutionService {
               request: request,
               peer: peer,
               effectiveCapabilities: effectiveCapabilities,
-              configuration: configuration,
+              configuration: executionConfiguration,
               sink: sink
             )
           }
@@ -382,9 +383,7 @@ public actor AgentMeshExecutionService {
     // Re-check trust immediately before every remote-requested tool. Revoking a
     // peer therefore closes the execution boundary even for a task that was
     // already running when the trust record changed.
-    guard let currentPeer = try? await AgentMeshPeerStore.shared.trustedPeer(id: peer.id),
-      currentPeer != nil
-    else {
+    guard let _ = try? await AgentMeshPeerStore.shared.trustedPeer(id: peer.id) else {
       await sink(.toolDenied, call.function.name)
       return ProviderMessage(
         role: .tool,
