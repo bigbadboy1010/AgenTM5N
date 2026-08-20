@@ -94,6 +94,11 @@ preflight_admission() {
   fi
 
   if [ "$critical" -eq 1 ]; then
+    if [ "${AGENTM5N_FORCE_BUILD:-0}" = "1" ]; then
+      echo "PRECHECK=CRITICAL_FORCED" >&2
+      echo "WARNUNG: Kritischer Ressourcenstatus wurde ausdrücklich übersteuert." >&2
+      return 0
+    fi
     echo "PRECHECK=CRITICAL" >&2
     return 70
   fi
@@ -171,13 +176,31 @@ analyze_trace() {
 run_traced() {
   local label="$1"
   shift
+  local command_status analyze_status trace_file
+
   mkdir -p "$TRACE_ROOT"
+
+  set +e
   bash "$TRACE_RUNNER" "$label" "$@"
-  local trace_file
+  command_status=$?
+  set -e
+
   trace_file="$(latest_trace)"
+  analyze_status=0
   if [ -n "$trace_file" ]; then
     echo
+    set +e
     analyze_trace "$trace_file"
+    analyze_status=$?
+    set -e
+  fi
+
+  if [ "$command_status" -ne 0 ]; then
+    echo "COMMAND_STATUS=$command_status" >&2
+    return "$command_status"
+  fi
+  if [ "$analyze_status" -ne 0 ]; then
+    return "$analyze_status"
   fi
 }
 
