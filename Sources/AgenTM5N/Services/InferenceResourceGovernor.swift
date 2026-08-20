@@ -1,7 +1,9 @@
 import Foundation
 
-/// Heavy local inference paths that can materially consume unified memory,
-/// compute, or a persistent helper/server process on the target Mac.
+/// Heavy local inference paths that can materially consume unified memory or
+/// compute during an active inference turn. A resident server process alone is
+/// not treated as an active lease; residency is tracked separately in the next
+/// Phase-2 step.
 public enum HeavyInferenceRuntime: String, Codable, CaseIterable, Sendable {
   case ollamaLocal
   case mlx
@@ -20,6 +22,27 @@ public enum HeavyInferenceRuntime: String, Codable, CaseIterable, Sendable {
       self = .appleFoundationModels
     case .ollamaCloud:
       return nil
+    }
+  }
+
+  public init?(
+    providerKind: ProviderKind,
+    localInferenceRuntime: LocalInferenceRuntime
+  ) {
+    switch providerKind {
+    case .ollamaCloud:
+      return nil
+    case .appleOnDevice:
+      self = .appleFoundationModels
+    case .ollamaLocal:
+      switch localInferenceRuntime {
+      case .ollama:
+        self = .ollamaLocal
+      case .mlxServer:
+        self = .mlx
+      case .anemll:
+        self = .anemll
+      }
     }
   }
 }
@@ -45,47 +68,94 @@ public struct InferenceResourceLease: Equatable, Sendable {
 
 public struct InferenceResourceSnapshot: Equatable, Sendable {
   public let activeLease: InferenceResourceLease?
+  public let staleAfterSeconds: Int
+  public let capturedAt: Date
 
-  public init(activeLease: InferenceResourceLease?) {
+  public init(
+    activeLease: InferenceResourceLease?,
+    staleAfterSeconds: Int,
+    capturedAt: Date = Date()
+  ) {
     self.activeLease = activeLease
+    self.staleAfterSeconds = staleAfterSeconds
+    self.capturedAt = capturedAt
   }
 
   public var isBusy: Bool { activeLease != nil }
+
+  public var requiresRecovery: Bool {
+    guard let activeLease else { return false }
+    return capturedAt.timeIntervalSince(activeLease.startedAt)
+      >= Double(staleAfterSeconds)
+  }
 }
 
 public enum InferenceResourceGovernorError: LocalizedError, Equatable {
   case busy(active: HeavyInferenceRuntime, requested: HeavyInferenceRuntime)
+  case recoveryRequired(active: HeavyInferenceRuntime, ageSeconds: Int)
 
   public var errorDescription: String? {
     switch self {
     case .busy(let active, let requested):
       return L10n.text(
-        de: "Ein schwerer lokaler KI-Pfad (\(active.rawValue)) läuft bereits. \(requested.rawValue) wird nicht parallel gestartet.",
-        en: "A heavy local AI route (\(active.rawValue)) is already running. \(requested.rawValue) will not be started in parallel.",
-        fr: "Un chemin d’inférence local lourd (\(active.rawValue)) est déjà actif. \(requested.rawValue) ne sera pas démarré en parallèle."
+        de: "Ein schwerer lokaler KI-Turn (\(active.rawValue)) läuft bereits. \(requested.rawValue) wird nicht parallel gestartet.",
+        en: "A heavy local AI turn (\(active.rawValue)) is already running. \(requested.rawValue) will not be started in parallel.",
+        fr: "Un tour d’inférence local lourd (\(active.rawValue)) est déjà actif. \(requested.rawValue) ne sera pas démarré en parallèle."
+      )
+    case .recoveryRequired(let active, let ageSeconds):
+      return L10n.text(
+        de: "Der lokale KI-Turn \(active.rawValue) hält die Ressourcen seit \(ageSeconds) Sekunden. Aus Sicherheitsgründen wird keine zweite schwere Runtime gestartet, bis der laufende Turn bereinigt wurde.",
+        en: "The local AI turn \(active.rawValue) has held resources for \(ageSeconds) seconds. For safety, no second heavy runtime will start until the active turn has been cleaned up.",
+        fr: "Le tour d’inférence local \(active.rawValue) conserve les ressources depuis \(ageSeconds) secondes. Par sécurité, aucun second runtime lourd ne sera démarré avant le nettoyage du tour actif."
       )
     }
   }
 }
 
-/// Serializes heavy local inference runtimes across routing layers.
+/// Serializes active heavy local inference turns across routing layers.
 ///
-/// The governor intentionally does not queue callers. A queued heavy-runtime
-/// request can surprise the user by starting later after the machine has
-/// already been under pressure. Callers must fail closed, fall back to a safe
-/// route, or explicitly retry after the current lease has ended.
+/// The governor intentionally does not queue callers and never auto-expires an
+/// active lease. Automatically stealing an old lease could create exactly the
+/// overlap this guard is designed to prevent if the original runtime is still
+/// computing. Callers use `withLease` so success, error, and cancellation all
+/// release the exact lease in one structured scope.
 public actor InferenceResourceGovernor {
   public static let shared = InferenceResourceGovernor()
 
   private var activeLease: InferenceResourceLease?
+  private let staleAfterSeconds: Int
+  private let now: @Sendable () -> Date
 
-  public init() {}
+  public init(
+    staleAfterSeconds: Int = 330,
+    now: @escaping @Sendable () -> Date = Date.init
+  ) {
+    self.staleAfterSeconds = max(30, min(staleAfterSeconds, 3_600))
+    self.now = now
+  }
 
-  public func acquire(
+  public func withLease<T: Sendable>(
+    runtime: HeavyInferenceRuntime,
+    ownerID: UUID,
+    operation: @Sendable () async throws -> T
+  ) async throws -> T {
+    let lease = try acquire(runtime: runtime, ownerID: ownerID)
+    defer { release(lease) }
+    return try await operation()
+  }
+
+  func acquire(
     runtime: HeavyInferenceRuntime,
     ownerID: UUID
   ) throws -> InferenceResourceLease {
     if let activeLease {
+      let age = max(0, Int(now().timeIntervalSince(activeLease.startedAt)))
+      if age >= staleAfterSeconds {
+        throw InferenceResourceGovernorError.recoveryRequired(
+          active: activeLease.runtime,
+          ageSeconds: age
+        )
+      }
       throw InferenceResourceGovernorError.busy(
         active: activeLease.runtime,
         requested: runtime
@@ -94,26 +164,33 @@ public actor InferenceResourceGovernor {
 
     let lease = InferenceResourceLease(
       runtime: runtime,
-      ownerID: ownerID
+      ownerID: ownerID,
+      startedAt: now()
     )
     activeLease = lease
     return lease
   }
 
-  /// Releases only the exact lease that is currently active. A stale task may
-  /// never unlock a newer execution by presenting an old token.
-  public func release(_ lease: InferenceResourceLease) {
-    guard activeLease?.id == lease.id else { return }
+  /// Releases only the exact lease and owner that are currently active. A stale
+  /// task may never unlock a newer execution by presenting an old token.
+  func release(_ lease: InferenceResourceLease) {
+    guard activeLease?.id == lease.id,
+      activeLease?.ownerID == lease.ownerID
+    else { return }
     activeLease = nil
   }
 
   public func snapshot() -> InferenceResourceSnapshot {
-    InferenceResourceSnapshot(activeLease: activeLease)
+    InferenceResourceSnapshot(
+      activeLease: activeLease,
+      staleAfterSeconds: staleAfterSeconds,
+      capturedAt: now()
+    )
   }
 }
 
-/// Conservative execution limits reserved for future automatic model-profile
-/// routing. Manual provider execution keeps its existing user-configured limits.
+/// Conservative limits used only for future automatic model-profile routing.
+/// Manual provider execution keeps its existing user-configured limits.
 public struct AutomaticInferenceBudget: Equatable, Sendable {
   public var timeoutSeconds: Int
   public var maximumToolRounds: Int
@@ -129,8 +206,41 @@ public struct AutomaticInferenceBudget: Equatable, Sendable {
 
   public static let conservative = AutomaticInferenceBudget()
 
+  public static func automatic(
+    runtime: ModelProfileRuntime,
+    contextWindow: Int
+  ) -> AutomaticInferenceBudget {
+    let context = max(128, contextWindow)
+    let rounds: Int
+    if context >= 8_192 {
+      rounds = 4
+    } else if context >= 2_048 {
+      rounds = 2
+    } else {
+      rounds = 1
+    }
+
+    let baseTimeout = max(45, min(180, context / 8 + 30))
+    let timeout: Int
+    switch runtime {
+    case .anemll:
+      timeout = min(baseTimeout, context <= 1_024 ? 45 : 120)
+    case .appleFoundationModels:
+      timeout = min(baseTimeout, 60)
+    case .mlx, .ollamaLocal:
+      timeout = min(baseTimeout, 120)
+    case .ollamaCloud:
+      timeout = min(max(baseTimeout, 120), 180)
+    }
+
+    return AutomaticInferenceBudget(
+      timeoutSeconds: timeout,
+      maximumToolRounds: rounds
+    )
+  }
+
   public mutating func normalize() {
-    timeoutSeconds = max(30, min(timeoutSeconds, 300))
+    timeoutSeconds = max(30, min(timeoutSeconds, 180))
     maximumToolRounds = max(1, min(maximumToolRounds, 8))
   }
 }
