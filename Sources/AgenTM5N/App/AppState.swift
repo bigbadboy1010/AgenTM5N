@@ -51,7 +51,7 @@ private struct CoreMLToolPredictionDescriptor: Encodable {
 private struct WorkspaceIndexToolStatusDescriptor: Encodable {
   let indexed: Bool
   let mode: String?
-  let modelID: UUID?
+  let modelID: String?
   let modelName: String?
   let warning: String?
   let createdAt: Date?
@@ -316,7 +316,7 @@ public final class AppState: ObservableObject {
 
   public func sendMessage() {
     let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, generationPhase.acceptsNewTurn else { return }
+    guard !text.isEmpty, generationPhase.acceptsNewTurn, !isGenerating else { return }
 
     let turnID = UUID()
     inputText = ""
@@ -328,7 +328,18 @@ public final class AppState: ObservableObject {
   }
 
   public func stopGeneration() {
-    guard let turnID = generationPhase.turnID else { return }
+    guard let turnID = generationPhase.turnID else {
+      // Build-41 Mesh generation still uses the legacy isGenerating signal and
+      // does not own a local heavy-runtime lease. Preserve its existing cancel
+      // watcher until Mesh is migrated to GenerationPhase in a dedicated patch.
+      guard isGenerating else { return }
+      resolvePendingApproval(allowed: false)
+      generationTask?.cancel()
+      generationTask = nil
+      isGenerating = false
+      return
+    }
+
     resolvePendingApproval(allowed: false)
     generationPhase = .cancelling(turnID: turnID)
     generationTask?.cancel()
@@ -1063,7 +1074,7 @@ public final class AppState: ObservableObject {
     WorkspaceIndexToolStatusDescriptor(
       indexed: status != nil,
       mode: status?.mode.rawValue,
-      modelID: status?.modelID,
+      modelID: status?.modelID?.uuidString,
       modelName: status?.modelName,
       warning: status?.warning,
       createdAt: status?.createdAt,
