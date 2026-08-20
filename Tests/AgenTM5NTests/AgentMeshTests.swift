@@ -27,7 +27,7 @@ final class AgentMeshTests: XCTestCase {
     XCTAssertTrue(first.contains("-"))
   }
 
-  func testPendingPeerRequiresExplicitTrustAndCanBeRevoked() async throws {
+  func testPendingPeerRequiresExplicitFingerprintBoundTrustAndCanBeRevoked() async throws {
     let temporary = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
       .appendingPathComponent("peers.json")
@@ -46,6 +46,7 @@ final class AgentMeshTests: XCTestCase {
 
     let trusted = try await store.trust(
       id: descriptor.nodeID,
+      expectedFingerprint: pending.fingerprint,
       allowedCapabilities: [.workspace, .git]
     )
     XCTAssertEqual(trusted.status, .trusted)
@@ -60,7 +61,7 @@ final class AgentMeshTests: XCTestCase {
     XCTAssertNil(revokedTrustedPeer)
   }
 
-  func testTrustedPeerKeyRotationFailsClosed() async throws {
+  func testPendingPeerKeySubstitutionFailsClosedBeforeTrust() async throws {
     let temporary = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
       .appendingPathComponent("peers.json")
@@ -72,7 +73,77 @@ final class AgentMeshTests: XCTestCase {
       descriptor: first,
       endpoint: "http://127.0.0.1:8787"
     )
-    _ = try await store.trust(id: first.nodeID, allowedCapabilities: [.workspace])
+
+    let replacementSigning = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+    let changed = AgentMeshNodeDescriptor(
+      nodeID: first.nodeID,
+      name: "Peer A attacker",
+      kind: first.kind,
+      appVersion: first.appVersion,
+      appBuild: first.appBuild,
+      signingPublicKey: replacementSigning,
+      agreementPublicKey: first.agreementPublicKey,
+      fingerprint: AgentMeshIdentityStore.fingerprint(
+        signingPublicKey: replacementSigning,
+        agreementPublicKey: first.agreementPublicKey
+      ),
+      capabilities: first.capabilities,
+      features: first.features
+    )
+
+    do {
+      _ = try await store.registerPending(
+        descriptor: changed,
+        endpoint: "http://127.0.0.1:8787"
+      )
+      XCTFail("Pending peer key substitution must fail closed")
+    } catch let error as AgentMeshSecurityError {
+      XCTAssertEqual(error, .invalidKeyMaterial)
+    }
+  }
+
+  func testTrustRejectsFingerprintDifferentFromDisplayedPendingRecord() async throws {
+    let temporary = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathComponent("peers.json")
+    defer { try? FileManager.default.removeItem(at: temporary.deletingLastPathComponent()) }
+
+    let store = AgentMeshPeerStore(fileURL: temporary)
+    let descriptor = makeDescriptor(name: "Peer A")
+    _ = try await store.registerPending(
+      descriptor: descriptor,
+      endpoint: "http://127.0.0.1:8787"
+    )
+
+    do {
+      _ = try await store.trust(
+        id: descriptor.nodeID,
+        expectedFingerprint: "0000-0000-0000-0000",
+        allowedCapabilities: [.workspace]
+      )
+      XCTFail("Trust must be bound to the displayed fingerprint")
+    } catch let error as AgentMeshSecurityError {
+      XCTAssertEqual(error, .invalidKeyMaterial)
+    }
+  }
+
+  func testTrustedPeerKeyRotationFailsClosed() async throws {
+    let temporary = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathComponent("peers.json")
+    defer { try? FileManager.default.removeItem(at: temporary.deletingLastPathComponent()) }
+
+    let store = AgentMeshPeerStore(fileURL: temporary)
+    let first = makeDescriptor(name: "Peer A")
+    let pending = try await store.registerPending(
+      descriptor: first,
+      endpoint: "http://127.0.0.1:8787"
+    )
+    _ = try await store.trust(
+      id: first.nodeID,
+      expectedFingerprint: pending.fingerprint,
+      allowedCapabilities: [.workspace]
+    )
 
     let replacementSigning = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
     let changed = AgentMeshNodeDescriptor(
@@ -100,6 +171,29 @@ final class AgentMeshTests: XCTestCase {
     } catch let error as AgentMeshSecurityError {
       XCTAssertEqual(error, .invalidKeyMaterial)
     }
+  }
+
+  func testDecodedTaskRequestReappliesNetworkBounds() throws {
+    let id = UUID()
+    let correlation = UUID()
+    let object: [String: Any] = [
+      "id": id.uuidString,
+      "correlationID": correlation.uuidString,
+      "prompt": String(repeating: "x", count: AgentMeshProtocol.maximumPromptCharacters + 500),
+      "requestedCapabilities": ["workspace"],
+      "timeoutSeconds": 2_000_000_000,
+      "maximumResultCharacters": 2_000_000_000,
+      "createdAt": ISO8601DateFormatter().string(from: Date()),
+    ]
+    let data = try JSONSerialization.data(withJSONObject: object)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(AgentMeshTaskRequest.self, from: data)
+
+    XCTAssertEqual(decoded.id, id)
+    XCTAssertEqual(decoded.timeoutSeconds, 3_600)
+    XCTAssertEqual(decoded.maximumResultCharacters, AgentMeshProtocol.maximumResultCharacters)
+    XCTAssertEqual(decoded.prompt.count, AgentMeshProtocol.maximumPromptCharacters)
   }
 
   func testReplayProtectorRejectsSameNonceTwice() async throws {
