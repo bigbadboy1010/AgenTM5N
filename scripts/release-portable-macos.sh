@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/xcode-env.sh"
 
 APP_NAME="AgenTM5N"
-VERSION="${AGENTM5N_VERSION:-1.3.9}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-39}"
+VERSION="${AGENTM5N_VERSION:-1.4.1}"
+BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"
 NOTARY_PROFILE="${AGENTM5N_NOTARY_PROFILE:-AgenTM5NNotary}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:-}"
 DEFAULT_META="$HOME/Downloads/AgenTM5N-Qwen3-ANE/anemll-Qwen-Qwen3-0.6B-ctx512_0.3.4/meta.yaml"
@@ -145,8 +145,6 @@ done < <(
 
 printf '\n=== 5. Nested ANEMLL Code + App neu signieren ===\n'
 
-# Sign any nested Mach-O code first. This keeps the ordering deterministic if
-# ANEMLL/SwiftPM adds dylibs or executables to resource bundles in the future.
 while IFS= read -r -d '' candidate; do
   if file -b "$candidate" 2>/dev/null | grep -q 'Mach-O'; then
     printf 'Sign Mach-O: %s\n' "$candidate"
@@ -159,9 +157,6 @@ while IFS= read -r -d '' candidate; do
   fi
 done < <(find "$HELPER_DEST_DIR" -type f -print0)
 
-# SwiftPM ships tokenizer/Hub resources as nested .bundle code objects.
-# They must be signed independently before the enclosing app is signed;
-# otherwise codesign --deep rejects the app as containing unsigned code.
 while IFS= read -r -d '' resource_bundle; do
   printf 'Sign SwiftPM bundle: %s\n' "$resource_bundle"
   codesign \
@@ -172,8 +167,6 @@ while IFS= read -r -d '' resource_bundle; do
   codesign --verify --strict --verbose=2 "$resource_bundle"
 done < <(find "$HELPER_DEST_DIR" -type d -name '*.bundle' -print0)
 
-# Explicitly sign the helper last within its subtree in case it was already
-# encountered by the Mach-O pass above.
 codesign \
   --force \
   --sign "$SIGNING_IDENTITY" \
