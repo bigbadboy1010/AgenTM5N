@@ -1,0 +1,137 @@
+name: Model profile policy
+
+on:
+  push:
+    branches:
+      - agent/v1.3.0-neural-control-plane
+  pull_request:
+    branches:
+      - agent/v1.2.0-agent-operating-layer
+      - agent/v1.3.0-neural-control-plane
+
+permissions:
+  contents: read
+
+jobs:
+  model-profile-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse Build 42 Swift sources
+        run: |
+          swiftc -frontend -parse \
+            Sources/AgenTM5N/Domain/ModelProfiles.swift \
+            Sources/AgenTM5N/Services/ModelProfileStore.swift \
+            Sources/AgenTM5N/Services/ModelManagerController.swift \
+            Sources/AgenTM5N/Views/ModelManagerView.swift \
+            Tests/AgenTM5NTests/ModelProfileTests.swift
+
+      - name: Validate Model Manager security boundary
+        shell: python
+        run: |
+          from pathlib import Path
+
+          models = Path("Sources/AgenTM5N/Domain/ModelProfiles.swift").read_text()
+          store = Path("Sources/AgenTM5N/Services/ModelProfileStore.swift").read_text()
+          controller = Path("Sources/AgenTM5N/Services/ModelManagerController.swift").read_text()
+          view = Path("Sources/AgenTM5N/Views/ModelManagerView.swift").read_text()
+          app = Path("Sources/AgenTM5N/App/AgenTM5NApp.swift").read_text()
+          tests = Path("Tests/AgenTM5NTests/ModelProfileTests.swift").read_text()
+
+          required = {
+              "models": [
+                  "enum ModelProfileRuntime",
+                  "case ollamaLocal",
+                  "case ollamaCloud",
+                  "case mlx",
+                  "case anemll",
+                  "case appleFoundationModels",
+                  "apiKeySecretID: UUID?",
+                  "contextWindow",
+                  "estimatedMemoryMB",
+                  "priority",
+                  "enabled",
+                  "ModelProfileCatalog.routingCandidates",
+                  "fromCurrentConfiguration",
+                  "activationPlan",
+              ],
+              "store": [
+                  'appendingPathComponent("model-profiles.json"',
+                  ".posixPermissions: 0o600",
+                  "ModelProfileCatalog.appleBuiltIn",
+                  "setActive",
+                  "routingCandidates",
+              ],
+              "controller": [
+                  "importCurrentConfiguration",
+                  "profile.activationPlan",
+                  "appState.configuration.providerKind = plan.providerKind",
+                  "operating.configuration.localInferenceRuntime = runtime",
+                  "operating.configuration.numContext = plan.contextWindow",
+                  "ModelProfileError.missingCloudSecretReference",
+                  "Vault-Secrets wurden nicht verändert",
+              ],
+              "view": [
+                  "Model Manager · Build 42",
+                  "Aktuelles importieren",
+                  "Vault Secret Reference",
+                  "Routing-Vorschau",
+              ],
+              "app": [
+                  'Window("Model Manager", id: "model-manager")',
+                  'Button("Model Manager")',
+                  "ModelManagerController.shared.bootstrap",
+              ],
+              "tests": [
+                  "testCurrentANEMLLConfigurationImportsAsLocalProfile",
+                  "testCloudProfileStoresOnlySecretReferenceNotSecretValue",
+                  "testLocalFirstCandidateOrderingIsDeterministic",
+                  "testDisabledProfilesAreExcludedFromRoutingCandidates",
+                  "testStorePersistsActiveProfileAndRemovalClearsIt",
+                  "testAppleBuiltInCannotBeRemoved",
+              ],
+          }
+
+          texts = {
+              "models": models,
+              "store": store,
+              "controller": controller,
+              "view": view,
+              "app": app,
+              "tests": tests,
+          }
+          failures = []
+          for key, needles in required.items():
+              for needle in needles:
+                  if needle not in texts[key]:
+                      failures.append(f"{key}: Build 42 invariant missing {needle!r}")
+
+          forbidden_fields = [
+              "apiKeyValue",
+              "secretValue",
+              "passwordValue",
+              "bearerToken",
+          ]
+          for needle in forbidden_fields:
+              if needle in models or needle in store:
+                  failures.append(f"Model profile storage must never persist secret material: {needle}")
+
+          forbidden_controller = [
+              "SecureSecretBroker",
+              "VaultStore",
+              "executeAuthorizedToolCall",
+              "AgentToolExecutionBridge.shared.install",
+          ]
+          for needle in forbidden_controller:
+              if needle in controller:
+                  failures.append(f"Model Manager must not create a secret/tool execution bypass: {needle}")
+
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Build 42 staging note
+        run: |
+          echo "Static Build 42 Model Manager control-plane policy passed."
+          echo "Profile-aware automatic Hybrid Router selection remains disabled until the target-Mac Swift/Xcode gate passes."
