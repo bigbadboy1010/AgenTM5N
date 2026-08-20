@@ -92,6 +92,38 @@ final class InferenceResourceGovernorTests: XCTestCase {
     XCTAssertFalse(snapshot.isBusy)
   }
 
+  func testANEMLLLeaseIsRetainedWhenRuntimeCleanupIsUnconfirmed() async throws {
+    let governor = InferenceResourceGovernor(
+      anemllRequiresRecovery: { true }
+    )
+    let ownerID = UUID()
+    let lease = try await governor.acquire(runtime: .anemll, ownerID: ownerID)
+
+    await governor.release(lease)
+
+    let snapshot = await governor.snapshot()
+    XCTAssertEqual(snapshot.activeLease, lease)
+
+    do {
+      _ = try await governor.acquire(runtime: .mlx, ownerID: UUID())
+      XCTFail("A second heavy runtime must remain blocked after failed ANEMLL cleanup")
+    } catch let error as InferenceResourceGovernorError {
+      XCTAssertEqual(error, .busy(active: .anemll, requested: .mlx))
+    }
+  }
+
+  func testANEMLLLeaseIsReleasedAfterConfirmedCleanup() async throws {
+    let governor = InferenceResourceGovernor(
+      anemllRequiresRecovery: { false }
+    )
+    let lease = try await governor.acquire(runtime: .anemll, ownerID: UUID())
+
+    await governor.release(lease)
+
+    let snapshot = await governor.snapshot()
+    XCTAssertFalse(snapshot.isBusy)
+  }
+
   func testOldLeaseFailsClosedAndRequiresRecoveryInsteadOfAutoSteal() async throws {
     let start = Date(timeIntervalSince1970: 1_000)
     final class Clock: @unchecked Sendable {
