@@ -8,20 +8,25 @@ public final class HybridRoutingController: ObservableObject {
   @Published public var previewPrompt = ""
   @Published public private(set) var decision: HybridRouteDecision?
   @Published public private(set) var peers: [AgentMeshPeerRecord] = []
+  @Published public private(set) var profiles: [ModelProfile] = []
+  @Published public private(set) var activeProfileID: UUID?
   @Published public private(set) var appleAvailability = "Wird geprüft"
   @Published public private(set) var statusMessage = "Hybrid Router bereit"
 
   private let router: HybridInferenceRouter
   private let peerStore: AgentMeshPeerStore
+  private let modelProfileStore: ModelProfileStore
   private let appleProvider: AppleFoundationModelsProvider
 
   public init(
     router: HybridInferenceRouter = HybridInferenceRouter(),
     peerStore: AgentMeshPeerStore = .shared,
+    modelProfileStore: ModelProfileStore = .shared,
     appleProvider: AppleFoundationModelsProvider = AppleFoundationModelsProvider()
   ) {
     self.router = router
     self.peerStore = peerStore
+    self.modelProfileStore = modelProfileStore
     self.appleProvider = appleProvider
     configuration = HybridRoutingStore.loadConfiguration()
     decision = HybridRoutingStore.loadSnapshot().lastDecision
@@ -38,6 +43,17 @@ public final class HybridRoutingController: ObservableObject {
       peers = []
       statusMessage = error.localizedDescription
     }
+
+    do {
+      let document = try await modelProfileStore.load()
+      profiles = document.profiles
+      activeProfileID = document.activeProfileID
+    } catch {
+      profiles = []
+      activeProfileID = nil
+      statusMessage = error.localizedDescription
+    }
+
     appleAvailability = await appleProvider.availabilityDescription()
   }
 
@@ -45,7 +61,7 @@ public final class HybridRoutingController: ObservableObject {
     do {
       try HybridRoutingStore.saveConfiguration(configuration)
       statusMessage = configuration.mode == .adaptive
-        ? "Adaptive Hybrid Routing gespeichert."
+        ? "Adaptive Hybrid Routing mit Model-Profile-Auswahl gespeichert."
         : "Manual Routing gespeichert. Bestehendes Provider-Verhalten bleibt unverändert."
     } catch {
       statusMessage = error.localizedDescription
@@ -63,7 +79,9 @@ public final class HybridRoutingController: ObservableObject {
       operatingConfiguration: operatingConfiguration,
       routingConfiguration: configuration,
       appleFoundationModelsAvailable: appleIsAvailable,
-      peers: peers
+      peers: peers,
+      modelProfiles: profiles,
+      hasImageInput: PromptAttachmentService.hasImageAttachments(in: previewPrompt)
     )
     decision = value
     HybridRoutingStore.saveDecision(value)
@@ -80,6 +98,17 @@ public final class HybridRoutingController: ObservableObject {
     return preview(
       appConfiguration: appConfiguration,
       operatingConfiguration: operatingConfiguration
+    )
+  }
+
+  public func profile(id: UUID) -> ModelProfile? {
+    profiles.first(where: { $0.id == id && $0.enabled })
+  }
+
+  public var routingProfiles: [ModelProfile] {
+    ModelProfileCatalog.routingCandidates(
+      from: profiles,
+      preferLocal: configuration.preferLocal
     )
   }
 
