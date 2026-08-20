@@ -12,6 +12,7 @@ struct AgenTM5NApp: App {
         .task {
           ANEMLLPortableRuntimeBootstrap.configureBundledRuntimeIfNeeded()
           await HybridRoutingController.shared.bootstrap()
+          await ModelManagerController.shared.bootstrap()
         }
     }
     .defaultSize(width: 1_280, height: 820)
@@ -33,6 +34,13 @@ struct AgenTM5NApp: App {
         .frame(minWidth: 840, minHeight: 640)
     }
     .defaultSize(width: 1_020, height: 820)
+
+    Window("Model Manager", id: "model-manager") {
+      ModelManagerView()
+        .environmentObject(appState)
+        .frame(minWidth: 920, minHeight: 680)
+    }
+    .defaultSize(width: 1_180, height: 860)
 
     Window("Agent Mesh", id: "agent-mesh") {
       AgentMeshView()
@@ -66,6 +74,11 @@ private struct ANEMLLRuntimeCommands: Commands {
         openWindow(id: "hybrid-router")
       }
       .keyboardShortcut("r", modifiers: [.command, .option])
+
+      Button("Model Manager") {
+        openWindow(id: "model-manager")
+      }
+      .keyboardShortcut("p", modifiers: [.command, .option])
     }
   }
 }
