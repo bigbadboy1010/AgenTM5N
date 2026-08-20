@@ -26,7 +26,8 @@ final class InferenceResourceGovernorTests: XCTestCase {
 
     let second = try await governor.acquire(runtime: .appleFoundationModels, ownerID: UUID())
     XCTAssertEqual(second.runtime, .appleFoundationModels)
-    XCTAssertTrue(await governor.snapshot().isBusy)
+    let snapshot = await governor.snapshot()
+    XCTAssertTrue(snapshot.isBusy)
   }
 
   func testStaleLeaseCannotReleaseNewerExecution() async throws {
