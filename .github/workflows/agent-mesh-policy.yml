@@ -46,16 +46,20 @@ jobs:
                   "ChaChaPoly.open",
                   "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly",
                   "canonicalRequest",
+                  "recipientNodeID",
                   "AgentMeshReplayProtector",
                   "replayDetected",
                   "maximumClockSkewSeconds",
               ],
               "Sources/AgenTM5N/Services/AgentMeshPeerStore.swift": [
                   "registerPending",
-                  "status == .trusted",
+                  "existing.signingPublicKey == descriptor.signingPublicKey",
+                  "existing.agreementPublicKey == descriptor.agreementPublicKey",
+                  "expectedFingerprint",
+                  "peer.status == .pending",
+                  "status = .trusted",
                   "status = .revoked",
                   "allowedCapabilities",
-                  "key rotation",
               ],
               "Sources/AgenTM5N/Services/AgentMeshHTTPServer.swift": [
                   '"/v1/health"',
@@ -81,16 +85,19 @@ jobs:
                   "AgentMeshTaskCoordinatorError.peerMismatch",
                   "waitingForApproval",
                   "maximumResultCharacters",
+                  "cancelAll(peerID:",
               ],
               "Sources/AgenTM5N/Services/AgentMeshExecutionService.swift": [
                   "AgentCapabilityExecutionContext.$allowedCapabilities",
                   "AgentDelegationContext.maximumDepth",
                   "guard turnCalls.count <= 1",
                   "AgentMeshRemoteApproval.authorize",
-                  "if risk == .read",
+                  "requiresLocalApproval",
+                  "personalData",
                   "permissionMode: .confirm",
                   "maximumRemoteToolRounds = 12",
                   "agent-mesh-audit.jsonl",
+                  "trustedPeer(id: peer.id)",
               ],
               "Sources/AgenTM5N/Services/AgentMeshClient.swift": [
                   "identity.descriptor(kind: .agentM5N)",
@@ -107,10 +114,14 @@ jobs:
                   "case trusted",
                   "case revoked",
                   "AgentMeshSealedMessage",
+                  "init(from decoder: Decoder)",
               ],
               "Tests/AgenTM5NTests/AgentMeshTests.swift": [
-                  "testPendingPeerRequiresExplicitTrustAndCanBeRevoked",
+                  "testPendingPeerRequiresExplicitFingerprintBoundTrustAndCanBeRevoked",
+                  "testPendingPeerKeySubstitutionFailsClosedBeforeTrust",
+                  "testTrustRejectsFingerprintDifferentFromDisplayedPendingRecord",
                   "testTrustedPeerKeyRotationFailsClosed",
+                  "testDecodedTaskRequestReappliesNetworkBounds",
                   "testReplayProtectorRejectsSameNonceTwice",
                   "testTaskCoordinatorIntersectsCapabilitiesAndIsIdempotent",
                   "testTaskCoordinatorRejectsRevokedPeer",
@@ -122,7 +133,7 @@ jobs:
               text = Path(filename).read_text()
               for needle in needles:
                   if needle not in text:
-                      failures.append(f"{filename}: Build 40 invariant missing {needle!r}")
+                      failures.append(f"{filename}: hardened Agent Mesh invariant missing {needle!r}")
 
           if failures:
               raise SystemExit("\n".join(failures))
@@ -135,6 +146,7 @@ jobs:
           execution = Path("Sources/AgenTM5N/Services/AgentMeshExecutionService.swift").read_text()
           server = Path("Sources/AgenTM5N/Services/AgentMeshHTTPServer.swift").read_text()
           client = Path("Sources/AgenTM5N/Services/AgentMeshClient.swift").read_text()
+          controller = Path("Sources/AgenTM5N/Services/AgentMeshController.swift").read_text()
 
           forbidden_execution = [
               "permissionMode: configuration.permissionMode",
@@ -159,7 +171,13 @@ jobs:
           if "identity.descriptor(kind: expectedRemoteKind)" in client:
               raise SystemExit("Enrollment must never relabel the local AgenTM5N identity")
 
+          for capability in [".macPersonal", ".reminders"]:
+              read_scope = controller.split("public func trustReadOnly", 1)[1].split("public func trustDevOps", 1)[0]
+              devops_scope = controller.split("public func trustDevOps", 1)[1].split("public func revoke", 1)[0]
+              if capability in read_scope or capability in devops_scope:
+                  raise SystemExit("Default Mesh trust presets must not silently grant personal-data capabilities: " + capability)
+
       - name: Note target-Mac gate
         run: |
-          echo "Static Build 40 Agent Mesh security boundary passed."
-          echo "Target macOS/M5 build plus a real two-node enrollment/trust/task/approval test remains mandatory."
+          echo "Static hardened Agent Mesh security boundary passed."
+          echo "Native macOS build plus a real two-node enrollment/trust/task/approval test remains mandatory."
