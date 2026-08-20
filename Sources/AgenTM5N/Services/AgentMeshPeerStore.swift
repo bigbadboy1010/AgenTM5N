@@ -59,19 +59,22 @@ public actor AgentMeshPeerStore {
     }
 
     let cleanEndpoint = try Self.normalizedEndpoint(endpoint)
-    let existing = peersByID[descriptor.nodeID]
     let now = Date()
+    let cleanName = Self.sanitizedPeerName(descriptor.name, nodeID: descriptor.nodeID)
 
-    if let existing, existing.status == .trusted {
-      // A trusted identity may update its endpoint/name, but key rotation is a
-      // deliberate trust event and therefore never happens implicitly.
+    if let existing = peersByID[descriptor.nodeID] {
+      // A Node ID is permanently bound to the first observed key pair. This is
+      // required even while pending; otherwise unauthenticated re-enrollment
+      // could replace the fingerprint between display and the user's Trust tap.
       guard existing.signingPublicKey == descriptor.signingPublicKey,
-        existing.agreementPublicKey == descriptor.agreementPublicKey
+        existing.agreementPublicKey == descriptor.agreementPublicKey,
+        existing.fingerprint == descriptor.fingerprint
       else {
         throw AgentMeshSecurityError.invalidKeyMaterial
       }
+
       var updated = existing
-      updated.name = descriptor.name
+      updated.name = cleanName
       updated.endpoint = cleanEndpoint
       updated.kind = descriptor.kind
       updated.protocolVersion = descriptor.protocolVersion
@@ -83,18 +86,18 @@ public actor AgentMeshPeerStore {
 
     let record = AgentMeshPeerRecord(
       id: descriptor.nodeID,
-      name: descriptor.name,
+      name: cleanName,
       kind: descriptor.kind,
       endpoint: cleanEndpoint,
       signingPublicKey: descriptor.signingPublicKey,
       agreementPublicKey: descriptor.agreementPublicKey,
       fingerprint: descriptor.fingerprint,
-      status: existing?.status == .revoked ? .revoked : .pending,
-      allowedCapabilities: existing?.allowedCapabilities ?? [],
+      status: .pending,
+      allowedCapabilities: [],
       protocolVersion: descriptor.protocolVersion,
-      createdAt: existing?.createdAt ?? now,
+      createdAt: now,
       updatedAt: now,
-      lastSeenAt: existing?.lastSeenAt
+      lastSeenAt: nil
     )
     peersByID[record.id] = record
     try save()
@@ -104,10 +107,16 @@ public actor AgentMeshPeerStore {
   @discardableResult
   public func trust(
     id: UUID,
+    expectedFingerprint: String,
     allowedCapabilities: Set<AgentToolCapability> = []
   ) throws -> AgentMeshPeerRecord {
     try loadIfNeeded()
-    guard var peer = peersByID[id] else { throw AgentMeshSecurityError.peerNotTrusted }
+    guard var peer = peersByID[id], peer.status == .pending else {
+      throw AgentMeshSecurityError.peerNotTrusted
+    }
+    guard Self.normalizedFingerprint(expectedFingerprint) == Self.normalizedFingerprint(peer.fingerprint) else {
+      throw AgentMeshSecurityError.invalidKeyMaterial
+    }
     peer.status = .trusted
     peer.allowedCapabilities = allowedCapabilities
     peer.updatedAt = Date()
@@ -147,8 +156,12 @@ public actor AgentMeshPeerStore {
   public func markSeen(id: UUID) throws {
     try loadIfNeeded()
     guard var peer = peersByID[id], peer.status == .trusted else { return }
-    peer.lastSeenAt = Date()
-    peer.updatedAt = Date()
+    let now = Date()
+    if let lastSeenAt = peer.lastSeenAt, now.timeIntervalSince(lastSeenAt) < 60 {
+      return
+    }
+    peer.lastSeenAt = now
+    peer.updatedAt = now
     peersByID[id] = peer
     try save()
   }
@@ -171,11 +184,15 @@ public actor AgentMeshPeerStore {
   }
 
   private func save() throws {
+    let manager = FileManager.default
     let directory = fileURL.deletingLastPathComponent()
-    try FileManager.default.createDirectory(
+    try manager.createDirectory(
       at: directory,
-      withIntermediateDirectories: true
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
     )
+    try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -183,6 +200,7 @@ public actor AgentMeshPeerStore {
       peersByID.values.sorted { $0.id.uuidString < $1.id.uuidString }
     )
     try data.write(to: fileURL, options: [.atomic])
+    try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
   }
 
   private static func normalizedEndpoint(_ raw: String) throws -> String {
@@ -196,5 +214,21 @@ public actor AgentMeshPeerStore {
       throw URLError(.badURL)
     }
     return value
+  }
+
+  private static func sanitizedPeerName(_ raw: String, nodeID: UUID) -> String {
+    let scalars = raw.unicodeScalars.filter { scalar in
+      !CharacterSet.controlCharacters.contains(scalar)
+        && scalar != "\n"
+        && scalar != "\r"
+    }
+    let clean = String(String.UnicodeScalarView(scalars))
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let bounded = String(clean.prefix(64))
+    return bounded.isEmpty ? "Peer-\(nodeID.uuidString.prefix(8))" : bounded
+  }
+
+  private static func normalizedFingerprint(_ value: String) -> String {
+    value.uppercased().filter { $0.isHexDigit }
   }
 }
