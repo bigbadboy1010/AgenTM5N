@@ -21,7 +21,6 @@ public final class AgentMeshController: ObservableObject {
   private let client: AgentMeshClient
   private let defaults: UserDefaults
   private var followTask: Task<Void, Never>?
-  private var activeConfiguration: AppConfiguration?
 
   private enum Key {
     static let port = "agentMesh.port"
@@ -48,7 +47,6 @@ public final class AgentMeshController: ObservableObject {
   }
 
   public func bootstrap(configuration: AppConfiguration) async {
-    activeConfiguration = configuration
     await AgentMeshExecutionService.shared.configure(configuration)
     do {
       node = try identity.descriptor()
@@ -62,12 +60,10 @@ public final class AgentMeshController: ObservableObject {
   }
 
   public func updateConfiguration(_ configuration: AppConfiguration) async {
-    activeConfiguration = configuration
     await AgentMeshExecutionService.shared.configure(configuration)
   }
 
   public func start(configuration: AppConfiguration) async throws {
-    activeConfiguration = configuration
     await AgentMeshExecutionService.shared.configure(configuration)
     let boundedPort = max(1, min(port, 65_535))
     port = boundedPort
@@ -108,7 +104,7 @@ public final class AgentMeshController: ObservableObject {
     let peer = try await client.enroll(
       endpoint: endpoint,
       callbackEndpoint: advertisedEndpoint,
-      kind: kind
+      expectedRemoteKind: kind
     )
     peers = try await peerStore.all()
     statusMessage = "Peer \(peer.name) wartet auf Trust-Freigabe. Fingerprint pruefen."
