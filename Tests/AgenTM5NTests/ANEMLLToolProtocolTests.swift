@@ -73,7 +73,7 @@ final class ANEMLLToolProtocolTests: XCTestCase {
     XCTAssertTrue(calls.isEmpty)
   }
 
-  func testTransportUsesTrailingToolResultInsteadOfRepeatingUserPrompt() throws {
+  func testTransportUsesTrailingToolResultAndPreservesOriginalUserTask() throws {
     let messages = [
       ProviderMessage(role: .system, content: "system"),
       ProviderMessage(role: .user, content: "Lies README"),
@@ -102,6 +102,7 @@ final class ANEMLLToolProtocolTests: XCTestCase {
     XCTAssertFalse(request.isFreshConversation)
     XCTAssertTrue(request.prompt.contains("TOOL RESULT [read_file]"))
     XCTAssertTrue(request.prompt.contains("AgenTM5N README result"))
+    XCTAssertTrue(request.prompt.contains("ORIGINAL USER TASK: Lies README"))
   }
 
   func testToolResultIsBoundedBeforeReturningToSmallContextModel() throws {
@@ -115,8 +116,9 @@ final class ANEMLLToolProtocolTests: XCTestCase {
       tools: [definition(name: "read_file", properties: ["path"])]
     )
 
-    XCTAssertLessThan(request.prompt.count, 2_000)
+    XCTAssertLessThan(request.prompt.count, 1_500)
     XCTAssertFalse(request.prompt.contains(String(repeating: "x", count: 2_000)))
+    XCTAssertTrue(request.prompt.contains("ORIGINAL USER TASK: Lies Datei"))
   }
 
   func testFirstUserTurnIsMarkedAsFreshConversation() throws {
@@ -231,7 +233,7 @@ final class ANEMLLToolProtocolTests: XCTestCase {
     XCTAssertTrue(prefix.contains("git_status()"))
     XCTAssertTrue(prefix.contains(ANEMLLToolProtocol.callPrefix))
     XCTAssertTrue(prefix.contains(ANEMLLToolProtocol.callSuffix))
-    XCTAssertTrue(prefix.contains("One tool per round"))
+    XCTAssertTrue(prefix.contains("One tool"))
   }
 
   private func definition(
