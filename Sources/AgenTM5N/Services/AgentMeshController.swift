@@ -153,8 +153,9 @@ public final class AgentMeshController: ObservableObject {
 
   public func revoke(_ peerID: UUID) async throws {
     _ = try await peerStore.revoke(id: peerID)
+    await AgentMeshTaskCoordinator.shared.cancelAll(peerID: peerID)
     peers = try await peerStore.all()
-    statusMessage = "Peer wurde widerrufen."
+    statusMessage = "Peer wurde widerrufen und laufende Tasks wurden abgebrochen."
   }
 
   public func submitTask(to peerID: UUID) async throws {
