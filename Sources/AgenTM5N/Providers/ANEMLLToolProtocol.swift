@@ -246,7 +246,32 @@ public enum ANEMLLToolProtocol {
   ) -> Int {
     let name = tool.function.name.lowercased()
     let description = tool.function.description.lowercased()
-    let affinity: [([String], [String])] = [
+
+    let createFileIntent = containsAny(
+      prompt,
+      ["erstell", "anleg", "schreib", "write", "create file", "new file"]
+    )
+    if createFileIntent, name == "write_file" { return 0 }
+
+    let patchIntent = containsAny(
+      prompt,
+      ["ändere", "aendere", "änder", "modify", "patch", "bearbeite", "edit"]
+    )
+    if patchIntent, name == "apply_patch" { return 0 }
+
+    let readFileIntent = containsAny(
+      prompt,
+      ["lies", "lese", "read", "inhalt", "content"]
+    )
+    if readFileIntent, name == "read_file" { return 0 }
+
+    let directoryIntent = containsAny(
+      prompt,
+      ["ordner", "folder", "verzeichnis", "directory", "auflisten", "liste dateien"]
+    )
+    if directoryIntent, name == "list_directory" { return 0 }
+
+    let exactAffinity: [([String], [String])] = [
       (["kalender", "calendar", "termin", "event"], ["calendar_"]),
       (["mail", "email", "e-mail"], ["mail_"]),
       (["kontakt", "contact"], ["contacts_"]),
@@ -254,8 +279,6 @@ public enum ANEMLLToolProtocol {
       (["ssh", "server", "remote", "host"], ["ssh_"]),
       (["docker", "container", "compose"], ["docker_"]),
       (["git", "commit", "branch", "diff", "repository", "repo"], ["git_"]),
-      (["schreib", "erstell", "ändere", "aendere", "write", "create", "modify", "patch"], ["write_file", "apply_patch"]),
-      (["datei", "file", "ordner", "folder", "verzeichnis", "directory"], ["read_file", "list_directory", "glob_files", "search_text", "write_file", "apply_patch"]),
       (["systeminfo", "system info", "chip", "arbeitsspeicher", "ram"], ["system_info"]),
       (["prozess", "process", "cpu"], ["process_list"]),
       (["disk", "platte", "speicherplatz"], ["disk_info"]),
@@ -265,11 +288,18 @@ public enum ANEMLLToolProtocol {
       (["shortcut", "kurzbefehl"], ["shortcuts_"]),
     ]
 
-    for (keywords, fragments) in affinity
+    for (keywords, fragments) in exactAffinity
     where keywords.contains(where: { prompt.contains($0) })
       && fragments.contains(where: { name.contains($0) || description.contains($0) })
     {
       return 0
+    }
+
+    if containsAny(prompt, ["datei", "file", "ordner", "folder", "verzeichnis", "directory"]),
+      ["read_file", "list_directory", "glob_files", "search_text", "write_file", "apply_patch"]
+        .contains(name)
+    {
+      return 1
     }
 
     let promptWords = Set(
@@ -277,9 +307,13 @@ public enum ANEMLLToolProtocol {
         .map(String.init)
         .filter { $0.count >= 4 }
     )
-    if promptWords.contains(where: { name.contains($0) }) { return 1 }
-    if promptWords.contains(where: { description.contains($0) }) { return 2 }
-    return 3
+    if promptWords.contains(where: { name.contains($0) }) { return 2 }
+    if promptWords.contains(where: { description.contains($0) }) { return 3 }
+    return 4
+  }
+
+  private static func containsAny(_ value: String, _ needles: [String]) -> Bool {
+    needles.contains(where: { value.contains($0) })
   }
 
   private static func removingThinkingBlocks(_ value: String) -> String {
