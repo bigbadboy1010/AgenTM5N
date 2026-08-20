@@ -152,6 +152,7 @@ public final class AgentMeshIdentityStore: @unchecked Sendable {
       capabilities: capabilities,
       features: [
         "signed-machine-identity",
+        "recipient-bound-signatures",
         "x25519-chacha20poly1305",
         "capability-scopes",
         "task-events",
@@ -164,6 +165,7 @@ public final class AgentMeshIdentityStore: @unchecked Sendable {
   public func sign(
     method: String,
     path: String,
+    recipientNodeID: UUID,
     timestampMilliseconds: Int64,
     nonce: String,
     body: Data
@@ -172,6 +174,7 @@ public final class AgentMeshIdentityStore: @unchecked Sendable {
       for: Self.canonicalRequest(
         method: method,
         path: path,
+        recipientNodeID: recipientNodeID,
         timestampMilliseconds: timestampMilliseconds,
         nonce: nonce,
         body: body
@@ -244,6 +247,7 @@ public final class AgentMeshIdentityStore: @unchecked Sendable {
     authentication: AgentMeshRequestAuthentication,
     method: String,
     path: String,
+    recipientNodeID: UUID,
     body: Data,
     peer: AgentMeshPeerRecord
   ) throws {
@@ -255,6 +259,7 @@ public final class AgentMeshIdentityStore: @unchecked Sendable {
     let canonical = canonicalRequest(
       method: method,
       path: path,
+      recipientNodeID: recipientNodeID,
       timestampMilliseconds: authentication.timestampMilliseconds,
       nonce: authentication.nonce,
       body: body
@@ -276,6 +281,7 @@ public final class AgentMeshIdentityStore: @unchecked Sendable {
   private static func canonicalRequest(
     method: String,
     path: String,
+    recipientNodeID: UUID,
     timestampMilliseconds: Int64,
     nonce: String,
     body: Data
@@ -283,8 +289,10 @@ public final class AgentMeshIdentityStore: @unchecked Sendable {
     let bodyHash = SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
     return Data(
       [
+        "AGENTM5N-MESH-SIGNED-V1",
         method.uppercased(),
         path,
+        recipientNodeID.uuidString.lowercased(),
         String(timestampMilliseconds),
         nonce,
         bodyHash,
