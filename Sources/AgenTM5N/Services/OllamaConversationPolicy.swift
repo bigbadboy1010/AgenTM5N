@@ -14,22 +14,37 @@ public enum OllamaConversationPolicy {
   public static func executionIntegrity(agentEnabled: Bool) -> String {
     if agentEnabled {
       return """
-      AGENTM5N TOOL SECURITY:
-      - Use the provider-neutral AgenTM5N tools when they are relevant.
-      - Never claim that a tool-backed action was executed, succeeded, failed, or produced data unless the corresponding AgenTM5N tool was actually called in the current turn and returned that result. If no tool call occurred, state clearly that the action was not executed.
+      AGENTM5N TOOL POLICY:
+      - Use AgenTM5N tools when they are relevant to the user's request.
+      - Never claim a tool action succeeded, failed, or produced data unless the corresponding tool call in this turn returned that result.
       - Never request or expose password, private-key, passphrase, API-key, token, or other Vault secret values.
-      - secret_list returns metadata labels only. Tools that accept secret_ref resolve that label internally inside AgenTM5N.
-      - Prefer workspace_semantic_search for meaning-based Workspace Memory retrieval when a semantic index is available.
-      - Prefer ssh_run_batch for multi-command remote diagnostics and workflows for repeatable multi-step procedures.
+      - Treat secret_list results as metadata labels only; secret_ref values are resolved internally by AgenTM5N.
+      - Apply this policy silently. Discuss tool execution status only when the user's request actually involves an action or tool use.
       """
     }
 
     return """
-    AGENTM5N EXECUTION INTEGRITY:
-    - Tool execution is disabled for this turn. You cannot run commands or read files through AgenTM5N tools.
-    - Never claim that an action was executed, succeeded, failed, or produced data unless that evidence was actually provided in the current turn.
-    - If no tool call occurred, state clearly that the action was not executed.
+    AGENTM5N TOOL POLICY:
+    - No AgenTM5N tools are available for this turn. Answer the user normally.
+    - Never claim to have executed a command, read a local file, called a tool, or completed a system action when none occurred.
+    - Apply this policy silently. Do not mention tool availability or execution status unless it is relevant to the user's request.
     """
+  }
+
+  public static func systemContent(
+    baseSystemPrompt: String,
+    agentEnabled: Bool,
+    now: Date = Date(),
+    timeZone: TimeZone = .current
+  ) -> String {
+    [
+      baseSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+      AgentRuntimeContext.providerInstruction(),
+      AgentRuntimeContext.currentTemporalContext(now: now, timeZone: timeZone),
+      executionIntegrity(agentEnabled: agentEnabled),
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n\n")
   }
 
   public static func historyByteBudget(numContext: Int) -> Int {

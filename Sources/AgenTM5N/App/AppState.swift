@@ -1282,17 +1282,10 @@ public final class AppState: ObservableObject {
     configuration executionConfiguration: AppConfiguration,
     numContext: Int
   ) -> [ProviderMessage] {
-    let runtimeContext = AgentRuntimeContext.currentTemporalContext()
-    let executionIntegrity = OllamaConversationPolicy.executionIntegrity(
+    let systemContent = OllamaConversationPolicy.systemContent(
+      baseSystemPrompt: executionConfiguration.systemPrompt,
       agentEnabled: executionConfiguration.agentEnabled
     )
-    let systemContent = executionConfiguration.systemPrompt
-      + "\n\n"
-      + AgentRuntimeContext.providerInstruction()
-      + "\n\n"
-      + runtimeContext
-      + "\n\n"
-      + executionIntegrity
 
     var result = [ProviderMessage(role: .system, content: systemContent)]
     result.append(

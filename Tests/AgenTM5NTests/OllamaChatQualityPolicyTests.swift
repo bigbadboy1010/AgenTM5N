@@ -2,23 +2,77 @@ import XCTest
 @testable import AgenTM5N
 
 final class OllamaChatQualityPolicyTests: XCTestCase {
+  func testCasualToolsDisabledSystemPromptDoesNotDemandMetaStatus() {
+    let timeZone = TimeZone(identifier: "Europe/Vienna")!
+    let now = Date(timeIntervalSince1970: 1_787_245_200)
+    let prompt = OllamaConversationPolicy.systemContent(
+      baseSystemPrompt: "Du bist AgenTM5N. Antworte natürlich.",
+      agentEnabled: false,
+      now: now,
+      timeZone: timeZone
+    )
+
+    XCTAssertTrue(prompt.contains("Answer the user normally"))
+    XCTAssertTrue(prompt.contains("Apply this policy silently"))
+    XCTAssertFalse(prompt.contains("state clearly that the action was not executed"))
+    XCTAssertFalse(prompt.contains("authoritative current task"))
+    XCTAssertFalse(prompt.contains("CURRENT MAC DATE AND TIME"))
+    XCTAssertFalse(prompt.contains("No action executed"))
+    XCTAssertFalse(prompt.contains("Status:"))
+  }
+
+  func testCoreMLAdaptiveStrategyDoesNotChangeOllamaSystemPrompt() {
+    let originalStrategy = CoreMLAdaptiveExecutionPolicyStore.strategy
+    defer {
+      CoreMLAdaptiveExecutionPolicyStore.setStrategy(originalStrategy)
+    }
+
+    let timeZone = TimeZone(identifier: "Europe/Vienna")!
+    let now = Date(timeIntervalSince1970: 1_787_245_200)
+
+    CoreMLAdaptiveExecutionPolicyStore.setStrategy(.manual)
+    let manual = OllamaConversationPolicy.systemContent(
+      baseSystemPrompt: "Du bist AgenTM5N.",
+      agentEnabled: false,
+      now: now,
+      timeZone: timeZone
+    )
+
+    CoreMLAdaptiveExecutionPolicyStore.setStrategy(.adaptive)
+    let adaptive = OllamaConversationPolicy.systemContent(
+      baseSystemPrompt: "Du bist AgenTM5N.",
+      agentEnabled: false,
+      now: now,
+      timeZone: timeZone
+    )
+
+    XCTAssertEqual(manual, adaptive)
+  }
+
   func testToolsDisabledPromptDoesNotAdvertiseTools() {
     let prompt = OllamaConversationPolicy.executionIntegrity(agentEnabled: false)
 
-    XCTAssertTrue(prompt.contains("Tool execution is disabled for this turn"))
+    XCTAssertTrue(prompt.contains("No AgenTM5N tools are available for this turn"))
+    XCTAssertTrue(prompt.contains("Answer the user normally"))
+    XCTAssertTrue(prompt.contains("Apply this policy silently"))
+    XCTAssertFalse(prompt.contains("state clearly that the action was not executed"))
     XCTAssertFalse(prompt.contains("ssh_run_batch"))
     XCTAssertFalse(prompt.contains("workspace_semantic_search"))
     XCTAssertFalse(prompt.contains("secret_list"))
     XCTAssertFalse(prompt.contains("Use the provider-neutral AgenTM5N tools"))
   }
 
-  func testToolsEnabledPromptPreservesToolGuidance() {
+  func testToolsEnabledPromptPreservesRelevantSilentToolPolicy() {
     let prompt = OllamaConversationPolicy.executionIntegrity(agentEnabled: true)
 
-    XCTAssertTrue(prompt.contains("Use the provider-neutral AgenTM5N tools"))
-    XCTAssertTrue(prompt.contains("ssh_run_batch"))
-    XCTAssertTrue(prompt.contains("workspace_semantic_search"))
+    XCTAssertTrue(prompt.contains("Use AgenTM5N tools when they are relevant"))
+    XCTAssertTrue(prompt.contains("Never claim a tool action succeeded"))
     XCTAssertTrue(prompt.contains("secret_list"))
+    XCTAssertTrue(prompt.contains("Apply this policy silently"))
+
+    XCTAssertFalse(prompt.contains("Use the provider-neutral AgenTM5N tools"))
+    XCTAssertFalse(prompt.contains("ssh_run_batch"))
+    XCTAssertFalse(prompt.contains("workspace_semantic_search"))
   }
 
   func testPreviousAppSessionMessagesAreExcludedFromInference() {

@@ -3,23 +3,17 @@ import XCTest
 @testable import AgenTM5N
 
 final class AgentRuntimeContextTests: XCTestCase {
-  func testProviderInstructionMakesLatestUserTurnAuthoritative() {
+  func testProviderInstructionIsCompactAndSilent() {
     let instruction = AgentRuntimeContext.providerInstruction()
 
-    XCTAssertTrue(instruction.contains("latest user message is the authoritative current task"))
-    XCTAssertTrue(instruction.contains("conversation history only"))
-    XCTAssertTrue(instruction.contains("exact-output request"))
-    XCTAssertTrue(instruction.contains("unless the latest user message explicitly asks for it again"))
+    XCTAssertTrue(instruction.contains("Answer the latest user request naturally"))
+    XCTAssertTrue(instruction.contains("Apply this guidance silently"))
+    XCTAssertFalse(instruction.contains("authoritative current task"))
+    XCTAssertFalse(instruction.contains("RUNTIME GROUNDING — mandatory"))
+    XCTAssertFalse(instruction.contains("If a tool returns success"))
   }
 
-  func testProviderInstructionRejectsImitationOfConflictingEarlierAnswer() {
-    let instruction = AgentRuntimeContext.providerInstruction()
-
-    XCTAssertTrue(instruction.contains("If an earlier assistant answer conflicts with the latest user request"))
-    XCTAssertTrue(instruction.contains("do not imitate the earlier answer"))
-  }
-
-  func testTemporalContextStillCarriesRuntimeClockAndTimeZone() {
+  func testTemporalContextIsCompactAndCarriesClockAndTimeZone() {
     let timeZone = TimeZone(identifier: "Europe/Vienna")!
     let now = Date(timeIntervalSince1970: 1_787_245_200)
     let context = AgentRuntimeContext.currentTemporalContext(
@@ -27,8 +21,12 @@ final class AgentRuntimeContextTests: XCTestCase {
       timeZone: timeZone
     )
 
-    XCTAssertTrue(context.contains("CURRENT MAC DATE AND TIME"))
+    XCTAssertTrue(context.contains("Current local Mac time:"))
     XCTAssertTrue(context.contains("Europe/Vienna"))
-    XCTAssertTrue(context.contains("UTC+02:00"))
+    XCTAssertTrue(context.contains("+02:00"))
+    XCTAssertTrue(context.contains("Use this silently"))
+    XCTAssertEqual(context.split(separator: "\n").count, 1)
+    XCTAssertFalse(context.contains("CURRENT MAC DATE AND TIME"))
+    XCTAssertFalse(context.contains("Temporal rules:"))
   }
 }
