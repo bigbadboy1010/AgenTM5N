@@ -20,6 +20,45 @@ final class HybridRoutingTests: XCTestCase {
     XCTAssertNil(decision.peerID)
   }
 
+  func testAdaptiveOrdinaryCloudChatKeepsSelectedCloudProvider() {
+    let decision = router.decide(
+      prompt: "so wir sind wieder da",
+      activeConfiguration: cloudConfiguration(),
+      operatingConfiguration: .default,
+      routingConfiguration: HybridRoutingConfiguration(
+        mode: .adaptive,
+        preferLocal: true,
+        allowAppleOnDevice: true,
+        privacyLockEnabled: true
+      ),
+      appleFoundationModelsAvailable: true,
+      peers: []
+    )
+
+    XCTAssertEqual(decision.kind, .activeProvider)
+    XCTAssertEqual(decision.targetName, "Ollama Cloud · glm-5.2")
+    XCTAssertFalse(decision.privacyLocked)
+  }
+
+  func testAdaptiveOrdinaryCloudAnalysisKeepsSelectedCloudProvider() {
+    let decision = router.decide(
+      prompt: "Analysiere die Vor- und Nachteile dieser Architektur.",
+      activeConfiguration: cloudConfiguration(),
+      operatingConfiguration: .default,
+      routingConfiguration: HybridRoutingConfiguration(
+        mode: .adaptive,
+        preferLocal: true,
+        allowAppleOnDevice: true,
+        privacyLockEnabled: true
+      ),
+      appleFoundationModelsAvailable: true,
+      peers: []
+    )
+
+    XCTAssertEqual(decision.kind, .activeProvider)
+    XCTAssertEqual(decision.targetName, "Ollama Cloud · glm-5.2")
+  }
+
   func testPrivacyLockRoutesPersonalCloudPromptToAppleWhenAvailable() {
     let decision = router.decide(
       prompt: "Welche Termine habe ich heute im Kalender?",
