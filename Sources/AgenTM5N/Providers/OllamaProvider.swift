@@ -219,7 +219,8 @@ public final class OllamaProvider: @unchecked Sendable {
     configuration: AppConfiguration,
     apiKey: String?,
     messages: [ProviderMessage],
-    tools: [ProviderToolDefinition] = []
+    tools: [ProviderToolDefinition] = [],
+    operatingConfiguration suppliedOperatingConfiguration: AgentOperatingLayerConfiguration? = nil
   ) -> AsyncThrowingStream<ProviderStreamEvent, Error> {
     if shouldUseANEMLL(configuration) {
       return ANEMLLProvider().streamChat(
@@ -244,7 +245,8 @@ public final class OllamaProvider: @unchecked Sendable {
             throw OllamaProviderError.emptyModel
           }
 
-          var operatingConfiguration = AgentOperatingLayerStore.load()
+          var operatingConfiguration =
+            suppliedOperatingConfiguration ?? AgentOperatingLayerStore.load()
           operatingConfiguration.normalize()
           if operatingConfiguration.bundledToolsEnabled {
             BundledToolPackInstaller.ensureInstalled()
@@ -277,9 +279,12 @@ public final class OllamaProvider: @unchecked Sendable {
             tools: effectiveTools.isEmpty ? nil : effectiveTools,
             stream: true,
             think: operatingConfiguration.ollamaThinkValue(
+              forModel: configuration.model,
               legacyThinkingEnabled: configuration.thinkingEnabled
             ),
-            options: operatingConfiguration.ollamaOptions,
+            options: operatingConfiguration.ollamaOptions(
+              forModel: configuration.model
+            ),
             keepAlive: operatingConfiguration.keepAlive
           )
           request.httpBody = try JSONEncoder().encode(body)

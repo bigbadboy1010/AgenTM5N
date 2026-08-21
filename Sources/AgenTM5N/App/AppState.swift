@@ -124,6 +124,7 @@ public final class AppState: ObservableObject {
   private let agentRuntime: AgentRuntime
   private var generationTask: Task<Void, Never>?
   private var approvalContinuation: CheckedContinuation<Bool, Never>?
+  private var inferenceSessionMessageIDs: Set<UUID> = []
 
   public init(
     configurationStore: JSONDocumentStore<AppConfiguration> = JSONDocumentStore(
@@ -414,6 +415,7 @@ public final class AppState: ObservableObject {
     stopGeneration()
     await task?.value
     messages = []
+    inferenceSessionMessageIDs.removeAll()
     latestMetrics = nil
     do {
       try PromptImageAttachmentStorage.removeAll()
@@ -606,6 +608,8 @@ public final class AppState: ObservableObject {
 
     let userMessage = ChatMessage(role: .user, content: text)
     let assistantID = UUID()
+    inferenceSessionMessageIDs.insert(userMessage.id)
+    inferenceSessionMessageIDs.insert(assistantID)
     messages.append(userMessage)
     messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
 
@@ -614,7 +618,8 @@ public final class AppState: ObservableObject {
       case .ollamaLocal, .ollamaCloud:
         try await performOllamaSend(
           assistantID: assistantID,
-          configuration: executionConfiguration
+          configuration: executionConfiguration,
+          operatingConfiguration: plan.operatingConfiguration
         )
 
       case .appleOnDevice:
@@ -703,12 +708,14 @@ public final class AppState: ObservableObject {
 
   private func performOllamaSend(
     assistantID: UUID,
-    configuration executionConfiguration: AppConfiguration
+    configuration executionConfiguration: AppConfiguration,
+    operatingConfiguration: AgentOperatingLayerConfiguration
   ) async throws {
     let apiKey = try await configuredAPIKey(for: executionConfiguration)
     var providerMessages = makeOllamaMessages(
       excludingAssistantID: assistantID,
-      configuration: executionConfiguration
+      configuration: executionConfiguration,
+      numContext: operatingConfiguration.numContext
     )
 
     if providerMessages.contains(where: {
@@ -738,7 +745,8 @@ public final class AppState: ObservableObject {
         configuration: executionConfiguration,
         apiKey: apiKey,
         messages: providerMessages,
-        tools: tools
+        tools: tools,
+        operatingConfiguration: operatingConfiguration
       )
       for try await event in stream {
         try Task.checkCancellation()
@@ -1271,37 +1279,29 @@ public final class AppState: ObservableObject {
 
   private func makeOllamaMessages(
     excludingAssistantID: UUID,
-    configuration executionConfiguration: AppConfiguration
+    configuration executionConfiguration: AppConfiguration,
+    numContext: Int
   ) -> [ProviderMessage] {
     let runtimeContext = AgentRuntimeContext.currentTemporalContext()
+    let executionIntegrity = OllamaConversationPolicy.executionIntegrity(
+      agentEnabled: executionConfiguration.agentEnabled
+    )
     let systemContent = executionConfiguration.systemPrompt
       + "\n\n"
       + AgentRuntimeContext.providerInstruction()
       + "\n\n"
       + runtimeContext
       + "\n\n"
-      + """
-      AGENTM5N TOOL SECURITY:
-      - Use the provider-neutral AgenTM5N tools when they are relevant.
-      - Never claim that a tool-backed action was executed, succeeded, failed, or produced data unless the corresponding AgenTM5N tool was actually called in the current turn and returned that result. If no tool call occurred, state clearly that the action was not executed.
-      - Never request or expose password, private-key, passphrase, API-key, token, or other Vault secret values.
-      - secret_list returns metadata labels only. Tools that accept secret_ref resolve that label internally inside AgenTM5N.
-      - Prefer workspace_semantic_search for meaning-based Workspace Memory retrieval when a semantic index is available.
-      - Prefer ssh_run_batch for multi-command remote diagnostics and workflows for repeatable multi-step procedures.
-      """
+      + executionIntegrity
 
     var result = [ProviderMessage(role: .system, content: systemContent)]
     result.append(
-      contentsOf: messages.compactMap { message -> ProviderMessage? in
-        guard message.id != excludingAssistantID, message.role != .system else {
-          return nil
-        }
-        return ProviderMessage(
-          role: message.role == .user ? .user : .assistant,
-          content: message.content,
-          thinking: message.thinking.isEmpty ? nil : message.thinking
-        )
-      }
+      contentsOf: OllamaConversationPolicy.boundedHistory(
+        messages: messages,
+        excludingAssistantID: excludingAssistantID,
+        numContext: numContext,
+        allowedMessageIDs: inferenceSessionMessageIDs
+      )
     )
     return result
   }
