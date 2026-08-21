@@ -162,7 +162,7 @@ FINAL_SNAPSHOT_FILE="$TRACE_ROOT/${STAMP}-${SAFE_LABEL}-final.txt"
   printf 'command_status=%s\n' "$COMMAND_STATUS"
   printf 'trace_file=%s\n' "$TRACE_FILE"
   echo
-  "$ROOT_DIR/scripts/diagnose-resource-pressure.sh"
+  bash "$ROOT_DIR/scripts/diagnose-resource-pressure.sh"
 } > "$FINAL_SNAPSHOT_FILE" 2>&1 || true
 
 printf 'Final snapshot: %s\n' "$FINAL_SNAPSHOT_FILE"
