@@ -4,6 +4,7 @@ import SwiftUI
 struct ChatView: View {
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var attachmentStore = PromptAttachmentDraftStore.shared
+  @ObservedObject private var hybridRouter = HybridRoutingController.shared
   @State private var isDropTargeted = false
   @State private var isImportingPromptFiles = false
 
@@ -159,6 +160,19 @@ struct ChatView: View {
         Text(appState.configuration.model)
           .font(.system(.caption, design: .monospaced))
           .lineLimit(1)
+      }
+
+      if let decision = hybridRouter.decision {
+        Divider()
+          .frame(height: 14)
+
+        Label(
+          decision.diagnosticLabel(mode: hybridRouter.configuration.mode),
+          systemImage: "arrow.triangle.branch"
+        )
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .help(decision.reason)
       }
 
       Divider()

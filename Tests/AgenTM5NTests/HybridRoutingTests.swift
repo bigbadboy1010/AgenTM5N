@@ -6,6 +6,20 @@ import XCTest
 final class HybridRoutingTests: XCTestCase {
   private let router = HybridInferenceRouter()
 
+  func testRouteDiagnosticLabelIncludesModeKindAndTarget() {
+    let decision = HybridRouteDecision(
+      kind: .activeProvider,
+      targetName: "Ollama Cloud · gpt-oss:120b",
+      reason: "Test",
+      confidence: 1
+    )
+
+    XCTAssertEqual(
+      decision.diagnosticLabel(mode: .adaptive),
+      "Adaptive · activeProvider · Ollama Cloud · gpt-oss:120b"
+    )
+  }
+
   func testManualModeAlwaysKeepsActiveProvider() {
     let decision = router.decide(
       prompt: "Delegiere diese Aufgabe an einen anderen Agenten",
