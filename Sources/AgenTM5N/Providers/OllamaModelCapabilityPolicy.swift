@@ -25,6 +25,12 @@ public enum OllamaModelCapabilityPolicy {
       || normalizedModel.contains("deepseek-v3.1")
   }
 
+  public static func supportsTools(capabilities: Set<String>) -> Bool {
+    let normalizedCapabilities = Set(capabilities.map { $0.lowercased() })
+    return normalizedCapabilities.contains("tools")
+      || normalizedCapabilities.contains("tool")
+  }
+
   /// Returns nil when the selected model does not advertise/support Ollama's
   /// thinking protocol. A nil value must be omitted from the /api/chat body;
   /// sending even `think: false` to a non-thinking model can be rejected by
@@ -63,7 +69,7 @@ public enum OllamaModelCapabilityPolicy {
     let normalized = Set(ollamaCapabilities.map { $0.lowercased() })
     var result: Set<ModelProfileCapability> = [.textGeneration, .streaming]
 
-    if normalized.contains("tools") || normalized.contains("tool") {
+    if supportsTools(capabilities: normalized) {
       result.insert(.toolCalling)
     }
     if supportsThinking(model: model, capabilities: normalized) {
