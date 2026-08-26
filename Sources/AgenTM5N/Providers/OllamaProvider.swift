@@ -252,11 +252,19 @@ public final class OllamaProvider: @unchecked Sendable {
             BundledToolPackInstaller.ensureInstalled()
           }
 
-          let effectiveTools = scopedTools(
+          let capabilities = (try? await modelCapabilities(
+            configuration: configuration,
+            apiKey: apiKey
+          )) ?? []
+          let scoped = scopedTools(
             tools,
             messages: messages,
             operatingConfiguration: operatingConfiguration
           )
+          let effectiveTools = OllamaModelCapabilityPolicy.supportsTools(
+            capabilities: capabilities
+          ) ? scoped : []
+
           let url = try endpointURL(baseURL: configuration.baseURL, path: "/api/chat")
           var request = URLRequest(url: url)
           request.httpMethod = "POST"
@@ -273,10 +281,6 @@ public final class OllamaProvider: @unchecked Sendable {
           let requestMessages = try providerMessages.map(
             OllamaRequestMessage.init
           )
-          let capabilities = (try? await modelCapabilities(
-            configuration: configuration,
-            apiKey: apiKey
-          )) ?? []
           let body = ChatRequestBody(
             model: configuration.model,
             messages: requestMessages,
