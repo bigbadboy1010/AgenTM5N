@@ -16,6 +16,30 @@ final class OllamaModelCapabilityPolicyTests: XCTestCase {
     )
   }
 
+  func testDolphin3DoesNotAdvertiseNativeTools() {
+    XCTAssertFalse(
+      OllamaModelCapabilityPolicy.supportsTools(
+        capabilities: ["completion"]
+      )
+    )
+  }
+
+  func testToolCapableModelAdvertisesNativeTools() {
+    XCTAssertTrue(
+      OllamaModelCapabilityPolicy.supportsTools(
+        capabilities: ["completion", "tools"]
+      )
+    )
+  }
+
+  func testToolCapabilityDiscoveryFailsClosed() {
+    XCTAssertFalse(
+      OllamaModelCapabilityPolicy.supportsTools(
+        capabilities: []
+      )
+    )
+  }
+
   func testUnknownNonThinkingModelOmitsThinkingFieldEvenWhenGlobalThinkingIsEnabled() {
     var operating = AgentOperatingLayerConfiguration()
     operating.thinkingMode = .max
@@ -82,5 +106,14 @@ final class OllamaModelCapabilityPolicyTests: XCTestCase {
     XCTAssertTrue(capabilities.contains(.toolCalling))
     XCTAssertTrue(capabilities.contains(.imageInput))
     XCTAssertFalse(capabilities.contains(.thinking))
+  }
+
+  func testProfileCapabilitiesExcludeToolsWhenOllamaDoesNotSupportThem() {
+    let capabilities = OllamaModelCapabilityPolicy.profileCapabilities(
+      model: "dolphin3",
+      ollamaCapabilities: ["completion"]
+    )
+
+    XCTAssertFalse(capabilities.contains(.toolCalling))
   }
 }
