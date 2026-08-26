@@ -205,27 +205,55 @@ public actor AgentMeshExecutionService {
       max(1, configuration.maxToolIterations),
       Self.maximumRemoteToolRounds
     )
+    let executionConfiguration = configuration
 
-    await audit.record(
-      AgentMeshAuditEntry(
-        taskID: request.id,
-        peerID: peer.id,
-        decision: "task_started"
-      )
-    )
+    let operatingConfiguration = AgentOperatingLayerStore.load()
+    guard let heavyRuntime = HeavyInferenceRuntime(
+      providerKind: executionConfiguration.providerKind,
+      localInferenceRuntime: operatingConfiguration.localInferenceRuntime
+    ) else {
+      throw AgentMeshExecutionError.unsupportedProvider
+    }
 
-    return try await AgentDelegationContext.$depth.withValue(
-      AgentDelegationContext.depth + 1
-    ) {
-      try await AgentCapabilityExecutionContext.$allowedCapabilities.withValue(effectiveCapabilities) {
-        try await runProviderLoop(
-          request: request,
-          peer: peer,
-          effectiveCapabilities: effectiveCapabilities,
-          configuration: configuration,
-          sink: sink
+    do {
+      return try await InferenceResourceGovernor.shared.withLease(
+        runtime: heavyRuntime,
+        ownerID: request.id
+      ) { [self] in
+        await audit.record(
+          AgentMeshAuditEntry(
+            taskID: request.id,
+            peerID: peer.id,
+            decision: "task_started"
+          )
         )
+
+        return try await AgentDelegationContext.$depth.withValue(
+          AgentDelegationContext.depth + 1
+        ) {
+          try await AgentCapabilityExecutionContext.$allowedCapabilities.withValue(
+            effectiveCapabilities
+          ) {
+            try await self.runProviderLoop(
+              request: request,
+              peer: peer,
+              effectiveCapabilities: effectiveCapabilities,
+              configuration: executionConfiguration,
+              sink: sink
+            )
+          }
+        }
       }
+    } catch let resourceError as InferenceResourceGovernorError {
+      await audit.record(
+        AgentMeshAuditEntry(
+          taskID: request.id,
+          peerID: peer.id,
+          decision: "resource_denied",
+          success: false
+        )
+      )
+      throw resourceError
     }
   }
 
@@ -355,9 +383,7 @@ public actor AgentMeshExecutionService {
     // Re-check trust immediately before every remote-requested tool. Revoking a
     // peer therefore closes the execution boundary even for a task that was
     // already running when the trust record changed.
-    guard let currentPeer = try? await AgentMeshPeerStore.shared.trustedPeer(id: peer.id),
-      currentPeer != nil
-    else {
+    guard let _ = try? await AgentMeshPeerStore.shared.trustedPeer(id: peer.id) else {
       await sink(.toolDenied, call.function.name)
       return ProviderMessage(
         role: .tool,

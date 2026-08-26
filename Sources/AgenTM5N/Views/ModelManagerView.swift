@@ -4,6 +4,9 @@ struct ModelManagerView: View {
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var controller = ModelManagerController.shared
   @State private var selectedID: UUID?
+  @State private var huggingFaceReference = ""
+  @State private var isImportingHuggingFace = false
+  @State private var huggingFaceError: String?
   @State private var draft = ModelProfile(
     name: "Neues Modellprofil",
     runtime: .ollamaLocal,
@@ -161,6 +164,66 @@ struct ModelManagerView: View {
           Text("Cloud-Profile speichern nur die UUID des bestehenden Vault-Secrets. Der API-Key selbst wird niemals im Modellprofil gespeichert.")
             .font(.caption)
             .foregroundStyle(.secondary)
+        }
+      }
+
+      Section("Hugging Face GGUF via Ollama") {
+        TextField(
+          "hf.co/owner/repository-GGUF:Q4_K_M",
+          text: $huggingFaceReference
+        )
+          .textFieldStyle(.roundedBorder)
+          .disabled(isImportingHuggingFace)
+
+        HStack {
+          Button("Laden + Profil anlegen") {
+            Task {
+              isImportingHuggingFace = true
+              huggingFaceError = nil
+              defer { isImportingHuggingFace = false }
+
+              do {
+                let imported = try await controller.importHuggingFaceGGUF(
+                  reference: huggingFaceReference
+                )
+                huggingFaceReference = ""
+                select(imported)
+              } catch {
+                huggingFaceError = error.localizedDescription
+              }
+            }
+          }
+          .disabled(
+            isImportingHuggingFace
+              || huggingFaceReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          )
+
+          if isImportingHuggingFace {
+            ProgressView()
+              .controlSize(.small)
+            Text("Ollama lädt das GGUF-Modell …")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        Text(
+          "Akzeptiert z. B. hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M oder eine Hugging-Face-Modell-URL. Der Download läuft über dein lokales Ollama; anschließend wird ein normales Ollama-Local-Profil mit den von /api/show erkannten Capabilities angelegt."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+        Text(
+          "Der RAM-Schätzwert bleibt nach dem Import absichtlich leer. Damit bleibt ein späteres automatisches Routing fail-closed, bis der Speicherbedarf bewusst eingetragen wurde. Manuelle Aktivierung bleibt möglich."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+        if let huggingFaceError {
+          Text(huggingFaceError)
+            .font(.caption)
+            .foregroundStyle(.red)
+            .textSelection(.enabled)
         }
       }
 

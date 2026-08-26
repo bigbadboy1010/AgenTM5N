@@ -6,6 +6,20 @@ import XCTest
 final class HybridRoutingTests: XCTestCase {
   private let router = HybridInferenceRouter()
 
+  func testRouteDiagnosticLabelIncludesModeKindAndTarget() {
+    let decision = HybridRouteDecision(
+      kind: .activeProvider,
+      targetName: "Ollama Cloud · gpt-oss:120b",
+      reason: "Test",
+      confidence: 1
+    )
+
+    XCTAssertEqual(
+      decision.diagnosticLabel(mode: .adaptive),
+      "Adaptive · activeProvider · Ollama Cloud · gpt-oss:120b"
+    )
+  }
+
   func testManualModeAlwaysKeepsActiveProvider() {
     let decision = router.decide(
       prompt: "Delegiere diese Aufgabe an einen anderen Agenten",
@@ -18,6 +32,45 @@ final class HybridRoutingTests: XCTestCase {
 
     XCTAssertEqual(decision.kind, .activeProvider)
     XCTAssertNil(decision.peerID)
+  }
+
+  func testAdaptiveOrdinaryCloudChatKeepsSelectedCloudProvider() {
+    let decision = router.decide(
+      prompt: "so wir sind wieder da",
+      activeConfiguration: cloudConfiguration(),
+      operatingConfiguration: .default,
+      routingConfiguration: HybridRoutingConfiguration(
+        mode: .adaptive,
+        preferLocal: true,
+        allowAppleOnDevice: true,
+        privacyLockEnabled: true
+      ),
+      appleFoundationModelsAvailable: true,
+      peers: []
+    )
+
+    XCTAssertEqual(decision.kind, .activeProvider)
+    XCTAssertEqual(decision.targetName, "Ollama Cloud · glm-5.2")
+    XCTAssertFalse(decision.privacyLocked)
+  }
+
+  func testAdaptiveOrdinaryCloudAnalysisKeepsSelectedCloudProvider() {
+    let decision = router.decide(
+      prompt: "Analysiere die Vor- und Nachteile dieser Architektur.",
+      activeConfiguration: cloudConfiguration(),
+      operatingConfiguration: .default,
+      routingConfiguration: HybridRoutingConfiguration(
+        mode: .adaptive,
+        preferLocal: true,
+        allowAppleOnDevice: true,
+        privacyLockEnabled: true
+      ),
+      appleFoundationModelsAvailable: true,
+      peers: []
+    )
+
+    XCTAssertEqual(decision.kind, .activeProvider)
+    XCTAssertEqual(decision.targetName, "Ollama Cloud · glm-5.2")
   }
 
   func testPrivacyLockRoutesPersonalCloudPromptToAppleWhenAvailable() {

@@ -123,6 +123,10 @@ public struct HybridRouteDecision: Codable, Equatable, Sendable {
   public var isBlocked: Bool {
     kind == .blocked
   }
+
+  public func diagnosticLabel(mode: HybridRoutingMode) -> String {
+    "\(mode.displayName) · \(kind.rawValue) · \(targetName)"
+  }
 }
 
 public struct HybridRoutingSnapshot: Codable, Equatable, Sendable {

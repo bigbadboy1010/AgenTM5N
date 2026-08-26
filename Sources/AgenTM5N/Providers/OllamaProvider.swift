@@ -45,7 +45,7 @@ public final class OllamaProvider: @unchecked Sendable {
     let messages: [OllamaRequestMessage]
     let tools: [ProviderToolDefinition]?
     let stream: Bool
-    let think: JSONValue
+    let think: JSONValue?
     let options: [String: JSONValue]
     let keepAlive: String
 
@@ -219,7 +219,8 @@ public final class OllamaProvider: @unchecked Sendable {
     configuration: AppConfiguration,
     apiKey: String?,
     messages: [ProviderMessage],
-    tools: [ProviderToolDefinition] = []
+    tools: [ProviderToolDefinition] = [],
+    operatingConfiguration suppliedOperatingConfiguration: AgentOperatingLayerConfiguration? = nil
   ) -> AsyncThrowingStream<ProviderStreamEvent, Error> {
     if shouldUseANEMLL(configuration) {
       return ANEMLLProvider().streamChat(
@@ -244,17 +245,26 @@ public final class OllamaProvider: @unchecked Sendable {
             throw OllamaProviderError.emptyModel
           }
 
-          var operatingConfiguration = AgentOperatingLayerStore.load()
+          var operatingConfiguration =
+            suppliedOperatingConfiguration ?? AgentOperatingLayerStore.load()
           operatingConfiguration.normalize()
           if operatingConfiguration.bundledToolsEnabled {
             BundledToolPackInstaller.ensureInstalled()
           }
 
-          let effectiveTools = scopedTools(
+          let capabilities = (try? await modelCapabilities(
+            configuration: configuration,
+            apiKey: apiKey
+          )) ?? []
+          let scoped = scopedTools(
             tools,
             messages: messages,
             operatingConfiguration: operatingConfiguration
           )
+          let effectiveTools = OllamaModelCapabilityPolicy.supportsTools(
+            capabilities: capabilities
+          ) ? scoped : []
+
           let url = try endpointURL(baseURL: configuration.baseURL, path: "/api/chat")
           var request = URLRequest(url: url)
           request.httpMethod = "POST"
@@ -276,10 +286,15 @@ public final class OllamaProvider: @unchecked Sendable {
             messages: requestMessages,
             tools: effectiveTools.isEmpty ? nil : effectiveTools,
             stream: true,
-            think: operatingConfiguration.ollamaThinkValue(
+            think: OllamaModelCapabilityPolicy.thinkValue(
+              model: configuration.model,
+              capabilities: capabilities,
+              operatingConfiguration: operatingConfiguration,
               legacyThinkingEnabled: configuration.thinkingEnabled
             ),
-            options: operatingConfiguration.ollamaOptions,
+            options: operatingConfiguration.ollamaOptions(
+              forModel: configuration.model
+            ),
             keepAlive: operatingConfiguration.keepAlive
           )
           request.httpBody = try JSONEncoder().encode(body)

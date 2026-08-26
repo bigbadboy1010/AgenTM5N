@@ -216,6 +216,25 @@ public struct AgentOperatingLayerConfiguration: Codable, Equatable, Sendable {
     return options
   }
 
+  /// GPT-OSS is published with temperature=1.0/top_p=1.0. Keep the generic
+  /// sampling controls for other Ollama model families.
+  public func ollamaOptions(forModel model: String) -> [String: JSONValue] {
+    guard Self.isGPTOssModel(model) else {
+      return ollamaOptions
+    }
+
+    var options: [String: JSONValue] = [
+      "num_ctx": .number(Double(numContext)),
+      "num_predict": .number(Double(numPredict)),
+      "temperature": .number(1.0),
+      "top_p": .number(1.0),
+    ]
+    if let seed {
+      options["seed"] = .number(Double(seed))
+    }
+    return options
+  }
+
   public func ollamaThinkValue(legacyThinkingEnabled _: Bool) -> JSONValue {
     switch thinkingMode {
     case .off:
@@ -231,6 +250,38 @@ public struct AgentOperatingLayerConfiguration: Codable, Equatable, Sendable {
     case .max:
       return .string("max")
     }
+  }
+
+  /// Ollama exposes GPT-OSS reasoning effort as low/medium/high.
+  /// Boolean values and "max" are not GPT-OSS reasoning levels.
+  public func ollamaThinkValue(
+    forModel model: String,
+    legacyThinkingEnabled: Bool
+  ) -> JSONValue {
+    guard Self.isGPTOssModel(model) else {
+      return ollamaThinkValue(
+        legacyThinkingEnabled: legacyThinkingEnabled
+      )
+    }
+
+    switch thinkingMode {
+    case .off, .low:
+      return .string("low")
+    case .standard, .medium:
+      return .string("medium")
+    case .high, .max:
+      return .string("high")
+    }
+  }
+
+  public static func isGPTOssModel(_ model: String) -> Bool {
+    let normalized = model
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+
+    return normalized == "gpt-oss"
+      || normalized.hasPrefix("gpt-oss:")
+      || normalized.contains("/gpt-oss")
   }
 
   public mutating func normalize() {

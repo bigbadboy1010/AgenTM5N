@@ -26,6 +26,9 @@ jobs:
           bash -n scripts/verify.sh
           bash -n scripts/bootstrap-anemll-runtime.sh
           bash -n scripts/test-anemll-qwen3.sh
+          bash -n scripts/diagnose-resource-pressure.sh
+          bash -n scripts/capture-resource-trace.sh
+          bash -n scripts/run-m5-safety-gate.sh
           bash -n scripts/lib/xcode-env.sh
       - name: Parse Swift sources
         run: |

@@ -50,7 +50,10 @@ struct HybridRouterView: View {
         }
         .pickerStyle(.segmented)
 
-        Toggle("Local-first", isOn: $controller.configuration.preferLocal)
+        Toggle(
+          "Local-first für explizite/private lokale Routen",
+          isOn: $controller.configuration.preferLocal
+        )
         Toggle("Apple On-Device als lokalen Zielpfad erlauben", isOn: $controller.configuration.allowAppleOnDevice)
         Toggle("Agent Mesh Routing erlauben", isOn: $controller.configuration.allowMesh)
         Toggle(
@@ -79,7 +82,13 @@ struct HybridRouterView: View {
 
         if controller.configuration.mode == .manual {
           Text(
-            "Manual verändert den normalen Chat nicht. Adaptive Routing wird erst nach dem Build-41 Runtime-Gate in den normalen Chat-Pfad eingebunden."
+            "Manual verwendet immer den aktuell ausgewählten Provider/Runtime-Pfad."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        } else {
+          Text(
+            "Adaptive behält für normalen Chat den ausgewählten Provider bei. Apple On-Device wird nur bei explizitem Apple-Wunsch oder durch Privacy Lock für persönliche Daten gewählt; Mesh folgt den Delegationsregeln."
           )
           .font(.caption)
           .foregroundStyle(.secondary)

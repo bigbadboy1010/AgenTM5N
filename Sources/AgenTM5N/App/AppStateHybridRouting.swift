@@ -7,7 +7,9 @@ extension AppState {
   /// Agent Mesh peer, but never creates a second local tool/security router.
   public func sendMessageHybridAware() {
     let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, !isGenerating else { return }
+    guard !text.isEmpty, generationPhase.acceptsNewTurn, !isGenerating else {
+      return
+    }
 
     let operatingConfiguration = AgentOperatingLayerStore.load()
     let controller = HybridRoutingController.shared
@@ -54,17 +56,24 @@ extension AppState {
         errorMessage = HybridRoutingError.peerUnavailable.localizedDescription
         return
       }
+
+      let turnID = UUID()
+      guard beginManagedGeneration(turnID: turnID) else { return }
+
       inputText = ""
-      isGenerating = true
       latestMetrics = nil
-      Task { @MainActor [weak self] in
-        await self?.performHybridMeshSend(
+
+      let task = Task { @MainActor [weak self] in
+        guard let self else { return }
+        await self.performHybridMeshSend(
           text: text,
           decision: decision,
           peerID: peerID,
-          timeoutSeconds: operatingConfiguration.requestTimeoutSeconds
+          timeoutSeconds: operatingConfiguration.requestTimeoutSeconds,
+          turnID: turnID
         )
       }
+      installManagedGenerationTask(task, turnID: turnID)
 
     case .blocked:
       errorMessage = decision.reason
@@ -72,51 +81,35 @@ extension AppState {
   }
 
   private func sendViaTemporaryAppleRoute() {
-    let originalProvider = configuration.providerKind
-    let originalBaseURL = configuration.baseURL
-    let originalModel = configuration.model
-    let originalSecretID = configuration.apiKeySecretID
-
-    configuration.providerKind = .appleOnDevice
-    configuration.baseURL = ProviderKind.appleOnDevice.defaultBaseURL
-    configuration.model = "Apple System Language Model"
-    configuration.apiKeySecretID = nil
-    sendMessage()
-
-    Task { @MainActor [weak self] in
-      guard let self else { return }
-
-      // sendMessage() schedules generation asynchronously. Do not restore the
-      // provider before performSend has actually entered its generation phase.
-      var observedGeneration = self.isGenerating
-      for _ in 0..<100 where !observedGeneration {
-        try? await Task.sleep(for: .milliseconds(10))
-        observedGeneration = self.isGenerating
-      }
-
-      while self.isGenerating {
-        try? await Task.sleep(for: .milliseconds(75))
-      }
-
-      // Restore only if the temporary route is still present. A deliberate UI
-      // provider change made by the user while generation was running wins.
-      guard self.configuration.providerKind == .appleOnDevice,
-        self.configuration.model == "Apple System Language Model"
-      else { return }
-
-      self.configuration.providerKind = originalProvider
-      self.configuration.baseURL = originalBaseURL
-      self.configuration.model = originalModel
-      self.configuration.apiKeySecretID = originalSecretID
+    // Hybrid Apple is already an automatic local runtime decision even while
+    // Phase-2 ModelProfile routing remains disabled. Apply the same fail-closed
+    // thermal/memory/swap admission boundary before switching this single turn.
+    let snapshot = AutomaticSystemResourceSampler.capture()
+    do {
+      try AutomaticInferenceAdmissionGate.validate(
+        profile: ModelProfileCatalog.appleBuiltIn,
+        snapshot: snapshot
+      )
+    } catch {
+      errorMessage = error.localizedDescription
+      return
     }
+
+    // Capture the current user configuration by value and derive an Apple route
+    // inside TurnExecutionPlan. AppConfiguration remains untouched and therefore
+    // requires no polling restore task after generation.
+    sendMessage(using: configuration, origin: .hybridAppleOnDevice)
   }
 
   private func performHybridMeshSend(
     text: String,
     decision: HybridRouteDecision,
     peerID: UUID,
-    timeoutSeconds: Int
+    timeoutSeconds: Int,
+    turnID: UUID
   ) async {
+    defer { finishManagedGeneration(turnID: turnID) }
+
     let userMessage = ChatMessage(role: .user, content: text)
     let assistantID = UUID()
     messages.append(userMessage)
@@ -135,36 +128,34 @@ extension AppState {
       requestedCapabilities: decision.requiredCapabilities,
       timeoutSeconds: timeoutSeconds
     )
+    var activePeer: AgentMeshPeerRecord?
 
     do {
+      try Task.checkCancellation()
+      guard generationPhase.turnID == turnID else {
+        throw CancellationError()
+      }
+
       guard let peer = try await AgentMeshPeerStore.shared.trustedPeer(id: peerID),
         peer.status == .trusted
       else {
         throw HybridRoutingError.peerUnavailable
       }
+      activePeer = peer
 
+      try Task.checkCancellation()
       _ = try await client.submit(request, to: peer)
-
-      let cancellationWatcher = Task.detached { [weak self] in
-        while !Task.isCancelled {
-          try? await Task.sleep(for: .milliseconds(125))
-          let stillGenerating = await MainActor.run { self?.isGenerating ?? false }
-          if !stillGenerating {
-            _ = try? await client.cancel(taskID: request.id, peer: peer)
-            return
-          }
-        }
-      }
-      defer { cancellationWatcher.cancel() }
+      try Task.checkCancellation()
 
       for try await event in client.follow(taskID: request.id, peer: peer) {
-        if !isGenerating {
-          _ = try? await client.cancel(taskID: request.id, peer: peer)
+        try Task.checkCancellation()
+        guard generationPhase.turnID == turnID else {
           throw CancellationError()
         }
         applyHybridMeshEvent(event, assistantID: assistantID)
       }
 
+      try Task.checkCancellation()
       let snapshot = try await client.snapshot(taskID: request.id, peer: peer)
       switch snapshot.status {
       case .completed:
@@ -196,18 +187,24 @@ extension AppState {
       }
 
       try await persistHybridConversation()
-    } catch is CancellationError {
-      if let index = messages.firstIndex(where: { $0.id == assistantID }),
-        messages[index].content.isEmpty
-      {
-        messages[index].content = L10n.text(
-          de: "Abgebrochen.",
-          en: "Cancelled.",
-          fr: "Annulé."
-        )
-      }
-      try? await persistHybridConversation()
     } catch {
+      if Task.isCancelled || error is CancellationError {
+        if let activePeer {
+          _ = try? await client.cancel(taskID: request.id, peer: activePeer)
+        }
+        if let index = messages.firstIndex(where: { $0.id == assistantID }),
+          messages[index].content.isEmpty
+        {
+          messages[index].content = L10n.text(
+            de: "Abgebrochen.",
+            en: "Cancelled.",
+            fr: "Annulé."
+          )
+        }
+        try? await persistHybridConversation()
+        return
+      }
+
       if let index = messages.firstIndex(where: { $0.id == assistantID }),
         messages[index].content.isEmpty
       {
@@ -216,8 +213,6 @@ extension AppState {
       errorMessage = error.localizedDescription
       try? await persistHybridConversation()
     }
-
-    isGenerating = false
   }
 
   private func applyHybridMeshEvent(

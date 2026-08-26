@@ -209,21 +209,9 @@ public struct HybridInferenceRouter: Sendable {
       )
     }
 
-    if routingConfiguration.preferLocal,
-      routingConfiguration.allowAppleOnDevice,
-      appleFoundationModelsAvailable,
-      activeConfiguration.providerKind == .ollamaCloud,
-      !Self.explicitCloudIntent(normalizedPrompt)
-    {
-      return HybridRouteDecision(
-        kind: .appleOnDevice,
-        targetName: "Apple On-Device",
-        reason: "Local-first Policy: der aktive Provider ist Cloud; ohne explizite Cloud-Absicht wird Apple On-Device bevorzugt.",
-        confidence: 0.82,
-        requiredCapabilities: requiredCapabilities
-      )
-    }
-
+    // Ordinary chat must preserve the explicitly selected provider.
+    // Adaptive routing may select Apple only for an explicit Apple request or
+    // when Privacy Lock above requires a local route for personal macOS data.
     return decisionForActiveProvider(
       configuration: activeConfiguration,
       operatingConfiguration: operatingConfiguration,
@@ -337,13 +325,6 @@ public struct HybridInferenceRouter: Sendable {
     containsAny(
       prompt,
       ["apple on-device", "apple on device", "foundation models", "apple foundation", "system language model"]
-    )
-  }
-
-  private static func explicitCloudIntent(_ prompt: String) -> Bool {
-    containsAny(
-      prompt,
-      ["ollama cloud", "cloud model", "cloud-modell", "in der cloud", "use cloud", "remote model"]
     )
   }
 
