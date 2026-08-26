@@ -45,7 +45,7 @@ public final class OllamaProvider: @unchecked Sendable {
     let messages: [OllamaRequestMessage]
     let tools: [ProviderToolDefinition]?
     let stream: Bool
-    let think: JSONValue
+    let think: JSONValue?
     let options: [String: JSONValue]
     let keepAlive: String
 
@@ -273,13 +273,19 @@ public final class OllamaProvider: @unchecked Sendable {
           let requestMessages = try providerMessages.map(
             OllamaRequestMessage.init
           )
+          let capabilities = (try? await modelCapabilities(
+            configuration: configuration,
+            apiKey: apiKey
+          )) ?? []
           let body = ChatRequestBody(
             model: configuration.model,
             messages: requestMessages,
             tools: effectiveTools.isEmpty ? nil : effectiveTools,
             stream: true,
-            think: operatingConfiguration.ollamaThinkValue(
-              forModel: configuration.model,
+            think: OllamaModelCapabilityPolicy.thinkValue(
+              model: configuration.model,
+              capabilities: capabilities,
+              operatingConfiguration: operatingConfiguration,
               legacyThinkingEnabled: configuration.thinkingEnabled
             ),
             options: operatingConfiguration.ollamaOptions(
