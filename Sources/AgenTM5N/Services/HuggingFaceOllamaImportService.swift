@@ -53,7 +53,7 @@ public struct HuggingFaceOllamaReference: Equatable, Sendable {
       var value = trimmed
       for prefix in ["www.huggingface.co/", "huggingface.co/", "www.hf.co/"] {
         if value.lowercased().hasPrefix(prefix) {
-          value = "hf.co/" + value.dropFirst(prefix.count)
+          value = "hf.co/" + String(value.dropFirst(prefix.count))
           break
         }
       }
