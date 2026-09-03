@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/v1.3.0-neural-control-plane
+      - agent/build42-model-discovery
   pull_request:
     branches:
       - agent/v1.2.0-agent-operating-layer
@@ -24,6 +25,7 @@ jobs:
           swiftc -frontend -parse \
             Sources/AgenTM5N/Domain/ModelProfiles.swift \
             Sources/AgenTM5N/Services/ModelProfileStore.swift \
+            Sources/AgenTM5N/Services/OllamaModelDiscoveryService.swift \
             Sources/AgenTM5N/Services/ModelManagerController.swift \
             Sources/AgenTM5N/Views/ModelManagerView.swift \
             Tests/AgenTM5NTests/ModelProfileTests.swift
@@ -35,6 +37,7 @@ jobs:
 
           models = Path("Sources/AgenTM5N/Domain/ModelProfiles.swift").read_text()
           store = Path("Sources/AgenTM5N/Services/ModelProfileStore.swift").read_text()
+          discovery = Path("Sources/AgenTM5N/Services/OllamaModelDiscoveryService.swift").read_text()
           controller = Path("Sources/AgenTM5N/Services/ModelManagerController.swift").read_text()
           view = Path("Sources/AgenTM5N/Views/ModelManagerView.swift").read_text()
           app = Path("Sources/AgenTM5N/App/AgenTM5NApp.swift").read_text()
@@ -63,19 +66,32 @@ jobs:
                   "ModelProfileCatalog.appleBuiltIn",
                   "setActive",
                   "routingCandidates",
+                  "mergeDiscoveredLocalOllamaProfiles",
+                  "sameLocalOllamaIdentity",
+              ],
+              "discovery": [
+                  'path: "/api/tags"',
+                  'path: "/api/show"',
+                  "isCloudAlias",
+                  '.hasSuffix(":cloud")',
+                  "profileCapabilities",
+                  "estimatedMemoryMB: nil",
               ],
               "controller": [
                   "importCurrentConfiguration",
+                  "discoverLocalOllamaModels",
                   "profile.activationPlan",
                   "appState.configuration.providerKind = plan.providerKind",
                   "operating.configuration.localInferenceRuntime = runtime",
                   "operating.configuration.numContext = plan.contextWindow",
                   "ModelProfileError.missingCloudSecretReference",
                   "Vault-Secrets wurden nicht verändert",
+                  ":cloud-Aliase wurden bewusst nicht als lokale Profile importiert",
               ],
               "view": [
                   "Model Manager · Build 42",
                   "Aktuelles importieren",
+                  "Lokales Ollama scannen",
                   "Vault Secret Reference",
                   "Routing-Vorschau",
               ],
@@ -91,12 +107,15 @@ jobs:
                   "testDisabledProfilesAreExcludedFromRoutingCandidates",
                   "testStorePersistsActiveProfileAndRemovalClearsIt",
                   "testAppleBuiltInCannotBeRemoved",
+                  "testDiscoveredOllamaMergeIsIdempotentAndPreservesUserTuning",
+                  "testOllamaDiscoverySkipsCloudAliasesAndMapsCapabilities",
               ],
           }
 
           texts = {
               "models": models,
               "store": store,
+              "discovery": discovery,
               "controller": controller,
               "view": view,
               "app": app,
@@ -115,8 +134,8 @@ jobs:
               "bearerToken",
           ]
           for needle in forbidden_fields:
-              if needle in models or needle in store:
-                  failures.append(f"Model profile storage must never persist secret material: {needle}")
+              if needle in models or needle in store or needle in discovery:
+                  failures.append(f"Model profile storage/discovery must never persist secret material: {needle}")
 
           forbidden_controller = [
               "SecureSecretBroker",
@@ -128,10 +147,14 @@ jobs:
               if needle in controller:
                   failures.append(f"Model Manager must not create a secret/tool execution bypass: {needle}")
 
+          if "streamChat(" in discovery or "/api/chat" in discovery:
+              failures.append("Model discovery must never start inference or send chat requests")
+
           if failures:
               raise SystemExit("\n".join(failures))
 
       - name: Build 42 staging note
         run: |
           echo "Static Build 42 Model Manager control-plane policy passed."
+          echo "Local Ollama discovery is metadata-only and skips :cloud aliases."
           echo "Profile-aware automatic Hybrid Router selection remains disabled until the target-Mac Swift/Xcode gate passes."
