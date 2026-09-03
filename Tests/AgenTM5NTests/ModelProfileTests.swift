@@ -188,7 +188,8 @@ final class ModelProfileTests: XCTestCase {
     XCTAssertEqual(firstMerge.count, 1)
     let stableID = try XCTUnwrap(firstMerge.first?.id)
 
-    var tuned = try XCTUnwrap(try await store.profile(id: stableID))
+    let storedProfile = try await store.profile(id: stableID)
+    var tuned = try XCTUnwrap(storedProfile)
     tuned.name = "Mein Qwen Coding"
     tuned.contextWindow = 16_384
     tuned.estimatedMemoryMB = 7_000
@@ -214,7 +215,8 @@ final class ModelProfileTests: XCTestCase {
     XCTAssertTrue(merged.capabilities.contains(.toolCalling))
     XCTAssertTrue(merged.capabilities.contains(.thinking))
 
-    let allQwen = try await store.all().filter {
+    let allProfiles = try await store.all()
+    let allQwen = allProfiles.filter {
       $0.runtime == .ollamaLocal && $0.modelIdentifier == "qwen3:8b"
     }
     XCTAssertEqual(allQwen.count, 1)
