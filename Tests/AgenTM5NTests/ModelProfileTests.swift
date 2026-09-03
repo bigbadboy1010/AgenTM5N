@@ -166,4 +166,74 @@ final class ModelProfileTests: XCTestCase {
 
     XCTAssertTrue(profiles.contains(where: { $0.id == ModelProfileCatalog.appleBuiltIn.id }))
   }
+
+  func testDiscoveredOllamaMergeIsIdempotentAndPreservesUserTuning() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agentm5n-model-discovery-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let store = ModelProfileStore(fileURL: directory.appendingPathComponent("profiles.json"))
+    let first = ModelProfile(
+      name: "Ollama · qwen3:8b",
+      runtime: .ollamaLocal,
+      modelIdentifier: "qwen3:8b",
+      baseURL: "http://localhost:11434/",
+      contextWindow: 8_192,
+      priority: 100,
+      capabilities: [.textGeneration, .streaming, .onDevice]
+    )
+
+    let firstMerge = try await store.mergeDiscoveredLocalOllamaProfiles([first])
+    XCTAssertEqual(firstMerge.count, 1)
+    let stableID = try XCTUnwrap(firstMerge.first?.id)
+
+    var tuned = try XCTUnwrap(try await store.profile(id: stableID))
+    tuned.name = "Mein Qwen Coding"
+    tuned.contextWindow = 16_384
+    tuned.estimatedMemoryMB = 7_000
+    tuned.priority = 250
+    _ = try await store.upsert(tuned)
+
+    let rediscovered = ModelProfile(
+      name: "Ollama · qwen3:8b",
+      runtime: .ollamaLocal,
+      modelIdentifier: "qwen3:8b",
+      baseURL: "HTTP://LOCALHOST:11434",
+      capabilities: [.textGeneration, .streaming, .onDevice, .toolCalling, .thinking]
+    )
+    let secondMerge = try await store.mergeDiscoveredLocalOllamaProfiles([rediscovered])
+
+    XCTAssertEqual(secondMerge.count, 1)
+    let merged = try XCTUnwrap(secondMerge.first)
+    XCTAssertEqual(merged.id, stableID)
+    XCTAssertEqual(merged.name, "Mein Qwen Coding")
+    XCTAssertEqual(merged.contextWindow, 16_384)
+    XCTAssertEqual(merged.estimatedMemoryMB, 7_000)
+    XCTAssertEqual(merged.priority, 250)
+    XCTAssertTrue(merged.capabilities.contains(.toolCalling))
+    XCTAssertTrue(merged.capabilities.contains(.thinking))
+
+    let allQwen = try await store.all().filter {
+      $0.runtime == .ollamaLocal && $0.modelIdentifier == "qwen3:8b"
+    }
+    XCTAssertEqual(allQwen.count, 1)
+  }
+
+  func testOllamaDiscoverySkipsCloudAliasesAndMapsCapabilities() {
+    XCTAssertTrue(OllamaModelDiscoveryService.isCloudAlias("kimi-k2.7-code:cloud"))
+    XCTAssertTrue(OllamaModelDiscoveryService.isCloudAlias("  MINIMAX-M3:CLOUD  "))
+    XCTAssertFalse(OllamaModelDiscoveryService.isCloudAlias("qwen3:8b"))
+
+    let capabilities = OllamaModelDiscoveryService.profileCapabilities(
+      from: ["completion", "tools", "thinking", "vision"]
+    )
+
+    XCTAssertTrue(capabilities.contains(.textGeneration))
+    XCTAssertTrue(capabilities.contains(.streaming))
+    XCTAssertTrue(capabilities.contains(.onDevice))
+    XCTAssertTrue(capabilities.contains(.toolCalling))
+    XCTAssertTrue(capabilities.contains(.thinking))
+    XCTAssertTrue(capabilities.contains(.imageInput))
+  }
 }
