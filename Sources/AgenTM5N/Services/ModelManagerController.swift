@@ -9,9 +9,14 @@ public final class ModelManagerController: ObservableObject {
   @Published public private(set) var statusMessage = "Model Manager bereit"
 
   private let store: ModelProfileStore
+  private let ollamaDiscovery: OllamaModelDiscoveryService
 
-  public init(store: ModelProfileStore = .shared) {
+  public init(
+    store: ModelProfileStore = .shared,
+    ollamaDiscovery: OllamaModelDiscoveryService = OllamaModelDiscoveryService()
+  ) {
     self.store = store
+    self.ollamaDiscovery = ollamaDiscovery
   }
 
   public func bootstrap() async {
@@ -45,6 +50,31 @@ public final class ModelManagerController: ObservableObject {
     } catch {
       statusMessage = error.localizedDescription
       return nil
+    }
+  }
+
+  @discardableResult
+  public func discoverLocalOllamaModels(
+    baseURL: String = LocalInferenceRuntime.ollama.defaultBaseURL
+  ) async -> [ModelProfile] {
+    statusMessage = "Lokale Ollama-Modelle werden erkannt …"
+
+    do {
+      let discovered = try await ollamaDiscovery.discover(baseURL: baseURL)
+      let candidates = discovered.map {
+        OllamaModelDiscoveryService.makeProfile(from: $0, baseURL: baseURL)
+      }
+      let merged = try await store.mergeDiscoveredLocalOllamaProfiles(candidates)
+      await reload()
+      statusMessage =
+        "Ollama-Scan abgeschlossen: \(merged.count) lokale Modelle erkannt/aktualisiert. :cloud-Aliase wurden bewusst nicht als lokale Profile importiert."
+      return merged
+    } catch is CancellationError {
+      statusMessage = "Ollama-Scan abgebrochen."
+      return []
+    } catch {
+      statusMessage = error.localizedDescription
+      return []
     }
   }
 
