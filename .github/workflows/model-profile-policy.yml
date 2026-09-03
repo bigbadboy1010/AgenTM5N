@@ -9,6 +9,7 @@ on:
     branches:
       - agent/v1.2.0-agent-operating-layer
       - agent/v1.3.0-neural-control-plane
+      - fix/build42-phase2-resource-guards
 
 permissions:
   contents: read
