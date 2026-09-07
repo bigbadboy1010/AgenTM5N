@@ -2,9 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/release-metadata.sh"
+
 APP_NAME="AgenTM5N"
-VERSION="${AGENTM5N_VERSION:-1.4.1}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"
+agentm5n_validate_release_metadata
+VERSION="$(agentm5n_release_version)"
+BUILD_NUMBER="$(agentm5n_release_build_number)"
 DMG_PATH="${AGENTM5N_DMG_PATH:-$ROOT_DIR/dist/$APP_NAME-$VERSION-build$BUILD_NUMBER.dmg}"
 MOUNT_POINT="$(mktemp -d -t agentm5n-release-mount)"
 ATTACHED=0
