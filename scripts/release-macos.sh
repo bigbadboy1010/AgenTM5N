@@ -3,10 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/xcode-env.sh"
+source "$ROOT_DIR/scripts/lib/release-metadata.sh"
 
 APP_NAME="AgenTM5N"
-VERSION="${AGENTM5N_VERSION:-1.4.1}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"
+agentm5n_validate_release_metadata
+VERSION="$(agentm5n_release_version)"
+BUILD_NUMBER="$(agentm5n_release_build_number)"
 NOTARY_PROFILE="${AGENTM5N_NOTARY_PROFILE:-AgenTM5NNotary}"
 SIGNING_IDENTITY="${AGENTM5N_SIGNING_IDENTITY:-}"
 DIST_DIR="$ROOT_DIR/dist"
