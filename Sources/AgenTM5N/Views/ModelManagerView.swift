@@ -4,6 +4,7 @@ struct ModelManagerView: View {
   @EnvironmentObject private var appState: AppState
   @ObservedObject private var controller = ModelManagerController.shared
   @State private var selectedID: UUID?
+  @State private var isScanningOllama = false
   @State private var huggingFaceReference = ""
   @State private var isImportingHuggingFace = false
   @State private var huggingFaceError: String?
@@ -46,6 +47,31 @@ struct ModelManagerView: View {
           Label("Aktuelles importieren", systemImage: "square.and.arrow.down")
         }
       }
+
+      Button {
+        Task {
+          isScanningOllama = true
+          defer { isScanningOllama = false }
+          let imported = await controller.discoverLocalOllamaModels()
+          if selectedID == nil {
+            select(imported.first ?? controller.profiles.first)
+          }
+        }
+      } label: {
+        HStack {
+          Label("Lokales Ollama scannen", systemImage: "externaldrive.badge.magnifyingglass")
+          if isScanningOllama {
+            Spacer()
+            ProgressView()
+              .controlSize(.small)
+          }
+        }
+      }
+      .disabled(isScanningOllama)
+
+      Text("Liest /api/tags und /api/show von localhost:11434. Der Scan lädt kein Modell zur Inferenz. :cloud-Aliase werden nicht als lokale Profile importiert.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
 
       List(selection: $selectedID) {
         ForEach(controller.profiles) { profile in

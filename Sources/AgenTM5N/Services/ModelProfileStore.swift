@@ -64,6 +64,40 @@ public actor ModelProfileStore {
     return normalized
   }
 
+  @discardableResult
+  public func mergeDiscoveredLocalOllamaProfiles(
+    _ discoveredProfiles: [ModelProfile]
+  ) throws -> [ModelProfile] {
+    var value = try load()
+    var merged: [ModelProfile] = []
+    merged.reserveCapacity(discoveredProfiles.count)
+
+    for profile in discoveredProfiles where profile.runtime == .ollamaLocal {
+      var incoming = profile
+      incoming.normalize()
+      incoming.apiKeySecretID = nil
+
+      if let index = value.profiles.firstIndex(where: {
+        Self.sameLocalOllamaIdentity($0, incoming)
+      }) {
+        var existing = value.profiles[index]
+        existing.capabilities = incoming.capabilities
+        existing.updatedAt = Date()
+        existing.normalize()
+        value.profiles[index] = existing
+        merged.append(existing)
+      } else {
+        incoming.updatedAt = Date()
+        value.profiles.append(incoming)
+        merged.append(incoming)
+      }
+    }
+
+    document = value
+    try persist(value)
+    return merged
+  }
+
   public func remove(id: UUID) throws {
     guard id != ModelProfileCatalog.appleBuiltIn.id else { return }
     var value = try load()
@@ -102,6 +136,23 @@ public actor ModelProfileStore {
     let data = try Self.encoder.encode(value)
     try data.write(to: fileURL, options: [.atomic])
     try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+  }
+
+  private static func sameLocalOllamaIdentity(
+    _ lhs: ModelProfile,
+    _ rhs: ModelProfile
+  ) -> Bool {
+    guard lhs.runtime == .ollamaLocal, rhs.runtime == .ollamaLocal else { return false }
+    return canonicalBaseURL(lhs.baseURL) == canonicalBaseURL(rhs.baseURL)
+      && lhs.modelIdentifier == rhs.modelIdentifier
+  }
+
+  private static func canonicalBaseURL(_ value: String) -> String {
+    var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    while normalized.hasSuffix("/") {
+      normalized.removeLast()
+    }
+    return normalized
   }
 
   private static let encoder: JSONEncoder = {
