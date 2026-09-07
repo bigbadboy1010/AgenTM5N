@@ -3,6 +3,16 @@
 .swiftpm/
 dist/
 DerivedData/
+.build-artifacts/
+.local-backups/
 *.xcuserstate
 *.xccheckout
 *.xcscmblueprint
+*.log
+verify-*.log
+build-*.log
+build-app-*.log
+resource-*.log
+native-qwen3-*.log
+portable-release-*.log
+bootstrap-anemll-*.log
