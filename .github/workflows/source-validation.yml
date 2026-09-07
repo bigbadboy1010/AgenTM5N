@@ -40,7 +40,9 @@ jobs:
           ! grep -nE '1\.4\.1|BUILD_NUMBER="\$\{AGENTM5N_BUILD_NUMBER:-41\}"|EXPECTED_BUILD="\$\{AGENTM5N_BUILD_NUMBER:-41\}"' \
             scripts/build-app.sh \
             scripts/check-release.sh \
+            scripts/publish-github-release.sh \
             scripts/release-macos.sh \
+            scripts/release-portable-macos.sh \
             scripts/verify-release-dmg.sh
       - name: Parse Swift sources
         run: |
