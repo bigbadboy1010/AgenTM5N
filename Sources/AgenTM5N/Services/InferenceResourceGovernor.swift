@@ -133,7 +133,7 @@ public actor InferenceResourceGovernor {
     staleAfterSeconds: Int = 330,
     now: @escaping @Sendable () -> Date = Date.init,
     anemllRequiresRecovery: @escaping @Sendable () async -> Bool = {
-      await ANEMLLPersistentRuntimeService.shared.requiresRecovery()
+      ANEMLLPersistentRuntimeService.shared.requiresRecovery()
     }
   ) {
     self.staleAfterSeconds = max(30, min(staleAfterSeconds, 3_600))
@@ -228,7 +228,7 @@ public struct AutomaticInferenceBudget: Equatable, Sendable {
     normalize()
   }
 
-  public static let conservative = AutomaticInferenceBudget()
+  public static let `conservative` = AutomaticInferenceBudget()
 
   public static func automatic(
     runtime: ModelProfileRuntime,

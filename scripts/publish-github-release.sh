@@ -2,8 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${AGENTM5N_VERSION:-1.4.1}"
-BUILD_NUMBER="${AGENTM5N_BUILD_NUMBER:-41}"
+source "$ROOT_DIR/scripts/lib/release-metadata.sh"
+
+agentm5n_validate_release_metadata
+VERSION="$(agentm5n_release_version)"
+BUILD_NUMBER="$(agentm5n_release_build_number)"
 REPOSITORY="${AGENTM5N_GITHUB_REPOSITORY:-bigbadboy1010/AgenTM5N}"
 TAG="${AGENTM5N_GITHUB_TAG:-v${VERSION}-build${BUILD_NUMBER}}"
 DIST_DIR="$ROOT_DIR/dist"

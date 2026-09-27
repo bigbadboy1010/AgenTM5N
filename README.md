@@ -2,8 +2,8 @@
 
 AgenTM5N is a native personal AI Agent Operating Layer for Apple Silicon. It combines Apple Foundation Models, Ollama Local, MLX local inference, Ollama Cloud, Core ML, native macOS actions, controlled local and remote execution, browser automation, persistent specialist agents, workflows, maintained and self-built tools, MCP bridging and local document/context services.
 
-> Status: **1.2.0 Build 29 candidate** for macOS 26+ / Apple Silicon.
-> Development branch: `agent/v1.2.0-agent-operating-layer`.
+> Status: **1.4.2 Build 42 candidate** for macOS 26+ / Apple Silicon.
+> Development branch: `agent/build42-model-discovery`.
 > GitHub source validation is required to be green before target-Mac validation. The final Swift typecheck/build, Apple framework linking and runtime matrix must be completed on the target Apple Silicon Mac before merge/release.
 
 ## What 1.2 changes
@@ -128,14 +128,14 @@ The model can request an action. AgenTM5N decides whether that action is availab
 
 The standalone Command Line Tools package is not sufficient because AgenTM5N links AppKit, Core ML, Foundation Models and other macOS frameworks from the full SDK.
 
-## Build the 1.2.0 Build 29 candidate
+## Build the 1.4.2 Build 42 candidate
 
 ```bash
 cd ~/Downloads/AgenTM5N
 
 git fetch origin
-git switch agent/v1.2.0-agent-operating-layer
-git pull --ff-only origin agent/v1.2.0-agent-operating-layer
+git switch agent/build42-model-discovery
+git pull --ff-only origin agent/build42-model-discovery
 
 export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
 
@@ -147,7 +147,7 @@ open dist/AgenTM5N.app
 
 Adjust `AGENTM5N_XCODE_PATH` if Xcode is installed elsewhere.
 
-`verify.sh` performs dependency resolution, the debug build and automated tests. `build-app.sh` produces **1.2.0 Build 29** by default.
+`verify.sh` performs dependency resolution and the automated test build. `build-app.sh` produces **1.4.2 Build 42** by default.
 
 ## Local inference: Ollama or MLX
 
@@ -311,7 +311,7 @@ bash scripts/release-macos.sh
 Expected artifact:
 
 ```text
-dist/AgenTM5N-1.2.0-build29.dmg
+dist/AgenTM5N-1.4.2-build42.dmg
 ```
 
 ## Documentation
