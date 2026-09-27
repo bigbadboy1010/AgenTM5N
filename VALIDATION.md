@@ -1,14 +1,14 @@
 # Validation status
 
-Date: 2026-08-11
-Version: **1.2.0 Build 29 candidate**
-Branch: `agent/v1.2.0-agent-operating-layer`
+Date: 2026-09-27
+Version: **1.4.2 Build 42 candidate**
+Branch: `agent/build42-model-discovery`
 
 This document separates GitHub source validation, automated target-Mac validation and manual runtime validation. A feature is not release-green merely because its source parses successfully.
 
 ## Current gate state
 
-The previous 1.1.x target-Mac baseline completed a successful debug/test/production build on the Apple Silicon development Mac. Version 1.2.0 introduces a new operating-layer configuration, MLX transport, maintained built-in tool packs, adaptive routing and a universal stagnation guard, so **Build 29 requires a fresh full target-Mac build and runtime matrix before merge/release**.
+The previous 1.1.x target-Mac baseline completed a successful debug/test/production build on the Apple Silicon development Mac. Build 42 adds resource-safety controls and local Ollama model discovery on top of the operating layer. **Build 42 requires a fresh target-Mac build plus the documented model-discovery runtime checks before merge/release**.
 
 GitHub CI validates:
 
@@ -26,8 +26,8 @@ Run on the target Mac:
 cd ~/Downloads/AgenTM5N
 
 git fetch origin
-git switch agent/v1.2.0-agent-operating-layer
-git pull --ff-only origin agent/v1.2.0-agent-operating-layer
+git switch agent/build42-model-discovery
+git pull --ff-only origin agent/build42-model-discovery
 
 export AGENTM5N_XCODE_PATH="$HOME/Downloads/Xcode-beta.app/Contents/Developer"
 rm -rf .build .swiftpm .build-artifacts Package.resolved
@@ -41,8 +41,8 @@ Adjust `AGENTM5N_XCODE_PATH` to the installed full Xcode if necessary.
 Expected application metadata:
 
 ```text
-Version: 1.2.0
-Build:   29
+Version: 1.4.2
+Build:   42
 ```
 
 The target-Mac gate is green only if dependency resolution, debug compilation, XCTest, release compilation, bundle assembly and code-sign verification all succeed.
