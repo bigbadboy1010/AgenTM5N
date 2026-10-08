@@ -69,7 +69,7 @@ struct ModelManagerView: View {
       }
       .disabled(isScanningOllama)
 
-      Text("Liest /api/tags und /api/show von localhost:11434. Der Scan lädt kein Modell zur Inferenz. :cloud-Aliase werden nicht als lokale Profile importiert.")
+      Text("Liest /api/tags und /api/show vom konfigurierten Ollama-Endpunkt. Der Scan lädt kein Modell zur Inferenz. :cloud-Aliase werden nicht als lokale Profile importiert.")
         .font(.caption)
         .foregroundStyle(.secondary)
 
