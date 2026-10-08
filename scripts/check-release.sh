@@ -2,9 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/release-metadata.sh"
+
 APP_NAME="AgenTM5N"
-EXPECTED_VERSION="${AGENTM5N_VERSION:-1.4.1}"
-EXPECTED_BUILD="${AGENTM5N_BUILD_NUMBER:-41}"
+agentm5n_validate_release_metadata
+EXPECTED_VERSION="$(agentm5n_release_version)"
+EXPECTED_BUILD="$(agentm5n_release_build_number)"
 REQUIRE_DEVELOPER_ID="${AGENTM5N_REQUIRE_DEVELOPER_ID:-0}"
 REQUIRE_GATEKEEPER="${AGENTM5N_REQUIRE_GATEKEEPER:-0}"
 APP_DIR="${AGENTM5N_APP_PATH:-$ROOT_DIR/dist/$APP_NAME.app}"
