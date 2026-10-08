@@ -228,7 +228,7 @@ public struct AutomaticInferenceBudget: Equatable, Sendable {
     normalize()
   }
 
-  public static let `conservative` = AutomaticInferenceBudget()
+  public static let conservative = AutomaticInferenceBudget()
 
   public static func automatic(
     runtime: ModelProfileRuntime,
